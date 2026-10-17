@@ -1,0 +1,53 @@
+# NovaSeq 6000 S2 Flow Cell Configuration
+# Based on Illumina NovaSeq 6000 System Specifications (2024)
+# Spec Reference: https://www.illumina.com/systems/sequencing-platforms/novaseq/specifications.html
+
+schema_version: "1.0"
+last_updated: "2024-07-03"
+validated_against: "Illumina NovaSeq 6000 Specs v1.5"
+config_type: "sequencer"
+
+# Sequencer Identity and Hardware
+sequencer:
+  model: "NovaSeq 6000"
+  flow_cell_type: "S2"                    # S1, S2, S4 flow cells available
+  chemistry_version: "v1.5"               # Latest chemistry as of 2024
+  instrument_id: "A00123"                 # Format: A##### for NovaSeq
+  run_id: "240101_A00123_0001_BH5TNVDRXY" # Format: YYMMDD_INSTRUMENT_RUN_FLOWCELL
+  flowcell_id: "H5TNVDRXY"               # 8-character alphanumeric
+
+# Sample and Run Configuration  
+sample:
+  name: "Sample_001"
+  lane: 1                                 # Lane 1-4 for NovaSeq
+  output_dir: "./novaseq_s2_output"
+
+# Read Structure and Output
+reads:
+  length: 150                             # 50, 100, 150, 250bp supported
+  paired_end: true                        # Single or paired-end
+  reads_per_batch: 20000000              # ~20M reads per batch for S2
+  total_batches: 4                       # Total output files to generate
+  batch_interval: "2h"                   # Time between batch generations
+
+# Quality Parameters (based on Illumina specs)
+quality:
+  base_quality: 35                       # Starting Phred score
+  quality_decay: 0.05                    # Quality degradation rate (low for NovaSeq)
+  q30_percentage: 90.0                   # ≥90% bases with Q30+ guaranteed
+  cluster_density_k_per_mm2: 300000     # 300K clusters/mm² for S2 flow cell
+
+# Performance Specifications
+performance:
+  run_time_hours: 36                     # 2×150bp run time for S2
+  max_output_tb: 3.0                     # Maximum data output
+  loading_concentration_pm: 1.4          # Typical loading concentration
+  phix_spike_in_percent: 1.0             # PhiX control percentage
+
+# Technology Features
+technology:
+  sbs_version: "v1.5"                    # Sequencing by Synthesis version
+  patterned_flow_cell: true              # Uses patterned flow cell technology
+  dual_flow_cell_capable: true           # Can run 1 or 2 flow cells
+  two_channel_chemistry: false           # NovaSeq uses 4-channel
+  four_channel_chemistry: true

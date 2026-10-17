@@ -1,0 +1,115 @@
+# Example Configuration for MGI DNBSEQ-T20×2 Ultra-High Throughput Sequencing
+# This configuration demonstrates how to simulate a large-scale population
+# genomics study using the MGI DNBSEQ-T20×2 platform
+
+# Sequencer platform specification
+sequencer_model: "DNBSEQ-T20x2"
+flow_cell_type: "DNB"
+chemistry: "DNB_v3"
+
+# Sample information
+sample_name: "PopGen_Cohort_Batch1"
+lane: 1
+barcode: "DNB_001"
+
+# Run configuration
+output_dir: "./output/mgi_dnbseq_example"
+total_batches: 200        # Simulate processing across 6 slides
+reads_per_batch: 2000000  # 2M reads per batch for ultra-high throughput
+
+# Read specifications - MGI short reads
+read_length: 150          # PE150 configuration
+paired_end: true          # Paired-end sequencing
+insert_size: 350          # 350bp average insert size
+
+# Quality specifications
+base_quality: 30          # Q30 initial quality
+quality_decay: 0.15       # Moderate quality decay
+q30_percentage: 85.0      # 85% Q30+ (typical for MGI)
+
+# Timing and compression
+batch_interval: "1m"      # Very high throughput - new files every minute
+time_compression: 1000    # 1000x compression: 48h run → ~3 minutes
+
+# MGI DNB-specific parameters
+dnb_loading: 8000000000   # 8 billion clusters per slide
+slides_per_run: 6         # 6 slides processed simultaneously
+dnb_chemistry: "rolling_circle"  # Rolling circle amplification
+
+# Cost optimization settings
+cost_per_genome: 100      # Target <$100 per 30x genome
+throughput_optimization: "maximum"  # Optimize for maximum throughput
+
+# Enterprise features
+enable_fingerprinting: true
+fingerprinting_strategy: "balanced"  # Balanced for high-throughput
+customer_id: "MGI_DEMO_BIOBANK_001"
+
+# Validation settings
+enable_validation: true
+statistical_tests:
+  - "read_length_distribution"
+  - "quality_score_distribution"
+  - "insert_size_distribution"
+  - "paired_end_consistency"
+
+# Multi-sample configuration (population genomics)
+multiplexing:
+  enabled: true
+  samples_per_lane: 96    # High multiplexing for population studies
+  barcode_strategy: "dual_index"
+
+# Output format
+compression: "gzip"
+format: "fastq"
+
+# Expected output characteristics
+expected_output:
+  total_reads: 400000000     # 400M reads (200 batches × 2M reads)
+  total_bases: 120000000000  # 120 Gb total output
+  reads_per_sample: 4166667  # ~4.2M reads per sample (96 samples)
+  coverage_per_sample: "4x"  # Low coverage for population genomics
+  cost_per_sample: 25        # ~$25 per 4x sample
+
+# Quality and error patterns
+error_patterns:
+  dnb_specific: true
+  gc_bias: "moderate"       # Moderate GC bias typical of DNB
+  systematic_errors: true   # Some systematic patterns
+  position_bias: true       # Quality varies by read position
+
+# Ultra-high throughput specifications
+throughput:
+  max_slides: 6
+  parallel_processing: true
+  automated_loading: true
+  robotic_handling: true
+
+# Population genomics applications
+applications:
+  - "population_genomics"
+  - "gwas_studies"
+  - "rare_variant_discovery"
+  - "biobank_sequencing"
+  - "pharmacogenomics"
+
+# Comments
+description: |
+  This configuration simulates a large-scale population genomics study
+  using the MGI DNBSEQ-T20×2 ultra-high throughput platform. The setup
+  is optimized for cost-effective sequencing of large cohorts at lower
+  coverage depths.
+  
+  Key features of this simulation:
+  - Ultra-high throughput with 6 slides processed simultaneously
+  - 96-sample multiplexing for population studies
+  - Cost-optimized at <$100 per genome
+  - DNA Nanoball (DNB) amplification technology
+  - Suitable for biobank and population genomics applications
+  
+  This platform excels at:
+  - Large-scale GWAS studies
+  - Population genomics research
+  - Biobank sequencing projects
+  - Cost-sensitive high-throughput applications
+  - Rare variant discovery in large cohorts

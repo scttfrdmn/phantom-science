@@ -1,0 +1,197 @@
+# Element Biosciences AVITI Sequencer Configuration
+# High-accuracy short-read sequencing platform using Sequencing-by-Binding (SBB)
+# Technical specifications based on 2024 Element Biosciences documentation
+
+version: "2.0"
+platform: "element_aviti"
+vendor: "Element Biosciences"
+model: "AVITI"
+chemistry: "Avidity_SBB_v1"
+
+# Platform identification
+platform_type: "short_read_high_accuracy"
+technology: "SBB"  # Sequencing-by-Binding
+release_date: "2023-06-01"
+
+# Core specifications
+specifications:
+  # Read characteristics
+  read_type: "paired_end"
+  read_length:
+    min: 75
+    max: 300
+    standard: [75, 150, 300]  # Standard configurations
+    default: 150
+  
+  # Quality specifications - AVITI's key differentiator
+  accuracy:
+    q50_percentage: 70.0      # ≥70% Q50 bases (with UltraQ)
+    q40_percentage: 90.0      # ≥90% Q40 bases (with UltraQ)
+    q30_percentage: 96.2      # 96.2% Q30 bases
+    peak_quality: 44          # Q44 peak quality score
+    quality_encoding: "phred33"
+    ultraq_mode: true         # Enhanced quality with Cloudbreak UltraQ
+  
+  # Throughput specifications
+  throughput:
+    max_output_gb: 600        # 600 GB maximum output
+    max_reads_billion: 2.0    # 2 billion reads maximum
+    min_reads_million: 100    # 100 million reads minimum
+    reads_per_flowcell: 1000000000  # ≥1B read pairs per flow cell
+    medium_flowcell_reads: 25000000  # ~25M reads for medium flow cell
+    
+    # Dual flow cell system
+    dual_flowcell: true
+    independent_operation: true  # Each flow cell operates independently
+
+# Timing specifications
+timing:
+  run_time_hours: 38          # 38 hours for 2×150 standard run
+  max_run_time_hours: 60      # Up to 60 hours for high-output runs
+  
+  # Phases breakdown
+  phases:
+    initialization: 2.0       # System initialization
+    sample_loading: 1.0       # Flow cell loading
+    sequencing: 34.0         # Active sequencing (dual flow cell)
+    final_processing: 1.0     # Final data processing
+  
+  # Time compression support
+  compression_factors: [1, 10, 100, 1000]
+  default_compression: 100
+
+# Sample requirements
+sample_requirements:
+  input_dna_ng_min: 10       # Minimum 10 ng input
+  input_dna_ng_optimal: 100  # 100 ng optimal
+  library_concentration_nm: 4 # 4 nM loading concentration
+  sample_volume_ul: 50       # Sample volume
+
+# Cost and capacity
+economics:
+  cost_per_gb_usd: 6.5       # $5-7/Gb vs $20-30/Gb NextSeq
+  genome_cost_reduction: 0.3  # 70% cost reduction vs competitors
+  reagent_reduction: 0.1     # 90% reagent cost reduction through avidity
+
+# Technology-specific features
+technology_features:
+  # Avidity Sequencing-by-Binding characteristics
+  avidite_technology: true
+  multivalent_scaffolds: true    # 2-10 arms per avidite
+  unlabeled_nucleotides: true    # Uses unlabeled nucleotides
+  rolling_circle_amplification: true  # RCA vs bridge amplification
+  
+  # Reduced artifacts
+  no_index_hopping: true
+  no_optical_duplicates: true
+  no_exclusion_amplification: true
+  
+  # Enhanced performance
+  homopolymer_stability: true    # Stable through homopolymers
+  enhanced_contrast: true        # Better contrast-to-noise ratio
+
+# File generation patterns
+output:
+  file_format: "fastq"
+  compression: "gzip"
+  
+  # File naming pattern similar to Illumina but with AVITI identifiers
+  file_pattern: "{sample_name}_S{sample_number}_L{lane}_{read}_001.fastq.gz"
+  
+  # Read ID format for AVITI
+  # Format: @{instrument}:{run_id}:{flowcell}:{lane}:{tile}:{x}:{y} {read}:{filtered}:{control}:{index}
+  read_id_pattern: "@{instrument_id}:{run_id}:{flowcell_id}:{lane}:{tile}:{x_pos}:{y_pos} {read}:N:0:{index}"
+
+# Hardware specifications
+hardware:
+  dual_flowcell_system: true
+  staggered_runs: true       # Can start runs at different times
+  independent_lanes: true    # Individually addressable lanes
+  real_time_monitoring: true
+
+# Quality decay simulation
+quality_decay:
+  enabled: true
+  # AVITI shows more uniform quality with higher variance within reads
+  initial_quality: 44        # Q44 peak quality
+  decay_rate: 0.02          # Moderate decay rate
+  minimum_quality: 20
+  position_based: false     # Less positional bias than Illumina
+  
+  # AVITI-specific quality characteristics
+  within_read_variance: true  # Higher variance within individual reads
+  stable_homopolymer: true   # Stable quality through homopolymers
+
+# Error patterns (for realistic simulation)
+error_patterns:
+  insertion_rate: 0.002
+  deletion_rate: 0.002  
+  substitution_rate: 0.003
+  
+  # AVITI-specific characteristics
+  homopolymer_errors: false      # Improved homopolymer performance
+  homopolymer_error_reduction: 0.97  # 97% better than SBS
+  systematic_error_reduction: 0.9    # 90% lower error rate overall
+  rna_seq_error_reduction: 0.325     # 32.5% lower error rate for RNA
+
+# Steganographic fingerprinting compatibility
+steganography:
+  compatible: true
+  strategy: "balanced"       # Use balanced approach for high-quality data
+  embedding_positions: "quality_scores"
+  capacity_estimate: "high"  # High quality scores provide good capacity
+
+# Validation parameters
+validation:
+  statistical_tests:
+    - "read_length_distribution"
+    - "quality_score_distribution"
+    - "base_composition"
+    - "error_rate_analysis"
+    - "homopolymer_performance"
+  
+  expected_metrics:
+    q40_percentage: 90.0
+    q30_percentage: 96.2
+    peak_quality: 44
+    gc_content_range: [35, 65]  # Depends on sample
+    error_rate_max: 0.007      # <0.7% error rate
+
+# Workflow integration
+workflows:
+  cromwell: true
+  nextflow: true
+  snakemake: true
+  
+  # Standard genomics workflows
+  whole_genome_sequencing: true
+  exome_sequencing: true
+  rna_sequencing: true
+  targeted_sequencing: true
+  metagenomics: true
+
+# Unique AVITI characteristics for simulation
+aviti_specific:
+  # Sequencing-by-Binding characteristics
+  binding_kinetics: true     # Model binding vs synthesis kinetics
+  multivalent_interactions: true
+  nanomolar_concentrations: true  # vs micromolar for SBS
+  
+  # Performance characteristics
+  coverage_optimization: true    # Better performance at 20-30x coverage
+  quality_calibration: true     # Well-calibrated quality scores
+  reduced_batch_effects: true   # More consistent between runs
+
+# Notes for implementation
+notes: |
+  Element Biosciences AVITI uses revolutionary Sequencing-by-Binding (SBB) technology
+  with multivalent avidite reagents instead of traditional sequencing-by-synthesis.
+  This enables exceptional accuracy (Q40+) with significantly reduced reagent costs.
+  
+  Key implementation considerations:
+  - Higher quality score variance within individual reads compared to Illumina
+  - Stable performance through homopolymer regions
+  - Absence of index hopping and optical duplicate artifacts
+  - Better performance characteristics at lower coverage depths
+  - Dual flow cell system allows independent, staggered sequencing runs
+  - Rolling circle amplification eliminates many SBS-related artifacts

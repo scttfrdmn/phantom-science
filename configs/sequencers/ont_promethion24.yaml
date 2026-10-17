@@ -1,0 +1,244 @@
+# Oxford Nanopore PromethION 24 Sequencer Configuration
+# High-throughput real-time nanopore sequencing platform
+# Technical specifications based on 2024 Oxford Nanopore documentation
+
+version: "2.0"
+platform: "ont_promethion24"
+vendor: "Oxford Nanopore Technologies"
+model: "PromethION 24"
+chemistry: "R10.4.1"
+
+# Platform identification
+platform_type: "nanopore_ultra_long_read"
+technology: "Nanopore"
+release_date: "2018-05-01"  # Original release, updated with R10.4.1
+
+# Core specifications
+specifications:
+  # Read characteristics
+  read_type: "single_end_nanopore"
+  read_length:
+    min: 100                # 100 bp minimum practical read
+    max: 4000000           # >4 Mb maximum observed
+    n50_target: 50000      # >50 kb N50 with optimized libraries
+    median: 25000          # Typical median read length
+    distribution: "log_normal"  # Long-tail distribution
+  
+  # Quality specifications
+  accuracy:
+    modal_accuracy: 0.99   # 99%+ modal accuracy with R10.4.1
+    raw_accuracy: 0.88     # ~88% raw accuracy typical
+    q20_percentage: 85.0   # ~85% Q20+ with SUP basecalling
+    median_quality: 12     # Raw reads Q8-12, processed Q20+
+    quality_encoding: "phred33"
+    
+    # Basecaller modes
+    basecaller_modes:
+      fast: { accuracy: 0.85, quality: 10 }
+      hac: { accuracy: 0.95, quality: 15 }   # High Accuracy
+      sup: { accuracy: 0.99, quality: 20 }   # Super Accurate
+  
+  # Throughput specifications
+  throughput:
+    max_output_tb: 14.0     # 14 Tb theoretical maximum
+    per_flowcell_gb: 290    # Up to 290 Gb per flow cell (current specs ~200 Gb)
+    flowcells_total: 24     # 24 flow cells maximum
+    active_channels_per_fc: 3000  # 3,000 active channels per flow cell
+    total_pores_per_fc: 12000     # Up to 12,000 pores per flow cell
+    min_active_pores: 5000        # Minimum 5,000 active pores for QC
+    
+    # Real-time characteristics
+    translocation_speed_bps: 240  # 240 bases/second for R10.4.1
+    reads_per_second: 4000        # Approximate reads/second system-wide
+
+# Timing specifications
+timing:
+  max_run_time_hours: 72    # 72-hour maximum run time
+  typical_run_time_hours: 48 # 48-hour typical run
+  
+  # Real-time phases
+  phases:
+    initialization: 1.0     # System initialization
+    library_loading: 0.5    # Library loading per flow cell
+    sequencing: 70.5       # Active sequencing (real-time)
+    
+  # Time compression support (simulated compression of real-time data)
+  compression_factors: [1, 10, 100, 1000]
+  default_compression: 100
+  
+  # Pore degradation over time
+  pore_degradation:
+    enabled: true
+    initial_yield_hours: 12  # High yield in first 12 hours
+    degradation_rate: 0.02   # 2% pore loss per hour after initial period
+
+# Sample requirements
+sample_requirements:
+  input_dna_ng_min: 100      # Minimum 100 ng input
+  input_dna_ng_optimal: 1000 # 1 μg optimal for ultra-long reads
+  fragment_length_kb_min: 10 # Minimum 10 kb fragments for good performance
+  fragment_length_kb_optimal: 50  # 50+ kb optimal
+  sample_volume_ul: 75       # Sample volume per flow cell
+
+# Chemistry specifications
+chemistry_versions:
+  r9_4_1:
+    pore_type: "R9.4.1"
+    translocation_speed: 400  # 400 bp/s
+    accuracy: 0.88           # ~88% modal accuracy
+    kit: "SQK-LSK110"
+    
+  r10_4_1:  # Current default
+    pore_type: "R10.4.1"
+    translocation_speed: 240  # 240 bp/s (slower = more accurate)
+    accuracy: 0.99           # 99%+ modal accuracy
+    kit: "SQK-LSK114"
+    dual_reader_heads: true
+    homopolymer_improvement: true
+
+# Cost and capacity
+economics:
+  cost_per_gb_estimate_usd: 50   # Approximate cost per Gb
+  flow_cell_cost_usd: 675       # Approximate flow cell cost
+  reagent_efficiency: "high"    # High efficiency due to direct sequencing
+
+# Hardware specifications
+hardware:
+  gpu_acceleration: true     # 4 NVIDIA A-Series GPUs
+  real_time_basecalling: true
+  storage_capacity_tb: 28    # 28 TB SSD storage
+  network_speed_gbps: 10     # 10 Gbps networking
+  parallel_flowcells: 24     # All 24 flow cells can run simultaneously
+
+# Real-time features
+real_time_features:
+  adaptive_sampling: true    # Read-until technology
+  live_basecalling: true     # Real-time basecalling during sequencing
+  decision_latency_s: 0.8    # 0.8 second decision latency
+  enrichment_factor_max: 16.96  # Up to 16.96x enrichment
+  
+  # Read-until parameters
+  read_until:
+    enabled: true
+    decision_time_bases: 350  # Decision after ~350 bases
+    voltage_reversal: true    # Eject unwanted molecules
+    api_integration: true     # MinKNOW API access
+
+# File generation patterns
+output:
+  file_format: "fastq"
+  compression: "gzip"
+  
+  # Oxford Nanopore file naming pattern
+  # Format: {sample_name}_{barcode}_{flowcell_id}_{read_number}.fastq.gz
+  file_pattern: "{sample_name}_{barcode}_{flowcell_id}_{file_number}.fastq.gz"
+  
+  # Read ID format for ONT
+  # Format: {read_id} runid={run_id} sampleid={sample_id} read={read_number} ch={channel} start_time={start_time}
+  read_id_pattern: "{read_id} runid={run_id} sampleid={sample_id} read={read_number} ch={channel} start_time={start_time}"
+
+# Quality characteristics
+quality_characteristics:
+  # Error type distribution
+  deletion_rate: 0.05       # ~5% deletions (most common)
+  insertion_rate: 0.025     # ~2-3% insertions  
+  substitution_rate: 0.025  # ~2-3% substitutions
+  
+  # Context-dependent errors
+  homopolymer_errors: true
+  homopolymer_error_rate: 0.08  # Higher error in homopolymers ≥5 bases
+  gc_bias_low: 0.06         # 6% error in low-GC regions
+  gc_bias_high: 0.08        # 8% error in high-GC regions
+  
+  # R10.4.1 improvements
+  homopolymer_improvement: true  # Better homopolymer discrimination
+  repeat_region_improvement: true # Better in tandem repeats
+
+# Quality decay simulation
+quality_decay:
+  enabled: false            # Nanopore reads don't show traditional quality decay
+  per_base_variation: true  # Quality varies per base, not by position
+  context_dependent: true   # Quality depends on sequence context
+
+# Error patterns (for realistic simulation)
+error_patterns:
+  # Primary error characteristics
+  systematic_errors: true
+  context_dependent: true
+  strand_bias: true         # Some errors show strand bias
+  
+  # Improved patterns with R10.4.1
+  reduced_homopolymer_errors: true
+  improved_consensus: true
+  better_discrimination: true
+
+# Steganographic fingerprinting compatibility
+steganography:
+  compatible: true
+  strategy: "aggressive"     # Can use more aggressive embedding due to error tolerance
+  embedding_positions: "quality_scores"
+  capacity_estimate: "very_high"  # Very long reads provide excellent capacity
+  nanopore_specific: true    # Nanopore-optimized embedding strategies
+
+# Validation parameters
+validation:
+  statistical_tests:
+    - "read_length_distribution"
+    - "quality_score_distribution"
+    - "error_rate_analysis"
+    - "homopolymer_performance"
+    - "real_time_characteristics"
+  
+  expected_metrics:
+    n50_min: 30000          # Minimum N50 of 30 kb
+    modal_accuracy: 0.99
+    q20_percentage: 85.0
+    deletion_rate_max: 0.07  # Maximum 7% deletion rate
+
+# Workflow integration
+workflows:
+  cromwell: true
+  nextflow: true
+  snakemake: true
+  
+  # Nanopore-specific workflows
+  de_novo_assembly: true
+  structural_variant_calling: true
+  methylation_detection: true
+  real_time_analysis: true
+  adaptive_sampling: true
+
+# Nanopore-specific features
+nanopore_specific:
+  # Sequencing characteristics
+  single_molecule: true      # Direct single-molecule sequencing
+  no_amplification: true     # No PCR amplification required
+  native_dna_rna: true       # Can sequence native DNA/RNA
+  real_time_streaming: true  # Real-time data streaming
+  
+  # Advanced features
+  multiplexing_barcodes: 96  # Up to 96 samples per run
+  direct_rna_sequencing: true
+  methylation_detection: true
+  protein_sequencing: false  # Not available yet
+  
+  # Pore characteristics
+  voltage_control: true      # Voltage-controlled translocation
+  current_measurement: true  # Measures current changes
+  signal_processing: true    # Raw signal to sequence conversion
+
+# Notes for implementation
+notes: |
+  Oxford Nanopore PromethION 24 represents the highest-throughput nanopore
+  sequencing platform, capable of generating ultra-long reads (>50 kb N50)
+  with real-time analysis and adaptive sampling capabilities.
+  
+  Key implementation considerations:
+  - Real-time sequencing with immediate data availability
+  - Error patterns differ significantly from short-read platforms
+  - Quality scores represent confidence in basecalls, not traditional Phred scores
+  - Adaptive sampling enables targeted sequencing of regions of interest
+  - Single-molecule sequencing eliminates amplification bias
+  - Long reads enable applications impossible with short-read technologies
+  - Pore degradation over time affects yield and should be modeled
+  - GPU acceleration essential for real-time basecalling of all 24 flow cells

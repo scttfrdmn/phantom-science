@@ -1,0 +1,194 @@
+# Phantom Science - Git Ignore File
+
+# Build artifacts
+phantom-science
+phantom-science.exe
+benchmark_reference
+enterprise_fingerprinting
+execute_expert_validation
+production_training
+step_by_step_test
+test_haplotype_integration
+test_multiplatform_quality
+test_population_structure_validation
+test_simple_2025_integration
+validate_authenticity
+bin/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+coverage.out
+coverage.html
+
+# Dependency directories
+vendor/
+
+# Go workspace file
+go.work
+
+# Generated FASTQ files and output directories
+*.fastq
+*.fastq.gz
+*_output/
+sequencer_output/
+demo_output/
+novaseq_s2_output/
+
+# Test data and real sequencer files
+test_data/
+real_sequencer_data/
+
+# Test output directories
+test_output/
+temp/
+tmp/
+*_progress/
+.training_in_progress
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs
+*.log
+
+# Runtime data
+pids
+*.pid
+*.seed
+
+# Coverage directory used by tools like istanbul
+coverage/
+
+# Temporary files
+*.tmp
+*.temp
+
+# Secret files (for development)
+.env
+.env.local
+.secrets
+*.key
+*.pem
+
+# Backup files
+*.bak
+*.backup
+
+# Python cache (if any Python tools are used)
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Rust target directory (for crypto engine and stegano)
+crypto-engine/target/
+.stegano/
+target/
+Cargo.lock
+*.rlib
+
+# Node modules (if any JS tools are used)
+node_modules/
+
+# Configuration overrides (personal configs)
+config.local.*
+*_local.*
+
+# Development databases
+*.db
+*.sqlite
+*.sqlite3
+
+# Workflow execution files and artifacts
+workflows/cromwell/cromwell-executions/
+workflows/cromwell/cromwell-workflow-logs/
+workflows/cromwell/cromwell_output/
+cromwell_output/
+*.jar
+
+# Large binary artifacts
+*.whl
+*.tar.gz
+*.zip
+
+# Python virtual environments
+phantom-pipeline-env/
+venv/
+env/
+.venv/
+
+# Snakemake
+.snakemake/
+
+# Claude AI files
+.claude/
+
+# Third-party genomics tools (installed locally, not tracked)
+genomics_tools/fastStructure/
+
+# Genomic data files and training data
+data/
+models/
+*.fasta
+*.fasta.gz
+*.fa
+*.fa.gz
+*.fastq
+*.fastq.gz
+*.fai
+*.dict
+
+# Large genomic reference files
+GRCh38*
+chr*.fasta
+reference_genome/
+genomics_training/
+# Binaries built at the repo root by `go build ./cmd/<name>`
+/complete_11_population_training
+/contextual_vcf_training
+/create_parallel_expert_package
+/full_1000genomes_training
+/high_performance_training
+/k6_enhanced_training
+/k6_vcf_training
+/k8_advanced_training
+/main
+/population_gc_adjustment
+/population_gc_demo
+/population_model_training
+/population_specific_training
+/population_training
+/population_weighted_training
+/real_vcf_training
+/reference_based_training
+/simple_training
+/streaming_training
+/test_2025_research_integration
+/test_enhanced_model
+/train_hmm
+/validate_models
+/examples/examples
+
+# Python virtualenvs and third-party tool installs
+*_env/
+*-env/
+genomics_tools/

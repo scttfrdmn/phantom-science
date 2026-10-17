@@ -1,0 +1,9 @@
+{
+  "final_workflow_outputs_dir": "cromwell_output",
+  "use_relative_output_paths": true,
+  "final_workflow_log_dir": "cromwell_output/logs",
+  "final_call_logs_dir": "cromwell_output/call_logs",
+  "write_to_cache": true,
+  "read_from_cache": true,
+  "backend": "Local"
+}

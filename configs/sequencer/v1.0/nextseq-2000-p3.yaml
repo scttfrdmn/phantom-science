@@ -1,0 +1,57 @@
+# NextSeq 2000 P3 Flow Cell Configuration  
+# Based on Illumina NextSeq 1000/2000 System Specifications (2024)
+# Spec Reference: https://www.illumina.com/systems/sequencing-platforms/nextseq-1000-2000/specifications.html
+
+schema_version: "1.0"
+last_updated: "2024-07-03"
+validated_against: "Illumina NextSeq 2000 Specs with XLEAP-SBS"
+config_type: "sequencer"
+
+# Sequencer Identity and Hardware
+sequencer:
+  model: "NextSeq 2000"
+  flow_cell_type: "P3"                    # P1, P2 (NextSeq 1000), P3, P4 (NextSeq 2000)
+  chemistry_version: "XLEAP-SBS"          # Advanced chemistry with 2-channel
+  instrument_id: "VH00123"                # Format: VH#### for NextSeq 2000
+  run_id: "240101_VH00123_0001_AHXXXXXXXXXXXX" # Format includes flow cell barcode
+  flowcell_id: "HXXXXXXXXXXXX"           # NextSeq flow cell format
+
+# Sample and Run Configuration
+sample:
+  name: "Sample_001"
+  lane: 1                                 # Single lane flow cell
+  output_dir: "./nextseq_p3_output"
+
+# Read Structure and Output
+reads:
+  length: 150                             # 1×50 to 2×300bp supported (14 configs)
+  paired_end: true
+  reads_per_batch: 5000000               # ~5M reads per batch for P3
+  total_batches: 8                       # Moderate throughput
+  batch_interval: "45m"                  # Faster than NovaSeq
+
+# Quality Parameters (XLEAP-SBS chemistry)
+quality:
+  base_quality: 33                       # Slightly lower than NovaSeq
+  quality_decay: 0.08                    # Moderate decay
+  q30_percentage: 90.0                   # ≥90% Q30 for shorter reads
+  cluster_density_k_per_mm2: 650000     # Higher density than NovaSeq
+
+# Performance Specifications  
+performance:
+  run_time_hours: 18                     # Fast turnaround for 2×150bp
+  max_output_gb: 120.0                   # P3 flow cell capacity
+  loading_concentration_pm: 1.5          # Typical loading for NextSeq
+  phix_spike_in_percent: 5.0             # Higher PhiX needed for 2-channel
+
+# Technology Features
+technology:
+  sbs_version: "XLEAP-SBS"               # Next-generation chemistry
+  xleap_improvements:
+    - "50× reduction in hydrolysis"       # More stable nucleotides
+    - "2.5× faster block cleavage"        # Faster sequencing
+    - "Heat resistant dyes"               # Improved robustness
+  patterned_flow_cell: true              # Billions of nanowells
+  two_channel_chemistry: true            # Key difference from 4-channel
+  four_channel_chemistry: false
+  low_diversity_sensitive: true          # Requires higher PhiX for low diversity

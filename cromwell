@@ -1,0 +1,20 @@
+#!/bin/bash
+# Cromwell wrapper script for phantom-pipeline
+
+CROMWELL_VERSION="85"
+CROMWELL_JAR="cromwell-${CROMWELL_VERSION}.jar"
+CROMWELL_URL="https://github.com/broadinstitute/cromwell/releases/download/${CROMWELL_VERSION}/cromwell-${CROMWELL_VERSION}.jar"
+
+# Check if cromwell.jar exists, if not download it
+if [ ! -f "$CROMWELL_JAR" ]; then
+    echo "Downloading Cromwell ${CROMWELL_VERSION}..."
+    curl -L "$CROMWELL_URL" -o "$CROMWELL_JAR"
+    if [ $? -ne 0 ]; then
+        echo "Failed to download Cromwell"
+        exit 1
+    fi
+fi
+
+# Execute Cromwell with Java
+export PATH="/opt/homebrew/opt/openjdk@17/bin:$PATH"
+java -jar "$CROMWELL_JAR" "$@"

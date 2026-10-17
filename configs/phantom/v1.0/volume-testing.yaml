@@ -1,0 +1,103 @@
+# Phantom Science Volume Testing Configuration v1.0
+# Optimized for generating thousands to millions of files with minimal overhead
+
+schema_version: "1.0"
+last_updated: "2024-07-03"
+config_type: "phantom_volume_testing"
+
+# Volume Testing Customer Info
+enterprise:
+  customer_id: "VOLUME_TEST_001"
+  license_key: "phantom-testing-2024"
+  organization: "Internal Testing"
+  service_tier: "testing"                # Minimal service tier
+  compliance_level: "none"               # No compliance overhead
+
+# Disabled Enterprise Features (for performance)
+fingerprinting:
+  enable: false                          # Disable for maximum speed
+  customer_fingerprint: false
+  dataset_fingerprint: false
+  steganography_layers: []               # No steganography overhead
+  cryptographic_signing: false
+  tamper_detection: false
+
+# Minimal Audit Logging
+audit_logging:
+  enable: false                          # Disable audit logging
+  log_level: "error"                     # Only log errors
+  retention_days: 1                      # Minimal retention
+  compliance_format: "none"
+  export_endpoint: ""
+  encryption: "none"
+
+# Validation Framework (disabled for speed)
+validation:
+  enable: false                          # Skip all validation
+  validation_level: "none"
+  statistical_tests: []                  # No statistical tests
+  population_genetics_tests: []          # No population tests
+  pipeline_compatibility_tests: []       # No pipeline tests
+
+# Volume Testing Optimizations
+volume_testing:
+  fast_generation: true                  # Use fastest algorithms
+  minimal_validation: true               # Skip quality checks
+  simple_sequences: true                 # Generate simple DNA patterns
+  reduced_quality_complexity: true       # Simplified quality scores
+  skip_compression: true                 # No file compression
+  batch_processing: true                 # Process in batches
+  memory_optimization: true              # Optimize memory usage
+  parallel_generation: true             # Use all CPU cores
+
+# Output Customization (performance focused)
+output_customization:
+  compression: "none"                    # No compression for speed
+  file_format: "fastq"                  # Uncompressed FASTQ
+  batch_processing: true                 # Enable batching
+  real_time_generation: false           # Batch mode only
+  quality_profiles: "simple"            # Simple quality patterns
+  
+  # Disabled Features
+  contamination_simulation:
+    enable: false                        # No contamination
+  adapter_simulation:
+    enable: false                        # No adapter sequences
+  error_profiling:
+    enable: false                        # No error simulation
+
+# Performance Targets
+performance_targets:
+  target_throughput: "1M_reads_per_minute" # Performance goal
+  max_memory_usage: "4GB"               # Memory limit
+  target_file_count: 10000              # Support up to 10K files
+  concurrent_batches: 4                  # Parallel batch processing
+
+# Testing Scenarios
+testing_scenarios:
+  small_scale:
+    files: 100
+    reads_per_file: 10000
+    description: "Quick validation test"
+  
+  medium_scale:
+    files: 1000  
+    reads_per_file: 100000
+    description: "Performance baseline test"
+    
+  large_scale:
+    files: 10000
+    reads_per_file: 1000000
+    description: "Volume stress test"
+    
+  extreme_scale:
+    files: 100000
+    reads_per_file: 100000
+    description: "Maximum scale test"
+
+# Quality Simplifications (for speed)
+simplified_quality:
+  fixed_quality_score: 30               # Use fixed quality instead of decay
+  simple_read_ids: true                  # Minimal read ID format
+  no_duplicate_checking: true            # Skip duplicate detection
+  deterministic_sequences: true         # Use patterns instead of random

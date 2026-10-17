@@ -1,0 +1,65 @@
+{
+  "phantom_science_config": {
+    "version": "0.1.0-mvp",
+    "license_key": "phantom-testing-2024",
+    "customer_info": {
+      "customer_id": "VOLUME_TEST_001",
+      "organization": "Internal Testing",
+      "service_tier": "testing"
+    }
+  },
+  
+  "enterprise_features": {
+    "fingerprinting": {
+      "enable": false,
+      "customer_fingerprint": false,
+      "dataset_fingerprint": false
+    },
+    
+    "audit_logging": {
+      "enable": false,
+      "log_level": "error"
+    },
+    
+    "compliance": {
+      "level": "none",
+      "fda_validation": false,
+      "ema_compliance": false
+    }
+  },
+  
+  "validation_framework": {
+    "enable": false,
+    "validation_level": "none"
+  },
+  
+  "synthetic_data_models": {
+    "disease_models": {
+      "enable": false
+    },
+    "population_genetics": {
+      "enable": false
+    },
+    "data_integration": {
+      "aws_genomics_sources": false
+    }
+  },
+  
+  "volume_testing": {
+    "fast_generation": true,
+    "minimal_validation": true,
+    "simple_sequences": true,
+    "reduced_quality_complexity": true,
+    "skip_compression": true
+  },
+  
+  "output_customization": {
+    "compression": "none",
+    "batch_processing": true,
+    "real_time_generation": false,
+    "quality_profiles": "simple",
+    "contamination_simulation": {
+      "enable": false
+    }
+  }
+}

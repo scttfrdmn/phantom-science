@@ -1,0 +1,42 @@
+name: CI/CD Pipeline
+
+on:
+  workflow_dispatch:  # Manual trigger only
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  GO_VERSION: '1.24'
+  RUST_VERSION: 'stable'
+
+jobs:
+  go-build-test:
+    name: Go Build & Test  
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          
+      - name: Install dependencies
+        run: go mod download
+        
+      - name: Build main packages
+        run: |
+          echo "Building core command-line tools..."
+          CGO_ENABLED=0 go build ./cmd/validate_models
+          CGO_ENABLED=0 go build ./cmd/create_parallel_expert_package
+          CGO_ENABLED=0 go build ./cmd/test_2025_research_integration
+          
+      - name: Run core Go tests
+        run: |
+          echo "Running core package tests..."
+          CGO_ENABLED=0 go test ./internal/genomics/authenticity/... -v -short
+          CGO_ENABLED=0 go test ./internal/genomics/reference/... -v -short  
+          CGO_ENABLED=0 go test ./internal/population/... -v -short
+          echo "✅ Core tests passed"

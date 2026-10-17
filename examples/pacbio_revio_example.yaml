@@ -1,0 +1,79 @@
+# Example Configuration for PacBio Revio HiFi Long-Read Sequencing
+# This configuration demonstrates how to simulate a typical human whole genome
+# sequencing run on the PacBio Revio platform
+
+# Sequencer platform specification
+sequencer_model: "PacBio Revio"
+flow_cell_type: "SMRT"
+chemistry: "SPRQ"
+
+# Sample information
+sample_name: "HG002_WGS_30x"
+lane: 1
+barcode: "bc1001"
+
+# Run configuration
+output_dir: "./output/pacbio_revio_example"
+total_batches: 100        # Generate 100 SMRT cells worth of data
+reads_per_batch: 150000   # ~15M reads per SMRT cell / 100 batches
+
+# Read specifications - PacBio HiFi long reads
+read_length: 17500        # Average 17.5kb HiFi reads
+read_length_range:
+  min: 10000             # 10kb minimum
+  max: 30000             # 30kb maximum
+  distribution: "log_normal"  # Realistic long-read distribution
+
+paired_end: false         # HiFi reads are single-end consensus reads
+
+# Quality specifications
+base_quality: 30          # Q30 median quality (99.9% accuracy)
+quality_decay: 0.01       # Very slow quality decay for consensus reads
+q30_percentage: 90.0      # 90% of bases Q30+
+
+# Timing and compression
+batch_interval: "2m"      # Generate new file every 2 minutes (compressed)
+time_compression: 100     # 100x compression: 24h run → ~14 minutes
+
+# PacBio-specific parameters
+hifi_passes: 10           # Average CCS passes for consensus
+zmw_productivity: 0.6     # 60% ZMW productivity
+polymerase_read_length: 50000  # Average polymerase read length
+
+# Enterprise features
+enable_fingerprinting: true
+fingerprinting_strategy: "conservative"  # Conservative for high-quality data
+customer_id: "PACBIO_DEMO_001"
+
+# Validation settings
+enable_validation: true
+statistical_tests:
+  - "read_length_distribution"
+  - "quality_score_distribution"
+  - "hifi_accuracy_metrics"
+
+# Output format
+compression: "gzip"
+format: "fastq"
+
+# Expected output characteristics
+expected_output:
+  total_reads: 15000000        # 15M HiFi reads
+  total_bases: 262500000000    # ~262 Gb (15M × 17.5kb)
+  average_read_length: 17500
+  median_quality: 30
+  estimated_coverage: "30x"    # For human genome
+
+# Comments
+description: |
+  This configuration simulates a 30x coverage human whole genome sequencing
+  run on the PacBio Revio platform. The run generates realistic HiFi long
+  reads with high accuracy suitable for de novo assembly, structural variant
+  detection, and methylation analysis.
+  
+  Key features of this simulation:
+  - 15M HiFi reads averaging 17.5kb
+  - Q30+ quality (99.9% accuracy)
+  - Single-molecule consensus reads
+  - No PCR amplification artifacts
+  - Suitable for complex genomic regions

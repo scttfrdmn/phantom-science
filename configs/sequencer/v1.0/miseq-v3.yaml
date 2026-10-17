@@ -1,0 +1,69 @@
+# MiSeq v3 Flow Cell Configuration
+# Based on Illumina MiSeq System Specifications (2024) 
+# Spec Reference: https://www.illumina.com/systems/sequencing-platforms/miseq/specifications.html
+
+schema_version: "1.0"
+last_updated: "2024-07-03"
+validated_against: "Illumina MiSeq v3 Reagent Kit Specifications"
+config_type: "sequencer"
+
+# Sequencer Identity and Hardware
+sequencer:
+  model: "MiSeq"
+  flow_cell_type: "v3"                    # v2, v3 reagent kits available
+  chemistry_version: "v3"                 # Highest output MiSeq chemistry
+  instrument_id: "M00123"                 # Format: M#### for MiSeq
+  run_id: "240101_M00123_0001_000000000-XXXXX" # MiSeq run ID format
+  flowcell_id: "000000000-XXXXX"         # MiSeq flow cell cartridge format
+
+# Sample and Run Configuration
+sample:
+  name: "Sample_001"
+  lane: 1                                 # Single lane flow cell
+  output_dir: "./miseq_v3_output"
+
+# Read Structure and Output (v3 kit specifications)
+reads:
+  length: 300                             # Up to 2×300bp (longest Illumina read)
+  paired_end: true
+  reads_per_batch: 2500000               # ~2.5M reads per batch
+  total_batches: 6                       # 15M total reads max
+  batch_interval: "1h"                   # Moderate batch generation
+
+# Quality Parameters (v3 chemistry)
+quality:
+  base_quality: 30                       # Standard Phred 30 starting point
+  quality_decay: 0.12                    # Higher decay for longer reads
+  q30_percentage: 80.0                   # ≥80% Q30 typical for 300bp reads
+  cluster_density_k_per_mm2: 1300       # 1200-1400K clusters/mm² for v3
+
+# Performance Specifications
+performance:
+  run_time_hours: 65                     # ~65 hours for 2×300bp run
+  max_output_gb: 15.0                    # 13.2-15GB maximum output
+  max_cycles: 625                        # Up to 625 cycles for v3 kit
+  loading_concentration_pm: 12.0         # Higher concentration for MiSeq
+  phix_spike_in_percent: 1.0             # Low PhiX for 4-channel chemistry
+
+# Technology Features
+technology:
+  sbs_version: "v3"                      # MiSeq v3 chemistry
+  reagent_improvements:
+    - "Incorporation Mix (IMT)"           # New v3 reagent
+    - "Scan Mix (USM)"                    # New v3 reagent  
+    - "Increased PR2 volume (500ml)"      # Support for longer runs
+  cluster_generation: "onboard"          # Integrated cluster generation
+  flow_cell_design: "single_lane"        # One lane per flow cell
+  two_channel_chemistry: false           # MiSeq uses 4-channel
+  four_channel_chemistry: true           # Better for low diversity samples
+  benchtop_format: true                  # Compact benchtop sequencer
+
+# Application Suitability
+applications:
+  optimal_for:
+    - "Amplicon sequencing"               # Long reads ideal for amplicons
+    - "16S/ITS sequencing"                # Microbial applications
+    - "Targeted gene panels"              # Small targeted regions
+    - "Validation sequencing"             # Confirmation of variants
+    - "Small genome assembly"             # Bacterial/viral genomes
+  read_length_advantage: "300bp"          # Longest available Illumina reads

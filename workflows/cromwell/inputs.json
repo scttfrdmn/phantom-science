@@ -1,0 +1,16 @@
+{
+  "PhantomAnalysis.fastq_files": [
+    "../../novaseq_s2_output/Sample_001_S1_L001_R1_001.fastq",
+    "../../novaseq_s2_output/Sample_001_S1_L001_R2_001.fastq"
+  ],
+  "PhantomAnalysis.output_dir": "./cromwell_output",
+  "PhantomAnalysis.customer_id": "phantom-science-demo",
+  "PhantomAnalysis.analysis_type": "comprehensive",
+  "PhantomAnalysis.min_quality_score": 20,
+  "PhantomAnalysis.max_n_percentage": 5,
+  "PhantomAnalysis.fingerprint_strategy": "balanced",
+  "PhantomAnalysis.enable_steganography": true,
+  "PhantomAnalysis.batch_size": 1000,
+  "PhantomAnalysis.memory_limit_gb": 8.0,
+  "PhantomAnalysis.cpu_cores": 4
+}

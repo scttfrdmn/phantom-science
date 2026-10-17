@@ -1,0 +1,30 @@
+{
+  "sample_name": "Clinical_Sample_001",
+  "lane": 1,
+  "output_dir": "./miseq_output", 
+  "read_length": 250,
+  "reads_per_batch": 2500000,
+  "batch_interval": "30m",
+  "total_batches": 1,
+  "paired_end": true,
+  "base_quality": 35,
+  "quality_decay": 0.15,
+  
+  "sequencer_settings": {
+    "platform": "MiSeq",
+    "flowcell": "v3",
+    "chemistry": "v3",
+    "cluster_density": 1200000,
+    "lanes_total": 1,
+    "run_cycles": 500,
+    "expected_yield_gb": 8.5
+  },
+  
+  "enterprise": {
+    "customer_id": "CLINICAL_LAB_001", 
+    "fingerprinting": { "enable": false },
+    "validation_level": "none"
+  },
+  
+  "validation": { "enable": false }
+}

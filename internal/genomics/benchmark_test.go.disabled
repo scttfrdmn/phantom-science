@@ -1,0 +1,189 @@
+package genomics
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+	"github.com/scttfrdmn/phantom-science/pkg/types"
+)
+
+// BenchmarkFASTQGeneration benchmarks FASTQ file generation performance
+func BenchmarkFASTQGeneration(b *testing.B) {
+	tmpDir := b.TempDir()
+	
+	config := types.SequencerConfig{
+		SampleName:    "Benchmark_Sample",
+		Lane:          1,
+		OutputDir:     tmpDir,
+		ReadLength:    150,
+		ReadsPerBatch: 1000,
+		BatchInterval: "1s",
+		TotalBatches:  1,
+		PairedEnd:     false,
+		BaseQuality:   30,
+		QualityDecay:  0.1,
+	}
+
+	engine := NewEngine(config)
+	
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		filename := filepath.Join(tmpDir, "benchmark_R1_001.fastq")
+		err := engine.generateFASTQFile(filename, 1, 1)
+		if err != nil {
+			b.Fatalf("Failed to generate FASTQ file: %v", err)
+		}
+		// Clean up for next iteration
+		os.Remove(filename)
+	}
+}
+
+// BenchmarkFASTQGenerationPairedEnd benchmarks paired-end FASTQ generation
+func BenchmarkFASTQGenerationPairedEnd(b *testing.B) {
+	tmpDir := b.TempDir()
+	
+	config := types.SequencerConfig{
+		SampleName:    "Benchmark_Paired",
+		Lane:          1,
+		OutputDir:     tmpDir,
+		ReadLength:    150,
+		ReadsPerBatch: 500,
+		BatchInterval: "1s",
+		TotalBatches:  1,
+		PairedEnd:     true,
+		BaseQuality:   35,
+		QualityDecay:  0.05,
+	}
+
+	engine := NewEngine(config)
+	
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		err := engine.Generate()
+		if err != nil {
+			b.Fatalf("Failed to generate paired-end FASTQ files: %v", err)
+		}
+		// Clean up output directory for next iteration
+		os.RemoveAll(tmpDir)
+		os.MkdirAll(tmpDir, 0755)
+	}
+}
+
+// BenchmarkLongReadGeneration benchmarks long read generation (like MiSeq v3)
+func BenchmarkLongReadGeneration(b *testing.B) {
+	tmpDir := b.TempDir()
+	
+	config := types.SequencerConfig{
+		SampleName:    "Benchmark_LongRead",
+		Lane:          1,
+		OutputDir:     tmpDir,
+		ReadLength:    300, // Long reads
+		ReadsPerBatch: 100,
+		BatchInterval: "1s",
+		TotalBatches:  1,
+		PairedEnd:     false,
+		BaseQuality:   30,
+		QualityDecay:  0.12,
+	}
+
+	engine := NewEngine(config)
+	
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		filename := filepath.Join(tmpDir, "benchmark_long_R1_001.fastq")
+		err := engine.generateFASTQFile(filename, 1, 1)
+		if err != nil {
+			b.Fatalf("Failed to generate long read FASTQ file: %v", err)
+		}
+		os.Remove(filename)
+	}
+}
+
+// BenchmarkHighVolumeGeneration benchmarks high-volume file generation
+func BenchmarkHighVolumeGeneration(b *testing.B) {
+	tmpDir := b.TempDir()
+	
+	config := types.SequencerConfig{
+		SampleName:    "Benchmark_HighVolume",
+		Lane:          1,
+		OutputDir:     tmpDir,
+		ReadLength:    50, // Shorter reads for speed
+		ReadsPerBatch: 10000, // Large batch
+		BatchInterval: "1s",
+		TotalBatches:  1,
+		PairedEnd:     false,
+		BaseQuality:   25,
+		QualityDecay:  0.15,
+	}
+
+	engine := NewEngine(config)
+	
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		filename := filepath.Join(tmpDir, "benchmark_volume_R1_001.fastq")
+		err := engine.generateFASTQFile(filename, 1, 1)
+		if err != nil {
+			b.Fatalf("Failed to generate high-volume FASTQ file: %v", err)
+		}
+		os.Remove(filename)
+	}
+}
+
+// BenchmarkSequenceGeneration benchmarks just the sequence generation part
+func BenchmarkSequenceGeneration(b *testing.B) {
+	config := types.SequencerConfig{
+		ReadLength: 150,
+	}
+	
+	engine := NewEngine(config)
+	
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		sequence := engine.generateSequence()
+		if len(sequence) != config.ReadLength {
+			b.Fatalf("Expected sequence length %d, got %d", config.ReadLength, len(sequence))
+		}
+	}
+}
+
+// BenchmarkQualityGeneration benchmarks quality string generation
+func BenchmarkQualityGeneration(b *testing.B) {
+	config := types.SequencerConfig{
+		ReadLength:   150,
+		BaseQuality:  30,
+		QualityDecay: 0.1,
+	}
+	
+	engine := NewEngine(config)
+	
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		quality := engine.generateQualityString()
+		if len(quality) != config.ReadLength {
+			b.Fatalf("Expected quality length %d, got %d", config.ReadLength, len(quality))
+		}
+	}
+}
+
+// Benchmark memory allocation patterns
+func BenchmarkMemoryAllocation(b *testing.B) {
+	config := types.SequencerConfig{
+		ReadLength:   150,
+		ReadsPerBatch: 1000,
+		BaseQuality:  30,
+		QualityDecay: 0.1,
+	}
+	
+	engine := NewEngine(config)
+	
+	b.ResetTimer()
+	b.ReportAllocs()
+	
+	for i := 0; i < b.N; i++ {
+		sequence := engine.generateSequence()
+		quality := engine.generateQualityString()
+		
+		// Simulate FASTQ record creation
+		_ = "@read_" + string(rune(i)) + "\n" + sequence + "\n+\n" + quality + "\n"
+	}
+}

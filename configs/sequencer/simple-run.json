@@ -1,0 +1,18 @@
+{
+  "sequencer_model": "Generic Illumina",
+  "flow_cell_type": "Standard",
+  "sample_name": "Sample_001",
+  "lane": 1,
+  "output_dir": "./sequencer_output",
+  "read_length": 150,
+  "reads_per_batch": 1000000,
+  "batch_interval": "30m",
+  "total_batches": 10,
+  "paired_end": true,
+  "base_quality": 30,
+  "quality_decay": 0.1,
+  "q30_percentage": 85.0,
+  "instrument_id": "Generic123",
+  "run_id": "240101_Generic123_0001_BXXXXXXXX",
+  "flowcell_id": "XXXXXXXX"
+}

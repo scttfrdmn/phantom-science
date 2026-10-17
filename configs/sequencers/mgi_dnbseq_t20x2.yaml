@@ -1,0 +1,223 @@
+# MGI DNBSEQ-T20×2 Sequencer Configuration
+# Ultra-high throughput DNA Nanoball (DNB) sequencing platform
+# Technical specifications based on 2024 MGI Tech documentation
+
+version: "2.0"
+platform: "mgi_dnbseq_t20x2"
+vendor: "MGI Tech"
+model: "DNBSEQ-T20×2"
+chemistry: "DNB_v3"
+
+# Platform identification
+platform_type: "short_read_ultra_high_throughput"
+technology: "DNB"  # DNA Nanoball sequencing
+release_date: "2023-02-01"
+
+# Core specifications
+specifications:
+  # Read characteristics
+  read_type: "paired_end"
+  read_length:
+    options: [100, 150]       # PE100, PE150 supported
+    default: 150              # PE150 most common
+    insert_size_range: [200, 800]
+    insert_size_average: 350
+  
+  # Quality specifications
+  accuracy:
+    q30_percentage: 85.0      # 85% Q30+ typical for MGI platforms
+    median_quality: 30
+    quality_encoding: "phred33"
+    error_rate: 0.01         # ~1% error rate
+  
+  # Ultra-high throughput specifications
+  throughput:
+    slides_per_run: 6         # Up to 6 slides simultaneously
+    max_output_tb: 72         # 72 Tb effective data per run
+    daily_output_tb: 23       # 23 Tb effective data per day
+    annual_wgs_capacity: 60000  # >60,000 WGS per year
+    clusters_per_slide: 8000000000  # ~8B clusters per slide (estimated)
+
+# Timing specifications
+timing:
+  run_time_hours: 48          # ~48 hours for full capacity run
+  
+  # Phase breakdown for DNB sequencing
+  phases:
+    initialization: 2.0       # System startup and calibration
+    slide_loading: 1.0        # Slide loading and preparation
+    dnb_formation: 4.0        # DNA Nanoball formation
+    sequencing: 40.0          # Active sequencing across 6 slides
+    data_processing: 1.0      # Initial data processing
+  
+  # Time compression support
+  compression_factors: [1, 10, 100, 1000]
+  default_compression: 100
+
+# DNA Nanoball (DNB) technology specifications
+dnb_technology:
+  dnb_formation: true         # Uses DNA Nanoball amplification
+  amplification_method: "rolling_circle"  # Rolling circle amplification
+  slide_based: true          # Uses slides instead of flow cells
+  dip_immersion: true        # Novel dip-immersion technology
+  
+  # Slide specifications
+  slide_format: "large_silicon_wafer"
+  slide_size_mm: [75, 25]    # Large sequencing slides
+  slide_loading: "robotic"   # Robotic slide handling
+
+# Hardware specifications
+hardware:
+  imagers: 2                  # 2 imaging systems
+  robotic_arm: true          # Rotational robotic arm
+  slide_capacity: 6          # 6 slides simultaneous processing
+  automation_level: "high"   # Highly automated system
+  
+  # Imaging system
+  imaging_technology: "fluorescence"
+  wavelengths: 4             # 4-color imaging
+
+# Cost and economics
+economics:
+  cost_per_30x_genome_usd: 100    # <$100 per 30x genome
+  genomes_per_year: 50000         # Up to 50,000 WGS/year
+  cost_reduction_vs_competitors: 0.7  # ~70% cost reduction
+  throughput_vs_illumina_factor: 3    # ~3x throughput advantage
+
+# File generation patterns
+output:
+  file_format: "fastq"
+  compression: "gzip"
+  
+  # MGI file naming convention
+  # Format: {sample_id}_L{lane}_R{read}.fastq.gz
+  file_pattern: "{sample_id}_L{lane:03d}_R{read}.fastq.gz"
+  
+  # Read ID format for MGI
+  # Format: @{instrument_id}:{run_id}:{slide_id}:{lane}:{x_coord}:{y_coord} {read}:N:0:{index}
+  read_id_pattern: "@{instrument_id}:{run_id}:{slide_id}:{lane}:{x_coord}:{y_coord} {read}:N:0:{index}"
+
+# Sample requirements
+sample_requirements:
+  input_dna_ng: 200          # Minimum DNA input
+  input_dna_optimal_ng: 500  # Optimal DNA input
+  fragment_size_bp: 350     # Target fragment size
+  sample_volume_ul: 20      # Sample volume
+
+# Quality decay simulation
+quality_decay:
+  enabled: true
+  # DNB technology quality characteristics
+  initial_quality: 35
+  decay_rate: 0.15          # Moderate decay rate
+  minimum_quality: 10
+  position_based: true      # Some positional quality decay
+  
+  # MGI-specific quality patterns
+  end_quality_drop: true    # Quality drops toward read ends
+  cycle_dependent: true     # Quality varies by sequencing cycle
+
+# Error patterns (DNB-specific)
+error_patterns:
+  insertion_rate: 0.003
+  deletion_rate: 0.003
+  substitution_rate: 0.004
+  
+  # DNB-specific characteristics
+  dnb_specific_errors: true
+  systematic_errors: true   # Some systematic bias patterns
+  gc_bias: "moderate"       # Moderate GC bias
+  
+  # Error distribution
+  error_position_bias: true
+  early_cycle_errors: false
+  late_cycle_errors: true
+
+# Steganographic fingerprinting compatibility
+steganography:
+  compatible: true
+  strategy: "balanced"      # Balanced approach for high-throughput
+  embedding_positions: "quality_scores"
+  capacity_estimate: "very_high"  # Ultra-high throughput provides excellent capacity
+
+# Validation parameters
+validation:
+  statistical_tests:
+    - "read_length_distribution"
+    - "quality_score_distribution"
+    - "base_composition"
+    - "paired_end_consistency"
+    - "insert_size_distribution"
+  
+  expected_metrics:
+    mean_read_length: 150
+    median_quality: 30
+    q30_percentage: 85.0
+    gc_content_range: [35, 65]
+    insert_size_mean: 350
+
+# Applications and workflows
+applications:
+  whole_genome_sequencing: true
+  whole_exome_sequencing: true
+  rna_sequencing: true
+  single_cell_sequencing: true
+  methylation_sequencing: true  # WGBS support
+  stereo_sequencing: true      # MGI's spatial transcriptomics
+
+# Workflow integration
+workflows:
+  cromwell: true
+  nextflow: true
+  snakemake: true
+  
+  # MGI-specific workflows
+  dnb_quality_control: true
+  ultra_high_throughput_processing: true
+  cost_optimized_analysis: true
+
+# Multi-slide coordination
+multi_slide:
+  enabled: true
+  max_slides: 6
+  slide_coordination: "parallel"
+  load_balancing: true
+  
+  # Slide-specific parameters
+  slide_processing:
+    independent_timing: true
+    coordinated_imaging: true
+    parallel_analysis: true
+
+# Comparative specifications
+comparisons:
+  vs_illumina_novaseq:
+    throughput_advantage: 3.0      # 3x higher throughput
+    cost_advantage: 0.3            # ~70% cost reduction
+    accuracy_comparison: "comparable"
+  
+  vs_pacbio_revio:
+    read_length: "much_shorter"    # 150bp vs 15-20kb
+    throughput: "higher"           # Higher total throughput
+    accuracy: "lower"              # Lower per-base accuracy
+    cost_per_base: "much_lower"    # Significantly lower cost
+
+# Notes for implementation
+notes: |
+  MGI DNBSEQ-T20×2 represents a breakthrough in ultra-high throughput sequencing,
+  achieving unprecedented scale with DNA Nanoball (DNB) technology. The system
+  uses novel dip-immersion flow cell design and robotic automation to process
+  6 slides simultaneously.
+  
+  Key implementation considerations:
+  - DNB technology differs from PCR amplification (bridge amplification)
+  - Slide-based system rather than traditional flow cells
+  - Robotic handling enables ultra-high throughput automation
+  - Cost optimization is a primary design goal
+  - Quality patterns may differ from Illumina due to DNB chemistry
+  - Dip-immersion technology requires different simulation approach
+  
+  Market positioning:
+  - Targets cost-sensitive high-throughput applications
+  - Competitive alternative to Illumina NovaSeq for large-scale projects
+  - Particular strength in population genomics and biobank applications

@@ -1,0 +1,140 @@
+# Pre-commit configuration for Phantom Science
+# Ensures code quality, security, and testing standards
+
+repos:
+  # General hooks for file quality
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+        args: ['--unsafe']  # Allow custom YAML tags
+      - id: check-json
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-case-conflict
+      - id: check-added-large-files
+        args: ['--maxkb=10240']  # 10MB limit
+      - id: detect-private-key
+      - id: mixed-line-ending
+      - id: check-executables-have-shebangs
+
+  # Go language hooks
+  - repo: https://github.com/dnephin/pre-commit-golang
+    rev: v0.5.1
+    hooks:
+      - id: go-fmt
+      - id: go-imports
+      - id: go-vet-mod
+      - id: go-mod-tidy
+      - id: go-unit-tests
+      - id: golangci-lint
+
+  # Additional Go security and quality
+  - repo: local
+    hooks:
+      - id: gosec
+        name: gosec
+        entry: gosec
+        language: system
+        types: [go]
+        args: ['-quiet', './...']
+        pass_filenames: false
+
+      - id: staticcheck
+        name: staticcheck
+        entry: staticcheck
+        language: system
+        types: [go]
+        args: ['./...']
+        pass_filenames: false
+
+  # Rust language hooks
+  - repo: local
+    hooks:
+      - id: cargo-fmt
+        name: cargo fmt
+        entry: cargo fmt
+        language: system
+        files: \.rs$
+        args: ['--manifest-path', 'crypto-engine/Cargo.toml', '--all', '--']
+
+      - id: cargo-clippy
+        name: cargo clippy
+        entry: cargo clippy
+        language: system
+        files: \.rs$
+        args: ['--manifest-path', 'crypto-engine/Cargo.toml', '--all-targets', '--all-features', '--', '-D', 'warnings']
+        pass_filenames: false
+
+      - id: cargo-test
+        name: cargo test
+        entry: cargo test
+        language: system
+        files: \.rs$
+        args: ['--manifest-path', 'crypto-engine/Cargo.toml']
+        pass_filenames: false
+
+      - id: cargo-audit
+        name: cargo audit
+        entry: cargo audit
+        language: system
+        files: Cargo\.(toml|lock)$
+        args: ['--file', 'crypto-engine/Cargo.lock']
+        pass_filenames: false
+
+  # YAML linting
+  - repo: https://github.com/adrienverge/yamllint
+    rev: v1.33.0
+    hooks:
+      - id: yamllint
+        args: ['-d', '{extends: default, rules: {line-length: {max: 120}, comments: {min-spaces-from-content: 1}}}']
+
+  # Secret detection
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.4.0
+    hooks:
+      - id: detect-secrets
+        args: ['--baseline', '.secrets.baseline']
+
+  # Coverage and testing enforcement
+  - repo: local
+    hooks:
+      - id: go-coverage-check
+        name: Go Coverage Check
+        entry: scripts/check-coverage.sh
+        language: script
+        types: [go]
+        pass_filenames: false
+        args: ['85', '80']  # Overall 85%, individual 80%
+
+      - id: go-build-check
+        name: Go Build Check
+        entry: go build
+        language: system
+        types: [go]
+        args: ['./...']
+        pass_filenames: false
+
+  # Configuration validation
+  - repo: local
+    hooks:
+      - id: config-validation
+        name: Config Validation
+        entry: scripts/validate-configs.sh
+        language: script
+        files: 'configs/.*\.(yaml|yml|json)$'
+        pass_filenames: false
+
+      - id: sequencer-spec-validation
+        name: Sequencer Specification Validation
+        entry: scripts/validate-sequencer-specs.sh
+        language: script
+        files: 'configs/sequencer/.*\.yaml$'
+        pass_filenames: false
+
+# Global configuration
+default_stages: [commit]
+fail_fast: false
+minimum_pre_commit_version: '3.0.0'
