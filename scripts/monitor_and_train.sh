@@ -129,7 +129,7 @@ fi
 if [[ ! -f "$TRAINING_BINARY" ]]; then
     echo "🔨 Building high-performance training binary..."
     cd "$PROJECT_ROOT"
-    if go build -o high_performance_training ./cmd/high_performance_training/main.go; then
+    if go build -o high_performance_training ./cmd/experiments/high_performance_training; then
         echo "✅ Training binary built successfully"
     else
         echo "❌ Failed to build training binary"

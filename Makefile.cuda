@@ -78,7 +78,7 @@ cuda-install: cuda-compile
 # Build GPU benchmark tool with CUDA support
 gpu-benchmark-cuda: cuda-compile
 	@echo "🚀 Building CUDA GPU benchmark tool..."
-	@CGO_ENABLED=1 go build -tags cuda -o bin/benchmark_gpu_cuda ./cmd/benchmark_gpu
+	@CGO_ENABLED=1 go build -tags cuda -o bin/benchmark_gpu_cuda ./cmd/experiments/benchmark_gpu
 	@echo "✅ CUDA GPU benchmark tool built: bin/benchmark_gpu_cuda"
 
 # Run comprehensive CUDA GPU benchmarks

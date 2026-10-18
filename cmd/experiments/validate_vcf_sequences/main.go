@@ -19,7 +19,7 @@ func main() {
 	fmt.Println("🧬 VALIDATING SYNTHETIC-TRAINED SEQUENCES:")
 	fmt.Println("==========================================")
 	
-	cmd := exec.Command("go", "run", "cmd/sequence_validator/main.go")
+	cmd := exec.Command("go", "run", "./cmd/experiments/sequence_validator")
 	cmd.Env = append(os.Environ(), "INPUT_DIR=sequences/validation", "OUTPUT_FILE=validation_synthetic.json")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -41,7 +41,9 @@ func main() {
 		return
 	}
 	
-	cmd = exec.Command("go", "run", "cmd/validate_vcf_sequences/vcf_validator.go")
+	// NOTE: vcf_validator.go has never existed in this repository, so this step
+	// always fails and is reported as a warning below.
+	cmd = exec.Command("go", "run", "cmd/experiments/validate_vcf_sequences/vcf_validator.go")
 	output, err = cmd.CombinedOutput()
 	if err != nil {
 		log.Printf("Warning: Failed to validate VCF sequences: %v", err)

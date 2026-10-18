@@ -220,7 +220,7 @@ NEXT STEPS:
    ./scripts/prepare_population_training.sh
 
 3. Run population-aware training:
-   go run ./cmd/population_training/main.go
+   go run ./cmd/experiments/population_training/main.go
 
 EXPECTED RESULTS:
 ================
@@ -238,7 +238,7 @@ echo "Ready for VCF-to-FASTA conversion and population training"
 echo ""
 echo "Next commands:"
 echo "1. Convert data: ./scripts/convert_vcf_to_fasta.sh"
-echo "2. Train model: go run ./cmd/population_training/main.go"
+echo "2. Train model: go run ./cmd/experiments/population_training/main.go"
 echo ""
 echo "🚀 AUTHENTIC POPULATION GENOMICS BREAKTHROUGH!"
 echo "Completed: $(date)"

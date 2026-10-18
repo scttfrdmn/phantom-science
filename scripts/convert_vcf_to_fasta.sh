@@ -202,7 +202,7 @@ TRAINING STRATEGY:
 NEXT STEPS:
 ==========
 1. Run population training:
-   go run ./cmd/population_training/main.go
+   go run ./cmd/experiments/population_training/main.go
 
 2. Expected training time: 4-8 hours
    (Processing $total_sequences diverse sequences)
@@ -266,7 +266,7 @@ echo "1. Review training manifest:"
 echo "   cat $FASTA_DIR/population_training_manifest.txt"
 echo ""
 echo "2. Run population training:"
-echo "   go run ./cmd/population_training/main.go"
+echo "   go run ./cmd/experiments/population_training/main.go"
 echo ""
 echo "3. Expected breakthrough results:"
 echo "   - Complexity: 0.05-0.3 (10-60x improvement)"

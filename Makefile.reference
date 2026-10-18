@@ -3,7 +3,7 @@
 
 # Variables
 REFERENCE_SRC_DIR = internal/genomics/reference
-BENCHMARK_REFERENCE = cmd/benchmark_reference
+BENCHMARK_REFERENCE = ./cmd/experiments/benchmark_reference
 TEST_DATA_DIR = testdata/reference
 
 .PHONY: reference-benchmark reference-test reference-profile reference-clean help-reference

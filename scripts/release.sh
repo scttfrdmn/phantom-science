@@ -231,7 +231,7 @@ build_binaries() {
         local output_path="$build_dir/phantom-science-$os-$arch"
         mkdir -p "$output_path"
         
-        if ! GOOS=$os GOARCH=$arch go build -o "$output_path/$output_name" ./cmd/phantom-science; then
+        if ! GOOS=$os GOARCH=$arch go build -o "$output_path/$output_name" .; then
             log_error "Build failed for $os/$arch"
             exit 1
         fi

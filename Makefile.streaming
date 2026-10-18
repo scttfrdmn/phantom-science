@@ -3,7 +3,7 @@
 
 # Variables
 VCF_SRC_DIR = internal/genomics/vcf
-STREAM_VCF_CMD = cmd/stream_vcf
+STREAM_VCF_CMD = ./cmd/experiments/stream_vcf
 TEST_DATA_DIR = testdata/vcf
 
 # Build targets

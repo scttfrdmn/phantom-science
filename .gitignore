@@ -3,16 +3,16 @@
 # Build artifacts
 phantom-science
 phantom-science.exe
-benchmark_reference
-enterprise_fingerprinting
-execute_expert_validation
-production_training
-step_by_step_test
-test_haplotype_integration
-test_multiplatform_quality
-test_population_structure_validation
-test_simple_2025_integration
-validate_authenticity
+/benchmark_reference
+/enterprise_fingerprinting
+/execute_expert_validation
+/production_training
+/step_by_step_test
+/test_haplotype_integration
+/test_multiplatform_quality
+/test_population_structure_validation
+/test_simple_2025_integration
+/validate_authenticity
 bin/
 *.exe
 *.dll

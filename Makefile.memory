@@ -3,7 +3,7 @@
 
 # Variables
 MEMORY_SRC_DIR = internal/genomics/authenticity/kmer
-BENCHMARK_MEMORY = cmd/benchmark_memory
+BENCHMARK_MEMORY = ./cmd/experiments/benchmark_memory
 
 .PHONY: memory-benchmark memory-test memory-profile memory-clean help-memory
 

@@ -162,7 +162,7 @@ echo "2. Convert to training format:"
 echo "   ./scripts/convert_population_data.sh"
 echo ""
 echo "3. Run population training:"
-echo "   go run ./cmd/population_training/main.go"
+echo "   go run ./cmd/experiments/population_training/main.go"
 
 echo ""
 echo "=== Population Download Phase 1 Complete ==="

@@ -67,7 +67,7 @@ metal-install: metal-compile
 # Build GPU benchmark tool
 gpu-benchmark: metal-compile
 	@echo "🚀 Building GPU benchmark tool..."
-	@go build -o bin/benchmark_gpu ./cmd/benchmark_gpu
+	@go build -o bin/benchmark_gpu ./cmd/experiments/benchmark_gpu
 	@echo "✅ GPU benchmark tool built: bin/benchmark_gpu"
 
 # Run comprehensive GPU benchmarks

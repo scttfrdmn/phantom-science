@@ -213,7 +213,7 @@ func (gb *GenomicsBenchmark) RunPhantomGenomicsBenchmark() error {
 	fmt.Println("\n🧬 Running Phantom Genomics Engine Benchmark...")
 	
 	// Use our new sequence classifier for individual sequence analysis
-	classifierPath := "cmd/sequence_classifier/main.go"
+	classifierPath := "./cmd/experiments/sequence_classifier"
 	
 	for _, pop := range gb.Populations {
 		for _, length := range gb.SequenceLengths {

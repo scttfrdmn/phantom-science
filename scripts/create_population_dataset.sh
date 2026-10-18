@@ -176,7 +176,7 @@ K-mer Vocabulary: 10-100x expansion
 NEXT STEPS:
 ==========
 1. Run population training:
-   go run ./cmd/population_training/main.go
+   go run ./cmd/experiments/population_training/main.go
 
 2. Validate authenticity improvements:
    - Complexity > 0.05 (10x improvement minimum)
@@ -203,7 +203,7 @@ echo "1. Review dataset:"
 echo "   cat $MASTER_MANIFEST"
 echo ""
 echo "2. Run population training:"
-echo "   go run ./cmd/population_training/main.go"
+echo "   go run ./cmd/experiments/population_training/main.go"
 echo ""
 echo "3. Expected training time: 4-6 hours"
 echo "   (Processing $TOTAL_SAMPLES samples vs 1 reference)"
