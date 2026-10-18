@@ -47,10 +47,14 @@ specifications:
     
     # Basecaller modes; default_basecaller selects the error-model tier.
     default_basecaller: "sup"
+    # Per-base accuracy implied by the generator's tier error tables
+    # (internal/genomics/nanopore/errmodel): sup 0.8% sub + 0.8% ins + 1.0% del,
+    # hac 5.0% and fast 15.0% total errors. The modal quality is the read's ONT
+    # mean Q; ONT qualities are only loosely calibrated to the error rate.
     basecaller_modes:
       fast: { accuracy: 0.85, quality: 10 }
-      hac: { accuracy: 0.95, quality: 15 }   # High Accuracy
-      sup: { accuracy: 0.99, quality: 20 }   # Super Accurate
+      hac: { accuracy: 0.95, quality: 15 }    # High Accuracy
+      sup: { accuracy: 0.974, quality: 20 }   # Super Accurate
   
   # Throughput specifications
   throughput:

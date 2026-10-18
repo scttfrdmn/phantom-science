@@ -185,8 +185,7 @@ func TestGenerateStdout_SeedReproducible(t *testing.T) {
 
 func TestGenerate_NotImplementedFlags(t *testing.T) {
 	for flag, val := range map[string]string{
-		"platform": "ont",
-		"compress": "gzip", "total-bases": "140G", "total-reads": "1000", "workers": "4",
+		"total-bases": "140G", "total-reads": "1000", "workers": "4",
 	} {
 		t.Run(flag, func(t *testing.T) {
 			setGenerateFlags(t, map[string]string{"config": writeGenerateConfig(t, 50, 5), "stdout": "true", flag: val})

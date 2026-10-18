@@ -209,10 +209,6 @@ func TestNotImplemented_Errors(t *testing.T) {
 		edit  func(*types.SequencerConfig)
 		issue string
 	}{
-		{"ont", func(c *types.SequencerConfig) { c.Platform = "ont" }, "#12"},
-		{"gzip", func(c *types.SequencerConfig) { c.Output.Compression = "gzip" }, "#12"},
-		{"summary", func(c *types.SequencerConfig) { c.Output.SummaryFile = "sequencing_summary.txt" }, "#12"},
-		{"pattern", func(c *types.SequencerConfig) { c.Output.FilePattern = "{sample}.fastq" }, "#16"},
 		{"total-bases", func(c *types.SequencerConfig) { c.TotalBases = 1e9 }, "#16"},
 		{"total-reads", func(c *types.SequencerConfig) { c.TotalReads = 1000 }, "#16"},
 		{"flow-cells", func(c *types.SequencerConfig) { c.FlowCells = 2 }, "#16"},

@@ -135,3 +135,25 @@ func TestEffectiveValidation(t *testing.T) {
 		t.Errorf("listed tests not kept: %+v, %v", got, ok)
 	}
 }
+
+// Gzipped output (output.compression: gzip) must validate like plain FASTQ.
+func TestValidateFiles_Gzip(t *testing.T) {
+	cfg := testSequencerConfig(t.TempDir())
+	cfg.Output.Compression = "gzip"
+	files := generateFASTQ(t, cfg)
+	if !strings.HasSuffix(files[0], ".fastq.gz") {
+		t.Fatalf("expected .fastq.gz output, got %v", files)
+	}
+	var out bytes.Buffer
+	if err := ValidateFiles(&out, files, DefaultValidationTests); err != nil {
+		t.Fatalf("ValidateFiles on gzip output: %v\n%s", err, out.String())
+	}
+
+	bad := filepath.Join(t.TempDir(), "bad.fastq.gz")
+	if err := os.WriteFile(bad, []byte("not gzip"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateFiles(&bytes.Buffer{}, []string{bad}, DefaultValidationTests); err == nil {
+		t.Error("corrupt .gz file passed validation")
+	}
+}

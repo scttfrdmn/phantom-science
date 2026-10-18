@@ -71,3 +71,28 @@ func TestVerifyFiles(t *testing.T) {
 		})
 	}
 }
+
+// verify must read fingerprints from gzipped output, which is fingerprinted
+// before compression.
+func TestVerifyFiles_Gzip(t *testing.T) {
+	t.Setenv(fingerprinting.KeyEnvVar, "")
+	dir := t.TempDir()
+	keyFile := writeTestKey(t, dir, "verify-gzip-key-0123456789")
+	cfg := testSequencerConfig(filepath.Join(dir, "ont"))
+	cfg.Platform = "ont"
+	cfg.ReadLength = 2000
+	cfg.Output.Compression = "gzip"
+	cfg.Fingerprinting = types.FingerprintConfig{Enable: true, SteganographyLayers: []string{"quality_scores"}, KeyFile: keyFile}
+	files := generateFASTQ(t, cfg)
+	if !strings.HasSuffix(files[0], ".fastq.gz") {
+		t.Fatalf("expected .fastq.gz output, got %v", files)
+	}
+	var out bytes.Buffer
+	if err := VerifyFiles(&out, files, VerifyOptions{Customer: "CUST_1", Dataset: "ds-1", KeyFile: keyFile}); err != nil {
+		t.Fatalf("VerifyFiles on gzip output: %v\n%s", err, out.String())
+	}
+	if !strings.Contains(out.String(), "(encrypted)") {
+		t.Errorf("unexpected report:\n%s", out.String())
+	}
+}
+

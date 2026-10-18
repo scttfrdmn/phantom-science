@@ -65,7 +65,8 @@ type SequencerConfig struct {
     ModelDir string `json:"model_dir,omitempty" yaml:"model_dir,omitempty"`
 
     // Platform selects the read model and output format: "illumina" (the
-    // default when empty) or "ont" (Oxford Nanopore; not implemented yet, #12).
+    // default when empty) or "ont" (Oxford Nanopore: MinKNOW-style headers and
+    // a sequencing_summary.txt).
     Platform string `json:"platform,omitempty" yaml:"platform,omitempty"`
 
     // Seed makes generation reproducible: the same seed and configuration
@@ -138,12 +139,15 @@ type ONTSpec struct {
     SpeedBPS        float64 `json:"speed_bps,omitempty" yaml:"speed_bps,omitempty"` // translocation speed, bases per second
 }
 
-// OutputSpec controls output files (#12, #16).
+// OutputSpec controls output files.
 type OutputSpec struct {
     // Compression is "none" (default when empty) or "gzip".
     Compression string `json:"compression,omitempty" yaml:"compression,omitempty"`
-    // FilePattern overrides the output file naming; empty keeps the
-    // Illumina-style <sample>_S1_L<lane>_[R<mate>_]<batch>.fastq names.
+    // FilePattern overrides the output file naming with placeholders
+    // {sample_name}, {flowcell_id}, {run_id}, {file_number}, {barcode}, {lane}
+    // and {mate}. Empty keeps the platform default: Illumina
+    // <sample>_S1_L<lane>_[R<mate>_]<batch>.fastq, or ONT
+    // <sample>_<flowcell>_<run>_<n>.fastq.
     FilePattern string `json:"file_pattern,omitempty" yaml:"file_pattern,omitempty"`
     // SummaryFile, when set, names a per-run read summary (ONT
     // sequencing_summary.txt) written next to the FASTQ files.

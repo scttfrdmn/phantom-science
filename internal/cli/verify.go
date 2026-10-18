@@ -1,10 +1,12 @@
 package cli
 
 import (
+	"compress/gzip"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/scttfrdmn/phantom-science/internal/fingerprinting"
@@ -45,7 +47,7 @@ func VerifyFiles(w io.Writer, paths []string, opts VerifyOptions) error {
 
 	failed := 0
 	for _, path := range paths {
-		result, err := verifier.Verify(path)
+		result, err := verifyPossiblyGzipped(verifier, path)
 		switch {
 		case errors.Is(err, fingerprinting.ErrKeyRequired):
 			fmt.Fprintf(w, "❌ %s: fingerprint is encrypted; pass --key-file or set %s\n", path, fingerprinting.KeyEnvVar)
@@ -148,7 +150,7 @@ func ValidateFiles(w io.Writer, paths []string, cfg types.ValidationConfig, opts
 
 	failed := 0
 	for _, path := range paths {
-		data, err := os.ReadFile(path) // #nosec G304 -- user-supplied input files are the point of this command
+		data, err := readFASTQ(path)
 		if err != nil {
 			fmt.Fprintf(w, "❌ %s: %v\n", path, err)
 			failed++
@@ -204,3 +206,59 @@ func ReadLengthValidation(config types.SequencerConfig) (validation.Option, erro
 	}
 	return validation.WithReadLengths(exp), nil
 }
+
+// isGzip reports whether path names gzip-compressed output (.gz).
+func isGzip(path string) bool {
+	return strings.HasSuffix(path, ".gz")
+}
+
+// readFASTQ returns the contents of a FASTQ file, decompressing .gz files.
+func readFASTQ(path string) ([]byte, error) {
+	f, err := os.Open(path) // #nosec G304 -- user-supplied input files are the point of this command
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	if !isGzip(path) {
+		return io.ReadAll(f)
+	}
+	zr, err := gzip.NewReader(f)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	defer zr.Close()
+	return io.ReadAll(zr)
+}
+
+// verifyPossiblyGzipped verifies path, first decompressing a .gz file to a
+// private temporary file: fingerprints are embedded in, and extracted from,
+// the plain FASTQ.
+func verifyPossiblyGzipped(v fingerprinting.Verifier, path string) (fingerprinting.VerifyResult, error) {
+	if !isGzip(path) {
+		return v.Verify(path)
+	}
+	in, err := os.Open(path) // #nosec G304 -- user-supplied input files are the point of this command
+	if err != nil {
+		return fingerprinting.VerifyResult{}, err
+	}
+	defer in.Close()
+	zr, err := gzip.NewReader(in)
+	if err != nil {
+		return fingerprinting.VerifyResult{}, fmt.Errorf("%s: %w", path, err)
+	}
+	defer zr.Close()
+	tmp, err := os.CreateTemp("", "phantom-verify-*.fastq") // created with mode 0600
+	if err != nil {
+		return fingerprinting.VerifyResult{}, err
+	}
+	defer os.Remove(tmp.Name())
+	if _, err := io.Copy(tmp, zr); err != nil {
+		tmp.Close()
+		return fingerprinting.VerifyResult{}, fmt.Errorf("decompressing %s: %w", path, err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fingerprinting.VerifyResult{}, err
+	}
+	return v.Verify(tmp.Name())
+}
+
