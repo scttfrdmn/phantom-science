@@ -1,6 +1,19 @@
 # Oxford Nanopore PromethION 24 Sequencer Configuration
 # High-throughput real-time nanopore sequencing platform
 # Technical specifications based on 2024 Oxford Nanopore documentation
+#
+# This is a v2 platform template: it describes the instrument, not a run.
+# `phantom-science generate --config configs/sequencers/ont_promethion24.yaml`
+# loads it as platform "ont" (see internal/cli/config_loader.go,
+# loadSequencerTemplateV2). Keys that drive generation:
+#   specifications.read_length     -> read-length distribution (lognormal)
+#   specifications.accuracy.default_basecaller -> error-model tier (default sup)
+#   specifications.throughput.active_channels_per_fc, translocation_speed_bps
+#   output.compression, output.file_pattern
+# Run settings come from the optional `run:` section at the end (same keys as
+# a JSON sequencer config); unset ones default to sample_name "sample",
+# output_dir "output", reads_per_batch 4000, total_batches 1. Command-line
+# flags override both.
 
 version: "2.0"
 platform: "ont_promethion24"
@@ -32,7 +45,8 @@ specifications:
     median_quality: 12     # Raw reads Q8-12, processed Q20+
     quality_encoding: "phred33"
     
-    # Basecaller modes
+    # Basecaller modes; default_basecaller selects the error-model tier.
+    default_basecaller: "sup"
     basecaller_modes:
       fast: { accuracy: 0.85, quality: 10 }
       hac: { accuracy: 0.95, quality: 15 }   # High Accuracy
@@ -43,12 +57,14 @@ specifications:
     max_output_tb: 14.0     # 14 Tb theoretical maximum
     per_flowcell_gb: 290    # Up to 290 Gb per flow cell (current specs ~200 Gb)
     flowcells_total: 24     # 24 flow cells maximum
-    active_channels_per_fc: 3000  # 3,000 active channels per flow cell
-    total_pores_per_fc: 12000     # Up to 12,000 pores per flow cell
+    # FLO-PRO114M: "up to 2675 nanopore channels"
+    # (https://store.nanoporetech.com/flow-cells.html); reads use ch=1..2675.
+    active_channels_per_fc: 2675
+    total_pores_per_fc: 10700     # 4 pores per channel (2675 x 4)
     min_active_pores: 5000        # Minimum 5,000 active pores for QC
     
     # Real-time characteristics
-    translocation_speed_bps: 240  # 240 bases/second for R10.4.1
+    translocation_speed_bps: 400  # Kit 14 / R10.4.1 default (400 b/s, 5 kHz)
     reads_per_second: 4000        # Approximate reads/second system-wide
 
 # Timing specifications
@@ -90,7 +106,7 @@ chemistry_versions:
     
   r10_4_1:  # Current default
     pore_type: "R10.4.1"
-    translocation_speed: 240  # 240 bp/s (slower = more accurate)
+    translocation_speed: 400  # 400 b/s (the early 260 b/s mode is retired)
     accuracy: 0.99           # 99%+ modal accuracy
     kit: "SQK-LSK114"
     dual_reader_heads: true
@@ -129,26 +145,33 @@ output:
   file_format: "fastq"
   compression: "gzip"
   
-  # Oxford Nanopore file naming pattern
-  # Format: {sample_name}_{barcode}_{flowcell_id}_{read_number}.fastq.gz
+  # Oxford Nanopore file naming pattern. Placeholders: {sample_name},
+  # {flowcell_id}, {run_id} (first 8 characters), {file_number} (0-based, as
+  # MinKNOW), {barcode} (barcode01), {lane}, {mate}.
   file_pattern: "{sample_name}_{barcode}_{flowcell_id}_{file_number}.fastq.gz"
-  
-  # Read ID format for ONT
-  # Format: {read_id} runid={run_id} sampleid={sample_id} read={read_number} ch={channel} start_time={start_time}
-  read_id_pattern: "{read_id} runid={run_id} sampleid={sample_id} read={read_number} ch={channel} start_time={start_time}"
 
-# Quality characteristics
+  # Read headers are generated in MinKNOW's layout (informational; not
+  # configurable):
+  # @<uuid4> runid=<run_id> read=<n> ch=<channel> start_time=<RFC 3339> flow_cell_id=<id> protocol_group_id=<id> sample_id=<id>
+  # A sequencing_summary.txt (PycoQC input) is written next to the FASTQ files.
+  read_id_pattern: "{read_id} runid={run_id} read={read_number} ch={channel} start_time={start_time} flow_cell_id={flow_cell_id} protocol_group_id={protocol_group_id} sample_id={sample_id}"
+
+# Quality characteristics (SUP basecalling, R10.4.1 simplex; ~2.6% total
+# error, consistent with the ~99% modal accuracy above). Informational only:
+# generation uses the Go error-model tier table (internal/genomics/nanopore/
+# errmodel), selected by specifications.accuracy.default_basecaller; HAC and
+# FAST tiers have higher rates.
 quality_characteristics:
   # Error type distribution
-  deletion_rate: 0.05       # ~5% deletions (most common)
-  insertion_rate: 0.025     # ~2-3% insertions  
-  substitution_rate: 0.025  # ~2-3% substitutions
-  
+  deletion_rate: 0.010      # ~1.0% deletions (most common)
+  insertion_rate: 0.008     # ~0.8% insertions
+  substitution_rate: 0.008  # ~0.8% substitutions
+
   # Context-dependent errors
   homopolymer_errors: true
-  homopolymer_error_rate: 0.08  # Higher error in homopolymers ≥5 bases
-  gc_bias_low: 0.06         # 6% error in low-GC regions
-  gc_bias_high: 0.08        # 8% error in high-GC regions
+  homopolymer_error_rate: 0.03  # Higher error in homopolymers >=5 bases
+  gc_bias_low: 0.03         # ~3% error in low-GC regions
+  gc_bias_high: 0.035       # ~3.5% error in high-GC regions
   
   # R10.4.1 improvements
   homopolymer_improvement: true  # Better homopolymer discrimination
@@ -193,7 +216,7 @@ validation:
     n50_min: 30000          # Minimum N50 of 30 kb
     modal_accuracy: 0.99
     q20_percentage: 85.0
-    deletion_rate_max: 0.07  # Maximum 7% deletion rate
+    deletion_rate_max: 0.02  # Maximum 2% deletion rate (SUP)
 
 # Workflow integration
 workflows:
@@ -242,3 +265,15 @@ notes: |
   - Long reads enable applications impossible with short-read technologies
   - Pore degradation over time affects yield and should be modeled
   - GPU acceleration essential for real-time basecalling of all 24 flow cells
+
+# Run settings (optional). Same keys as a JSON sequencer config; anything
+# unset takes the template defaults listed at the top of this file.
+# run:
+#   sample_name: "HG002"
+#   output_dir: "output/hg002"
+#   reads_per_batch: 4000
+#   total_batches: 10
+#   seed: 42
+#   ont:
+#     flow_cell_id: "PAW12345"
+#     protocol_group_id: "hg002_wgs"
