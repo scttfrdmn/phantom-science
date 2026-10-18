@@ -220,11 +220,16 @@ func (dm *DataManager) LoadPopulationPanel(populationName string) error {
 		sampleSize = int(100.0 / dm.config.ValidationSplit)
 	}
 	
+	// The panel's demography (Ne, growth, bottleneck, split from its parent
+	// population) comes from the presets in internal/genomics/population.
+	// Codes without their own preset (LWK, GBR, JPT, ...) use the closest
+	// modelled population as a proxy; anything else gets a constant-size
+	// default model.
 	panel := population.NewPopulationPanel(populationName, sampleSize)
-	
-	// Configure population-specific parameters
-	if err := dm.configurePopulationParameters(panel, populationName); err != nil {
-		return fmt.Errorf("failed to configure population parameters for %s: %w", populationName, err)
+	if !panel.HasPreset() {
+		log.Printf("No demographic preset for population %s; using a constant-size default model", populationName)
+	} else if panel.PresetName() != populationName {
+		log.Printf("Population %s simulated with the %s demographic preset as a proxy", populationName, panel.PresetName())
 	}
 	
 	// Load simulation data
@@ -268,79 +273,6 @@ func (dm *DataManager) LoadValidationDataset(platform string) error {
 	dm.validationCache[platform] = dataset
 	
 	log.Printf("Loaded validation dataset for %s with %d sequences", platform, dataset.Size)
-	return nil
-}
-
-// configurePopulationParameters configures population-specific demographic parameters
-func (dm *DataManager) configurePopulationParameters(panel *population.PopulationPanel, populationName string) error {
-	// Population-specific demographic events based on literature
-	switch populationName {
-	case "AFR", "YRI", "LWK", "GWD":
-		// African populations - larger effective population size, ancient
-		event := population.DemographicEvent{
-			Type: "expansion",
-			Time: 50000, // 50,000 years ago
-			Parameters: map[string]float64{
-				"expansion_factor": 2.0,
-			},
-			Populations: []string{populationName},
-			Duration:    10000,
-		}
-		panel.SetDemographicEvent(event)
-		
-	case "EUR", "CEU", "GBR", "TSI":
-		// European populations - bottleneck out of Africa
-		bottleneck := population.DemographicEvent{
-			Type: "bottleneck",
-			Time: 60000, // 60,000 years ago
-			Parameters: map[string]float64{
-				"population_size": 1000.0,
-			},
-			Populations: []string{populationName},
-			Duration:    5000,
-		}
-		panel.SetDemographicEvent(bottleneck)
-		
-		expansion := population.DemographicEvent{
-			Type: "expansion",
-			Time: 25000, // 25,000 years ago
-			Parameters: map[string]float64{
-				"expansion_factor": 10.0,
-			},
-			Populations: []string{populationName},
-			Duration:    20000,
-		}
-		panel.SetDemographicEvent(expansion)
-		
-	case "ASN", "CHB", "JPT", "CHS":
-		// Asian populations - similar bottleneck but different timing
-		bottleneck := population.DemographicEvent{
-			Type: "bottleneck",
-			Time: 55000, // 55,000 years ago
-			Parameters: map[string]float64{
-				"population_size": 1500.0,
-			},
-			Populations: []string{populationName},
-			Duration:    3000,
-		}
-		panel.SetDemographicEvent(bottleneck)
-		
-	case "AMR", "MXL", "PUR":
-		// Americas populations - recent admixture
-		admixture := population.DemographicEvent{
-			Type: "admixture",
-			Time: 500, // 500 years ago
-			Parameters: map[string]float64{
-				"native_proportion":    0.6,
-				"european_proportion":  0.3,
-				"african_proportion":   0.1,
-			},
-			Populations: []string{populationName},
-			Duration:    400,
-		}
-		panel.SetDemographicEvent(admixture)
-	}
-	
 	return nil
 }
 

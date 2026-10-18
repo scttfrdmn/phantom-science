@@ -452,8 +452,8 @@ func TestPopulationPanel_GetAlleleFrequencies_AfterLoad(t *testing.T) {
 		assert.GreaterOrEqualf(t, freq, 0.0, "site %s", site)
 		assert.LessOrEqualf(t, freq, 1.0, "site %s", site)
 	}
-	// Note: when AlleleFrequencies is populated from SimulateAlleleFrequencies,
-	// the raw mutation frequencies are returned (not normalized to sum=1).
+	// Note: when AlleleFrequencies is populated by LoadFromSimulation,
+	// the raw derived-allele frequencies are returned (not normalized to sum=1).
 	// Only the Variants-derived path normalizes to a probability distribution.
 }
 
