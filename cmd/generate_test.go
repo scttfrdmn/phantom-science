@@ -332,3 +332,40 @@ func makeTempVCFWithAF(t *testing.T) string {
 	f.Close()
 	return f.Name()
 }
+
+// File output is validated when the phantom config (-p) enables validation;
+// previously only the root command did this and `generate` ignored it.
+func TestGenerate_ValidatesWithPhantomConfig(t *testing.T) {
+	writePhantom := func(t *testing.T, validation string) string {
+		t.Helper()
+		p := filepath.Join(t.TempDir(), "phantom.json")
+		if err := os.WriteFile(p, []byte(`{"enterprise":{"customer_id":"C"},"validation":`+validation+`}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	setPhantom := func(t *testing.T, path string) {
+		t.Helper()
+		if err := rootCmd.PersistentFlags().Set("phantom", path); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = rootCmd.PersistentFlags().Set("phantom", "") })
+	}
+
+	setGenerateFlags(t, map[string]string{"config": writeGenerateConfig(t, 100, 200), "seed": "3"})
+	setPhantom(t, writePhantom(t, `{"enable":true}`))
+	var out bytes.Buffer
+	if err := runGenerate(generateCmd, &out); err != nil {
+		t.Fatalf("generate with default validation suite: %v\n%s", err, out.String())
+	}
+	if !strings.Contains(out.String(), "All 9 validation tests passed") {
+		t.Errorf("validation did not run on the generated file:\n%s", out.String())
+	}
+
+	setGenerateFlags(t, map[string]string{"config": writeGenerateConfig(t, 100, 200), "seed": "3"})
+	setPhantom(t, writePhantom(t, `{"enable":true,"statistical_tests":["no_such_test"]}`))
+	out.Reset()
+	if err := runGenerate(generateCmd, &out); err == nil || !strings.Contains(err.Error(), "failed validation") {
+		t.Errorf("failing validation not reported: err=%v\n%s", err, out.String())
+	}
+}

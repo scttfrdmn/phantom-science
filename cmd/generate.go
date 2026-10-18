@@ -140,7 +140,16 @@ func runGenerate(cmd *cobra.Command, out io.Writer) error {
 	defer engine.Close()
 
 	if !stdoutMode {
-		return engine.Generate()
+		if err := engine.Generate(); err != nil {
+			return err
+		}
+		// Validate the generated files when the phantom config enables validation.
+		if phantomConfig != nil {
+			if vcfg, ok := cli.EffectiveValidation(phantomConfig.Validation); ok {
+				return cli.ValidateFiles(out, engine.GeneratedFiles(), vcfg)
+			}
+		}
+		return nil
 	}
 
 	opts := genomics.GenerateOpts{Variants: variants, SampleID: sampleID, RefRegion: region}
