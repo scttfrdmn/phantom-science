@@ -5,15 +5,16 @@ package clinical
 import (
     "bufio"
     "context"
-    "crypto/rand"
     "fmt"
     "io"
     mathrand "math/rand"
     "os"
+    "sort"
     "time"
 
     "github.com/scttfrdmn/phantom-science/internal/genomics"
     "github.com/scttfrdmn/phantom-science/internal/genomics/diseases"
+    "github.com/scttfrdmn/phantom-science/internal/genomics/seqread"
     "github.com/scttfrdmn/phantom-science/internal/population"
     "github.com/scttfrdmn/phantom-science/pkg/types"
 )
@@ -95,11 +96,22 @@ func (g *ScenarioGenerator) Run(ctx context.Context, scenario *ClinicalScenario)
     cfg.ReadsPerBatch = totalReads
     cfg.TotalBatches = 1
 
+    // Resolve the seed once so the haplotype simulation and every trio
+    // member's engine derive from it; the scenario is reproducible with it.
+    runSeed, drawn, err := genomics.ResolveSeed(cfg.Seed)
+    if err != nil {
+        return nil, err
+    }
+    if drawn {
+        fmt.Fprintf(os.Stderr, "   [info] seed %d (set seed: %d in the sequencer config to reproduce this scenario)\n", runSeed, runSeed)
+    }
+    cfg.Seed = runSeed
+
     var readsGenerated int
 
     if scenario.Trio != nil && scenario.Trio.Generate && scenario.Trio.DeNovo {
         // 4. Trio path: haplotype-aware generation.
-        seed := int(time.Now().UnixNano() & 0x7fffffff)
+        seed := int(runSeed & 0x7fffffff) // #nosec G115 -- masked to 31 bits
         sim := population.NewHaplotypeSimulator(g.projectRoot)
         result, err := sim.SimulateHaplotypes(
             population.Population(g.config.Population),
@@ -260,115 +272,119 @@ func generateHaplotypeFASTQ(
         return 0, fmt.Errorf("unknown member %q", member)
     }
 
+
     regionLen := region.End - region.Start - int64(readLength)
     if regionLen <= 0 {
         return 0, fmt.Errorf("region too small for read length %d", readLength)
     }
 
-    qualityChars := "!\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJ"
-    coinBuf := make([]byte, 1)
-    rsBuf := make([]byte, 8)
+    // Every site that can be written into a read: background variants
+    // (0-based positions) and the de novo variant (1-based → 0-based).
+    type site struct {
+        pos      int64
+        ref, alt []byte
+        hapIdx   int // index into the haplotype; -1 for the de novo variant
+    }
+    var sites []site
+    for vi, v := range trio.Variants {
+        if len(v.Alleles) < 2 || len(v.Alleles[0]) == 0 || len(v.Alleles[1]) == 0 {
+            continue
+        }
+        sites = append(sites, site{int64(v.Position), []byte(v.Alleles[0]), []byte(v.Alleles[1]), vi})
+    }
+    if dn := trio.DeNovoVariant; dn != nil && dn.Chromosome != "" && dn.Position > 0 && len(dn.Ref) > 0 && len(dn.Alt) > 0 {
+        sites = append(sites, site{dn.Position - 1, []byte(dn.Ref), []byte(dn.Alt), -1})
+    }
+    // Apply right to left so that indels do not shift the offsets of the
+    // sites to their left; a site overlapping one already applied is skipped.
+    sort.SliceStable(sites, func(i, j int) bool { return sites[i].pos > sites[j].pos })
+    spans := make([]seqread.Span, len(sites))
+    for i, st := range sites {
+        spans[i] = seqread.Span{Pos: st.pos, RefLen: len(st.ref), AltLen: len(st.alt)}
+    }
+
+    rng := engine.Rand(memberStream(member))
     written := 0
 
     for i := 0; i < readCount; i++ {
         // Random read start within region.
-        rand.Read(rsBuf) // #nosec G104
-        rsVal := uint64(rsBuf[0])<<56 | uint64(rsBuf[1])<<48 | uint64(rsBuf[2])<<40 |
-            uint64(rsBuf[3])<<32 | uint64(rsBuf[4])<<24 | uint64(rsBuf[5])<<16 |
-            uint64(rsBuf[6])<<8 | uint64(rsBuf[7])
-        rsVal &= 0x7fffffffffffffff
-        readStart := region.Start + int64(rsVal%uint64(regionLen))
+        readStart := region.Start + rng.Int64N(regionLen)
 
-        seq, hmmQuals, err := engine.GenerateRawSequence(readLength)
+        // Generate slack bases so that deletions are absorbed and the read
+        // is trimmed back to readLength, never padded with 'N'.
+        n := readLength + seqread.WindowSlack(readStart, readLength, spans)
+        seq, quals, err := engine.GenerateRawSequenceWith(rng, n)
         if err != nil {
             return written, fmt.Errorf("generating sequence: %w", err)
         }
+        if len(quals) != len(seq) {
+            quals = make([]byte, len(seq))
+            for qi := range quals {
+                quals[qi] = 30
+            }
+        }
 
         // Pick H1 or H2 (50/50).
-        rand.Read(coinBuf) // #nosec G104
-        useH1 := coinBuf[0]&1 == 0
-        var hap []int
+        useH1 := rng.IntN(2) == 0
+        hap := h2
         if useH1 {
             hap = h1
-        } else {
-            hap = h2
         }
 
-        // Set alleles at background variant positions (always set REF or ALT
-        // so that variant sites have deterministic, haplotype-accurate bases).
-        for vi, v := range trio.Variants {
-            if vi >= len(hap) {
-                break
-            }
-            if len(v.Alleles) < 2 {
+        // Write REF or ALT at every site in the read (so variant sites have
+        // deterministic, haplotype-accurate bases). The de novo site is ALT
+        // on proband H1 only: VAF 0.5 in the proband, 0 in the parents.
+        window := int64(n)
+        limit := window
+        for _, st := range sites {
+            if st.hapIdx >= len(hap) {
                 continue
             }
-            vPos0 := int64(v.Position) // HaplotypeVariant.Position is 0-based
-            off := vPos0 - readStart
-            if off < 0 || int(off)+len(v.Alleles[0]) > len(seq) {
+            off := st.pos - readStart
+            end := off + int64(len(st.ref))
+            if off < 0 || end > window || end > limit {
                 continue
             }
-            ref := []byte(v.Alleles[0])
-            alt := []byte(v.Alleles[1])
-            if hap[vi] == 1 {
-                seq = spliceAllele(seq, int(off), ref, alt) // inject ALT
-            } else {
-                seq = spliceAllele(seq, int(off), ref, ref) // enforce REF
+            allele := st.ref
+            switch {
+            case st.hapIdx >= 0 && hap[st.hapIdx] == 1:
+                allele = st.alt
+            case st.hapIdx < 0 && member == "proband" && useH1:
+                allele = st.alt
             }
+            seq, quals = seqread.Splice(seq, quals, int(off), len(st.ref), allele)
+            limit = off
         }
-
-        // Set base at de novo position: ALT on proband H1, REF everywhere else.
-        // This ensures VAF = 0.5 for proband and 0 for mother/father.
-        if trio.DeNovoVariant != nil {
-            dn := trio.DeNovoVariant
-            if dn.Chromosome != "" && dn.Position > 0 && len(dn.Ref) > 0 && len(dn.Alt) > 0 {
-                off := (dn.Position - 1) - readStart // dn.Position is 1-based
-                if off >= 0 && int(off)+len(dn.Ref) <= len(seq) {
-                    if member == "proband" && useH1 {
-                        seq = spliceAllele(seq, int(off), []byte(dn.Ref), []byte(dn.Alt))
-                    } else {
-                        seq = spliceAllele(seq, int(off), []byte(dn.Ref), []byte(dn.Ref))
-                    }
-                }
-            }
+        if len(seq) < readLength { // cannot happen: the slack covers every deletion
+            return written, fmt.Errorf("read shorter than %d bases after variant injection", readLength)
         }
+        seq, quals = seq[:readLength], quals[:readLength]
 
-        // Encode quality scores.
-        quals := make([]byte, readLength)
-        if hmmQuals != nil {
-            for qi, q := range hmmQuals {
-                idx := int(q)
-                if idx >= len(qualityChars) {
-                    idx = len(qualityChars) - 1
-                }
-                quals[qi] = qualityChars[idx]
-            }
-        } else {
-            for qi := range quals {
-                quals[qi] = qualityChars[30]
-            }
+        // Encode quality scores (Phred+33, capped at 41).
+        for qi, q := range quals {
+            quals[qi] = '!' + min(q, 41)
         }
 
         readID := fmt.Sprintf("@%s:%d:HXXXXXX:1:1101:%d:%d 1:N:0:1",
             cfg.SampleName, cfg.Lane,
             int(readStart%100000), int((readStart/100000)%100000))
-        fmt.Fprintf(w, "%s\n%s\n+\n%s\n", readID, string(seq), string(quals))
+        if _, err := fmt.Fprintf(w, "%s\n%s\n+\n%s\n", readID, seq, quals); err != nil {
+            return written, err
+        }
         written++
     }
     return written, nil
 }
 
-// spliceAllele replaces bases at offset with alt, preserving original length.
-func spliceAllele(seq []byte, offset int, ref, alt []byte) []byte {
-    after := make([]byte, 0, len(seq))
-    after = append(after, seq[:offset]...)
-    after = append(after, alt...)
-    after = append(after, seq[offset+len(ref):]...)
-    if len(after) > len(seq) {
-        after = after[:len(seq)]
+// memberStream returns the RNG stream of a trio member's reads, so members
+// generated by engines with the same seed draw independent reads.
+func memberStream(member string) uint64 {
+    switch member {
+    case "mother":
+        return 2
+    case "father":
+        return 3
+    default:
+        return 1
     }
-    for len(after) < len(seq) {
-        after = append(after, 'N')
-    }
-    return after
 }
