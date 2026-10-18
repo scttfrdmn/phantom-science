@@ -40,6 +40,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `--output s3://bucket/prefix/` (#16) spools, finalizes and multipart-uploads each file under keys that mirror the local names, with regenerable-from-seed object tags.
 - `phantom-manifest.json` for every run (#16): seed, sanitized config, and the size and sha256 of every output. It never contains key material.
 - `phantom-science bench` (#16) reports reads/s, bases/s and MB/s per worker count.
+- `phantom-science signal` (#14) synthesizes raw nanopore signal from FASTQ or FASTA reads (plain or gzip) using a k-mer pore model and a chemistry profile.
+  - Writes BLOW5 chunked per run as `<flowcell>_<runid>_<n>.blow5`. The default zlib + svb-zd encoding is pod5/blue-crab compatible.
+  - Keeps the UUID read IDs and MinKNOW run metadata from `generate --platform ont` as read-group attributes and ONT auxiliary fields. Other reads get version-5 UUIDs and run metadata derived from the seed.
+  - Writes `truth.fa`, the sequence each signal was synthesized from (optionally error-free via `--truth`), for `scripts/acceptance/dorado_identity.sh`.
+  - Writes a manifest with `signal` and `truth` outputs and a `signal` section recording the profile, pore model and inputs (each by name and sha256).
+  - Reproducible per `--seed`, with byte-identical output for any `--workers`.
+- `scripts/acceptance/README.md`: a guide to the acceptance scripts, covering required tools, commands, pass criteria and the issue each one closes.
 - Acceptance scripts for external tools (run by the user):
   - `scripts/acceptance/transcriptome_bambu.sh`: Pychopper → minimap2 → Bambu (#13)
   - `dorado_identity.sh` (#14)
