@@ -228,7 +228,7 @@ func TestONT_GzipPatternMatchesPlain(t *testing.T) {
 	for _, de := range entries {
 		names = append(names, de.Name())
 	}
-	want := []string{"ontS_barcode01_PAW00001_0.fastq.gz", "ontS_barcode01_PAW00001_1.fastq.gz", "ontS_barcode01_PAW00001_2.fastq.gz", "summary.tsv"}
+	want := []string{"ontS_barcode01_PAW00001_0.fastq.gz", "ontS_barcode01_PAW00001_1.fastq.gz", "ontS_barcode01_PAW00001_2.fastq.gz", "phantom-manifest.json", "summary.tsv"}
 	if strings.Join(names, ",") != strings.Join(want, ",") {
 		t.Fatalf("output files %v, want %v (no plain FASTQ left behind)", names, want)
 	}

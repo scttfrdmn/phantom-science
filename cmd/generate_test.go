@@ -5,7 +5,6 @@ package cmd
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -15,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/scttfrdmn/phantom-science/internal/genomics"
+	"github.com/scttfrdmn/phantom-science/internal/genomics/manifest"
 	"github.com/spf13/pflag"
 )
 
@@ -50,7 +50,7 @@ func writeGenerateConfig(t *testing.T, readLength, reads int) string {
 
 func TestGenerateCommand_NewFlags(t *testing.T) {
 	for _, name := range []string{"seed", "platform", "read-length-dist", "read-length-n50", "read-length-median",
-		"read-length-mean", "read-length-sd", "basecaller-tier", "compress", "region", "total-bases", "total-reads", "workers"} {
+		"read-length-mean", "read-length-sd", "basecaller-tier", "compress", "region", "total-bases", "total-reads", "workers", "flow-cells", "output"} {
 		if generateCmd.Flags().Lookup(name) == nil {
 			t.Errorf("generateCmd should have --%s flag", name)
 		}
@@ -183,18 +183,58 @@ func TestGenerateStdout_SeedReproducible(t *testing.T) {
 	}
 }
 
-func TestGenerate_NotImplementedFlags(t *testing.T) {
-	for flag, val := range map[string]string{
-		"total-bases": "140G", "total-reads": "1000", "workers": "4",
-	} {
-		t.Run(flag, func(t *testing.T) {
-			setGenerateFlags(t, map[string]string{"config": writeGenerateConfig(t, 50, 5), "stdout": "true", flag: val})
-			err := runGenerate(generateCmd, io.Discard)
-			if !errors.Is(err, genomics.ErrNotImplemented) {
-				t.Errorf("--%s %s: err = %v, want ErrNotImplemented", flag, val, err)
-			}
+// The #16 flags reach the engine: --total-reads and --total-bases size
+// streamed output, and file output honours --workers, --flow-cells and
+// --output, writing a manifest.
+func TestGenerate_ScaleFlags(t *testing.T) {
+	t.Run("total-reads", func(t *testing.T) {
+		setGenerateFlags(t, map[string]string{"config": writeGenerateConfig(t, 50, 5), "stdout": "true", "total-reads": "12", "seed": "3"})
+		var out bytes.Buffer
+		if err := runGenerate(generateCmd, &out); err != nil {
+			t.Fatal(err)
+		}
+		if n := strings.Count(out.String(), "\n"); n != 12*4 {
+			t.Errorf("--total-reads 12: %d lines, want 48", n)
+		}
+	})
+	t.Run("total-bases", func(t *testing.T) {
+		setGenerateFlags(t, map[string]string{"config": writeGenerateConfig(t, 50, 5), "stdout": "true", "total-bases": "1K", "seed": "3"})
+		var out bytes.Buffer
+		if err := runGenerate(generateCmd, &out); err != nil {
+			t.Fatal(err)
+		}
+		if n := strings.Count(out.String(), "\n"); n != 20*4 {
+			t.Errorf("--total-bases 1K with 50 bp reads: %d lines, want 80", n)
+		}
+	})
+	t.Run("files", func(t *testing.T) {
+		outDir := filepath.Join(t.TempDir(), "elsewhere")
+		setGenerateFlags(t, map[string]string{
+			"config": writeGenerateConfig(t, 50, 5), "total-reads": "12", "workers": "3", "flow-cells": "2", "output": outDir, "seed": "3",
 		})
-	}
+		if err := runGenerate(generateCmd, io.Discard); err != nil {
+			t.Fatal(err)
+		}
+		m, err := manifest.Read(filepath.Join(outDir, manifest.FileName))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(m.FlowCells) != 2 || m.Totals.Reads != 24 || m.Totals.Files != 6 || m.Tool.Version != Version {
+			t.Errorf("manifest flow cells %+v totals %+v tool %+v", m.FlowCells, m.Totals, m.Tool)
+		}
+		if err := m.VerifyDir(outDir); err != nil {
+			t.Error(err)
+		}
+		if _, err := os.Stat(filepath.Join(outDir, "flowcell_1", "CLI_S1_L001_001.fastq")); err != nil {
+			t.Error(err)
+		}
+	})
+	t.Run("bad total-bases", func(t *testing.T) {
+		setGenerateFlags(t, map[string]string{"config": writeGenerateConfig(t, 50, 5), "total-bases": "12Q"})
+		if err := runGenerate(generateCmd, io.Discard); err == nil || !strings.Contains(err.Error(), "--total-bases") {
+			t.Errorf("bad --total-bases: err = %v", err)
+		}
+	})
 }
 
 func TestGenerate_StdoutOnlyFlags(t *testing.T) {

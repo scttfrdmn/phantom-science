@@ -11,8 +11,10 @@ import (
 
 	"github.com/scttfrdmn/phantom-science/internal/cli"
 	"github.com/scttfrdmn/phantom-science/internal/genomics"
+	"github.com/scttfrdmn/phantom-science/internal/storage/s3sink"
 	"github.com/scttfrdmn/phantom-science/pkg/types"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 var generateCmd = &cobra.Command{
@@ -36,7 +38,16 @@ variants plus one read length on each side (all variants must then be on one chr
 
 --seed makes a run reproducible: the same seed and config give byte-identical output.
 Without --seed a random seed is drawn and logged to stderr. Diagnostics always go to
-stderr, so --stdout output is clean FASTQ.`,
+stderr, so --stdout output is clean FASTQ.
+
+Output size and scale (file output):
+  --total-bases 140G   write files until the target is met (within one read of it)
+  --total-reads N      exactly N reads (read pairs for paired-end); last file partial
+  --flow-cells 2       independent runs in per-flow-cell subdirectories, seed-derived IDs
+  --workers 8          generate 8 files in parallel; output is identical for any count
+  --output s3://bucket/prefix/   spool, finalize and multipart-upload each file
+max_output_gb / max_output_tb in the config cap the bases of each flow cell. Every run
+writes phantom-manifest.json (seed, sanitized config, size and sha256 of every output).`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runGenerate(cmd, os.Stdout)
 	},
@@ -61,9 +72,17 @@ func init() {
 	f.Float64("read-length-sd", 0, "Read-length standard deviation")
 	f.String("basecaller-tier", "", "ONT basecaller tier for the error model: sup, hac or fast")
 	f.String("compress", "", "Output compression: none (default) or gzip")
-	f.String("total-bases", "", "Target total output bases, e.g. 140G (#16)")
-	f.Int64("total-reads", 0, "Target total number of reads (#16)")
-	f.Int("workers", 0, "Parallel generation workers (#16)")
+	addScaleFlags(f)
+	f.Int64("total-reads", 0, "Target number of reads (read pairs for paired-end) per flow cell, replacing total_batches")
+	f.Int("workers", 0, "Output files generated in parallel (default 1); output is identical for any value")
+	f.String("output", "", "Output directory or s3://bucket/prefix/ (overrides output_dir in the config)")
+}
+
+// addScaleFlags adds the output-size and parallelism flags shared by
+// generate and bench.
+func addScaleFlags(f *pflag.FlagSet) {
+	f.String("total-bases", "", "Target output bases per flow cell, e.g. 140G (K/M/G/T suffixes); output stops within one read of it")
+	f.Int("flow-cells", 0, "Number of independent flow-cell runs, each in its own subdirectory with seed-derived IDs")
 }
 
 // runGenerate implements the generate command, streaming to out with --stdout.
@@ -138,10 +157,19 @@ func runGenerate(cmd *cobra.Command, out io.Writer) error {
 
 	engine := genomics.NewEngine(*config)
 	defer engine.Close()
+	engine.SetToolVersion(Version)
 
 	if !stdoutMode {
 		if err := engine.Generate(); err != nil {
 			return err
+		}
+		if s3sink.IsURI(config.OutputDir) {
+			if phantomConfig != nil {
+				if _, ok := cli.EffectiveValidation(phantomConfig.Validation); ok {
+					fmt.Fprintf(os.Stderr, "   [warn] validation skipped: output was uploaded to %s\n", config.OutputDir)
+				}
+			}
+			return nil
 		}
 		// Validate the generated files when the phantom config enables validation.
 		if phantomConfig != nil {
@@ -206,8 +234,16 @@ func applyGenerateFlags(cmd *cobra.Command, config *types.SequencerConfig) error
 	if set("total-reads") {
 		config.TotalReads, _ = flags.GetInt64("total-reads")
 	}
+	if set("flow-cells") {
+		config.FlowCells, _ = flags.GetInt("flow-cells")
+	}
 	if set("workers") {
-		config.Workers, _ = flags.GetInt("workers")
+		if n, err := flags.GetInt("workers"); err == nil {
+			config.Workers = n
+		}
+	}
+	if set("output") {
+		config.OutputDir, _ = flags.GetString("output")
 	}
 	return nil
 }

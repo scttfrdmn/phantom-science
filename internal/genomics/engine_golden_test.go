@@ -111,7 +111,7 @@ func TestGolden_FileOutputSingleEnd(t *testing.T) {
 	}
 	sort.Strings(names)
 	want := []string{"Gold_S1_L003_001.fastq", "Gold_S1_L003_002.fastq"}
-	if strings.Join(names, ",") != strings.Join(want, ",") {
+	if strings.Join(names, ",") != strings.Join(append(want, "phantom-manifest.json"), ",") { // the run manifest (#16)
 		t.Fatalf("files %v, want %v", names, want)
 	}
 	if got := e.GeneratedFiles(); len(got) != 2 || filepath.Base(got[0]) != want[0] || filepath.Base(got[1]) != want[1] {

@@ -19,7 +19,9 @@ import (
 
     "github.com/scttfrdmn/phantom-science/internal/fingerprinting"
     "github.com/scttfrdmn/phantom-science/internal/genomics/authenticity"
+    "github.com/scttfrdmn/phantom-science/internal/genomics/manifest"
     "github.com/scttfrdmn/phantom-science/internal/security"
+    "github.com/scttfrdmn/phantom-science/internal/storage/s3sink"
     "github.com/scttfrdmn/phantom-science/pkg/types"
 )
 
@@ -59,7 +61,30 @@ type Engine struct {
     fingerprintOnce sync.Once
     fingerprint     string
     fingerprintErr  error
+
+    // modelPath is the HMM model file hmmModel was loaded from; file output
+    // loads a fresh instance per file from it (models are not safe to share
+    // between parallel workers, and adaptive models carry state).
+    modelPath string
+    // parent is the run's engine when this one generates one flow cell of
+    // it; the run fingerprint is the parent's.
+    parent *Engine
+    // toolVersion is recorded in the manifest; uploader receives S3 output.
+    toolVersion string
+    uploader    s3sink.Uploader
+    // manifest describes the last completed Generate run.
+    manifest *manifest.Manifest
 }
+
+// SetToolVersion sets the tool version recorded in run manifests.
+func (e *Engine) SetToolVersion(v string) { e.toolVersion = v }
+
+// SetUploader sets the uploader used for s3:// output (by default the AWS
+// SDK's, with the default credential chain).
+func (e *Engine) SetUploader(u s3sink.Uploader) { e.uploader = u }
+
+// Manifest returns the manifest of the last completed Generate run, or nil.
+func (e *Engine) Manifest() *manifest.Manifest { return e.manifest }
 
 // qualityLayer is the steganography layer that embeds a fingerprint in FASTQ
 // quality scores.
@@ -108,6 +133,9 @@ func (e *Engine) checkQualityFingerprinting() error {
 // runFingerprint returns the fingerprint for this engine's run, generating it
 // on first use.
 func (e *Engine) runFingerprint() (string, error) {
+    if e.parent != nil {
+        return e.parent.runFingerprint()
+    }
     e.fingerprintOnce.Do(func() {
         e.fingerprint, e.fingerprintErr = e.fingerprintingEngine.GenerateFingerprint(e.config.DatasetID)
     })
@@ -162,6 +190,7 @@ func NewEngine(config types.SequencerConfig) *Engine {
                 modelPath, err)
         } else {
             e.hmmModel = m
+            e.modelPath = modelPath
             e.reseedModel(newStream(e.seed, rawStream))
             fmt.Fprintf(e.logw, "   [info] Loaded HMM model from %s\n", modelPath)
         }
@@ -192,8 +221,8 @@ func (e *Engine) Generate() error {
     if e.config.ReadsPerBatch <= 0 {
         return fmt.Errorf("invalid reads per batch: must be greater than 0, got %d", e.config.ReadsPerBatch)
     }
-    if e.config.TotalBatches <= 0 {
-        return fmt.Errorf("invalid total batches: must be greater than 0, got %d", e.config.TotalBatches)
+    if err := e.checkBatches(); err != nil {
+        return err
     }
     if e.config.SampleName == "" {
         return fmt.Errorf("sample name cannot be empty")
@@ -211,47 +240,40 @@ func (e *Engine) Generate() error {
     }
     e.logSeed()
 
+    c := e.config
     fmt.Println("🧬 Initializing genomics simulation engine...")
-    fmt.Printf("   Sample: %s\n", e.config.SampleName)
-    fmt.Printf("   Reads per batch: %d\n", e.config.ReadsPerBatch)
-    fmt.Printf("   Total batches: %d\n", e.config.TotalBatches)
-
-    // Create output directory with security validation
-    if err := security.SecureMkdirAll(e.config.OutputDir, ""); err != nil {
-        return fmt.Errorf("failed to create output directory: %w", err)
+    fmt.Printf("   Sample: %s\n", c.SampleName)
+    fmt.Printf("   Reads per batch: %d\n", c.ReadsPerBatch)
+    switch {
+    case c.TotalBases > 0:
+        fmt.Printf("   Target bases: %d\n", c.TotalBases)
+    case c.TotalReads > 0:
+        fmt.Printf("   Target reads: %d\n", c.TotalReads)
+    default:
+        fmt.Printf("   Total batches: %d\n", c.TotalBatches)
+        fmt.Printf("   Total reads to generate: %d\n", c.TotalBatches*c.ReadsPerBatch)
+    }
+    if c.FlowCells > 1 {
+        fmt.Printf("   Flow cells: %d\n", c.FlowCells)
+    }
+    if c.Workers > 1 {
+        fmt.Printf("   Workers: %d\n", c.Workers)
     }
 
-    totalReads := e.config.TotalBatches * e.config.ReadsPerBatch
-    fmt.Printf("   Total reads to generate: %d\n", totalReads)
-
-    obs, err := e.observer()
-    if err != nil {
+    before := len(e.GeneratedFiles())
+    if err := e.generateRun(); err != nil {
         return err
     }
-    mates := []int{1}
-    if e.config.PairedEnd {
-        mates = []int{1, 2}
-    }
-    for batch := 1; batch <= e.config.TotalBatches; batch++ {
-        fmt.Printf("   Generating batch %d/%d...\n", batch, e.config.TotalBatches)
-        for _, mate := range mates {
-            if err := e.generateFASTQFile(e.outputPath(batch, mate), batch, mate, obs); err != nil {
-                closeObserver(obs) // #nosec G104 -- the generation error is returned
-                if e.config.PairedEnd {
-                    return fmt.Errorf("failed to generate R%d file: %w", mate, err)
-                }
-                return fmt.Errorf("failed to generate FASTQ file: %w", err)
-            }
-        }
-    }
-    if err := closeObserver(obs); err != nil {
-        return err
-    }
+    fmt.Printf("   ✅ Generated %d FASTQ files in %s\n", len(e.GeneratedFiles())-before, c.OutputDir)
+    return nil
+}
 
-    fmt.Printf("   ✅ Generated %d FASTQ files in %s\n",
-        e.config.TotalBatches*len(mates),
-        e.config.OutputDir)
-
+// checkBatches validates the batch count, which output-size targets replace.
+func (e *Engine) checkBatches() error {
+    c := e.config
+    if c.TotalBases == 0 && c.TotalReads == 0 && c.TotalBatches <= 0 {
+        return fmt.Errorf("invalid total batches: must be greater than 0, got %d", c.TotalBatches)
+    }
     return nil
 }
 
@@ -275,58 +297,72 @@ func (e *Engine) Close() {
 
 // GenerateFASTQFile generates a single FASTQ file (public method for TUI).
 // read is the mate number (1, or 2 for the second file of a pair). The
-// file's reads come from the RNG stream of (batch, read), so its content
-// depends only on the seed, the configuration, batch and read.
+// file's reads come from the RNG stream of (batch, read) (and, for
+// paired-end output, the batch's pair stream), so its content depends only
+// on the seed, the configuration, batch and read: it equals that file of a
+// Generate run. Output-size targets and flow cells do not apply; the file
+// holds ReadsPerBatch reads.
 func (e *Engine) GenerateFASTQFile(filename string, batch, read int) error {
     if err := e.checkExtensions(); err != nil {
         return err
+    }
+    if s3sink.IsURI(e.config.OutputDir) {
+        return fmt.Errorf("GenerateFASTQFile writes local files: output_dir %s is an S3 URI", e.config.OutputDir)
     }
     obs, err := e.observer()
     if err != nil {
         return err
     }
-    if err := e.generateFASTQFile(filename, batch, read, obs); err != nil {
+    final, err := e.generateFASTQFile(fileJob{path: filename, batch: batch, mate: read, reads: e.config.ReadsPerBatch, obs: obs})
+    if err != nil {
         closeObserver(obs) // #nosec G104 -- the generation error is returned
-        return err
-    }
-    return closeObserver(obs)
-}
-
-func (e *Engine) generateFASTQFile(filename string, batch, read int, obs ReadObserver) error {
-    // Validate file path against the configured output directory
-    if err := security.ValidateFilePath(filename, e.config.OutputDir); err != nil {
-        return fmt.Errorf("invalid file path: %w", err)
-    }
-
-    if e.qualityFingerprintingEnabled() {
-        if err := e.checkQualityFingerprinting(); err != nil {
-            return err
-        }
-    }
-
-    file, err := security.SecureFileCreate(filename, e.config.OutputDir)
-    if err != nil {
-        return err
-    }
-    if err := e.writeFileStream(file, batch, read, filename, obs); err != nil {
-        file.Close()        // #nosec G104 -- the write error is returned
-        os.Remove(filename) // #nosec G104 -- best effort cleanup of a partial file
-        return err
-    }
-    if err := file.Close(); err != nil {
-        return fmt.Errorf("closing %s: %w", filepath.Base(filename), err)
-    }
-    final, err := e.finalize(filename)
-    if err != nil {
         return err
     }
     e.filesMu.Lock()
     e.files = append(e.files, final)
     e.filesMu.Unlock()
-    return nil
+    return closeObserver(obs)
 }
 
-// GeneratedFiles returns the FASTQ files this engine has written, in order.
+// fileJob describes one FASTQ file to write.
+type fileJob struct {
+    path               string
+    batch, mate, reads int
+    obs                ReadObserver
+    tally              func(bases int) // told each written read's length
+    abort              *atomic.Bool    // stops the file with errAborted when set
+}
+
+// generateFASTQFile writes and finalizes one file and returns its final path.
+func (e *Engine) generateFASTQFile(j fileJob) (string, error) {
+    // Validate file path against the configured output directory
+    if err := security.ValidateFilePath(j.path, e.config.OutputDir); err != nil {
+        return "", fmt.Errorf("invalid file path: %w", err)
+    }
+
+    if e.qualityFingerprintingEnabled() {
+        if err := e.checkQualityFingerprinting(); err != nil {
+            return "", err
+        }
+    }
+
+    file, err := security.SecureFileCreate(j.path, e.config.OutputDir)
+    if err != nil {
+        return "", err
+    }
+    if err := e.writeFileStream(file, j); err != nil {
+        file.Close()      // #nosec G104 -- the write error is returned
+        os.Remove(j.path) // #nosec G104 -- best effort cleanup of a partial file
+        return "", err
+    }
+    if err := file.Close(); err != nil {
+        return "", fmt.Errorf("closing %s: %w", filepath.Base(j.path), err)
+    }
+    return e.finalize(j.path)
+}
+
+// GeneratedFiles returns the FASTQ files this engine has written, in order
+// (s3:// URIs for S3 output).
 func (e *Engine) GeneratedFiles() []string {
     e.filesMu.Lock()
     defer e.filesMu.Unlock()
@@ -341,20 +377,30 @@ func (e *Engine) SkippedVariantOverlaps() int64 {
 }
 
 // writeFileStream writes one file's batch of FASTQ records (one mate) to w.
-func (e *Engine) writeFileStream(w io.Writer, batch, mate int, filename string, obs ReadObserver) error {
-    p, err := e.newPipeline(GenerateOpts{}, obs)
+// The file gets its own HMM model instance, seeded from its stream.
+func (e *Engine) writeFileStream(w io.Writer, j fileJob) error {
+    p, err := e.newPipeline(GenerateOpts{}, j.obs)
     if err != nil {
+        return err
+    }
+    p.tally, p.abort = j.tally, j.abort
+    if p.model, err = e.streamModel(); err != nil {
         return err
     }
     ww, err := e.wrapOutput(w)
     if err != nil {
         return err
     }
-    r := newStream(e.seed, streamID(batch, mate))
-    e.reseedModel(r)
+    r := newStream(e.seed, streamID(j.batch, j.mate))
+    reseed(p.model, r)
+    shared := r
+    if e.config.PairedEnd {
+        shared = newStream(e.seed, streamID(j.batch, pairMate))
+    }
     bw := bufio.NewWriterSize(ww, 256*1024)
     var serial int64
-    if err := p.writeBatch(bw, r, batch, []int{mate}, filename, &serial); err != nil {
+    spec := batchSpec{batch: j.batch, reads: j.reads, mates: []int{j.mate}, file: j.path, shared: shared}
+    if _, err := p.writeBatch(bw, r, spec, &serial); err != nil {
         return err
     }
     if err := bw.Flush(); err != nil {
@@ -363,14 +409,24 @@ func (e *Engine) writeFileStream(w io.Writer, batch, mate int, filename string, 
     return ww.Close()
 }
 
-// reseedModel reseeds the HMM model (when it supports seeding) from r, so
-// HMM-generated reads are reproducible from the run seed as well. The model
-// is shared by the engine's streams; generating streams concurrently needs a
-// model per stream.
-func (e *Engine) reseedModel(r *rand.Rand) {
-    if s, ok := e.hmmModel.(seedable); ok {
-        s.SetSeed(r.Int64())
+// streamModel returns the HMM model for one output file: a fresh instance
+// loaded from the model path, so files do not depend on each other or on
+// scheduling. Without a path it is the engine's shared model (or nil).
+func (e *Engine) streamModel() (authenticity.SequenceGenerator, error) {
+    if e.hmmModel == nil || e.modelPath == "" {
+        return e.hmmModel, nil
     }
+    m, err := authenticity.LoadModel(e.modelPath)
+    if err != nil {
+        return nil, fmt.Errorf("loading HMM model %s: %w", e.modelPath, err)
+    }
+    return m, nil
+}
+
+// reseedModel reseeds the engine's shared HMM model from r. Streamed output
+// (GenerateToWriter) uses the shared model, one stream at a time.
+func (e *Engine) reseedModel(r *rand.Rand) {
+    reseed(e.hmmModel, r)
 }
 
 // generateWith returns n bases and their Phred qualities. It uses the HMM
@@ -378,14 +434,7 @@ func (e *Engine) reseedModel(r *rand.Rand) {
 // r when there is none or it fails; qualities are then nil, and the pipeline
 // applies the quality model.
 func (e *Engine) generateWith(r *rand.Rand, n int) ([]byte, []byte, error) {
-    if e.hmmModel != nil {
-        result, err := e.hmmModel.GenerateSequence(n)
-        if err == nil {
-            return result.Sequence, result.Qualities, nil
-        }
-        // fall through to uniform bases on per-call HMM failure
-    }
-    return randomBases(r, n), nil, nil
+    return generateFrom(e.hmmModel, r, n)
 }
 
 // VariantRecord holds a single variant for controlled injection into synthetic reads.
@@ -424,7 +473,9 @@ type GenerateOpts struct {
 // GenerateToWriter streams all synthetic FASTQ reads to w without writing local
 // files. Variant injection and per-read RG tagging are controlled via opts.
 // Config-level fingerprinting is applied when enabled. Each batch draws from
-// its own RNG stream, so output is reproducible from the seed.
+// its own RNG stream, so output is reproducible from the seed. TotalReads,
+// TotalBases and the max-output cap apply as for Generate (one stream, so
+// Workers does not apply); flow cells need file output.
 func (e *Engine) GenerateToWriter(w io.Writer, opts GenerateOpts) error {
     if e.config.ReadLength <= 0 {
         return fmt.Errorf("invalid read length: %d", e.config.ReadLength)
@@ -432,8 +483,11 @@ func (e *Engine) GenerateToWriter(w io.Writer, opts GenerateOpts) error {
     if e.config.ReadsPerBatch <= 0 {
         return fmt.Errorf("invalid reads per batch: %d", e.config.ReadsPerBatch)
     }
-    if e.config.TotalBatches <= 0 {
-        return fmt.Errorf("invalid total batches: %d", e.config.TotalBatches)
+    if err := e.checkBatches(); err != nil {
+        return err
+    }
+    if e.config.FlowCells > 1 {
+        return fmt.Errorf("flow_cells %d needs file output: each flow cell is written to its own directory", e.config.FlowCells)
     }
     if e.qualityFingerprintingEnabled() {
         return fmt.Errorf("steganography layer %q needs file output: a fingerprint cannot be embedded in streamed output; write files instead, or remove %q from steganography_layers", qualityLayer, qualityLayer)
@@ -472,21 +526,29 @@ func (e *Engine) writeStreams(w io.Writer, opts GenerateOpts, obs ReadObserver) 
     if bw == nil {
         bw = bufio.NewWriterSize(ww, 256*1024)
     }
-    mates := []int{1}
-    if e.config.PairedEnd {
-        mates = []int{1, 2}
-    }
+    mates := e.mates()
+    plan := e.outputPlan()
+    b := &budget{p: plan}
     var serial int64
-    for batch := 1; batch <= e.config.TotalBatches; batch++ {
+    for batch := 1; plan.has(batch); batch++ {
         p, err := e.newPipeline(opts, obs)
         if err != nil {
             return err
         }
+        p.model, p.admit = e.hmmModel, b.admit
         r := newStream(e.seed, streamID(batch, 0))
         e.reseedModel(r)
-        if err := p.writeBatch(bw, r, batch, mates, "", &serial); err != nil {
+        spec := batchSpec{batch: batch, reads: plan.reads(batch), mates: mates, shared: r}
+        stopped, err := p.writeBatch(bw, r, spec, &serial)
+        if err != nil {
             return err
         }
+        if stopped || (plan.bases > 0 && b.bases >= plan.bases) {
+            break
+        }
+    }
+    if b.capped {
+        fmt.Fprintf(e.logw, "   [warn] output stopped at the max output of %d bases (max_output_gb / max_output_tb)\n", plan.cap)
     }
     if err := bw.Flush(); err != nil {
         return fmt.Errorf("writing FASTQ record: %w", err)

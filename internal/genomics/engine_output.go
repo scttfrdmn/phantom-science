@@ -30,9 +30,12 @@ package genomics
 //     embeds the quality-score fingerprint when that layer is enabled; any
 //     compression of fingerprinted files must happen after embedding, here.
 //   - observer returns the run's ReadObserver (nil for none, the default). It
-//     is opened once per Generate / GenerateToWriter / GenerateFASTQFile call,
-//     sees every written read, and is closed at the end of that call (e.g. to
-//     write an ONT sequencing_summary.txt).
+//     is opened once per GenerateToWriter / GenerateFASTQFile call, sees
+//     every written read, and is closed at the end of that call (e.g. to
+//     write an ONT sequencing_summary.txt). Generate instead opens one
+//     summaryObserver per output unit, writing to a part file, and
+//     concatenates the parts in unit order (see generateRun), so parallel
+//     generation gives the same summary.
 //
 // Oxford Nanopore output (Platform "ont", #12):
 //
@@ -81,6 +84,7 @@ import (
 	"github.com/scttfrdmn/phantom-science/internal/genomics/nanopore"
 	"github.com/scttfrdmn/phantom-science/internal/genomics/seqread"
 	"github.com/scttfrdmn/phantom-science/internal/security"
+	"github.com/scttfrdmn/phantom-science/internal/storage/s3sink"
 	"github.com/scttfrdmn/phantom-science/pkg/types"
 )
 
@@ -154,6 +158,11 @@ func (e *Engine) checkOutput() error {
 		}
 	default:
 		return fmt.Errorf("unknown platform %q: want illumina or ont", e.config.Platform)
+	}
+	if s3sink.IsURI(e.config.OutputDir) {
+		if _, err := s3sink.ParseURI(e.config.OutputDir); err != nil {
+			return fmt.Errorf("output_dir: %w", err)
+		}
 	}
 	out := e.config.Output
 	switch c := strings.ToLower(out.Compression); c {
@@ -310,8 +319,8 @@ func (e *Engine) checkFilePattern() error {
 	if name == "" || name == "." || name == ".." || filepath.Base(name) != name {
 		return fmt.Errorf("output file_pattern %q must give a file name without directories, got %q", pattern, name)
 	}
-	if e.config.TotalBatches > 1 && !strings.Contains(pattern, "{file_number}") {
-		return fmt.Errorf("output file_pattern %q needs {file_number}: total_batches is %d", pattern, e.config.TotalBatches)
+	if e.multiFile() && !strings.Contains(pattern, "{file_number}") {
+		return fmt.Errorf("output file_pattern %q needs {file_number}: the run writes more than one file (total_batches %d, total_reads %d, total_bases %d)", pattern, e.config.TotalBatches, e.config.TotalReads, e.config.TotalBases)
 	}
 	if e.config.PairedEnd && !strings.Contains(pattern, "{mate}") {
 		return fmt.Errorf("output file_pattern %q needs {mate} for paired-end output", pattern)
@@ -436,16 +445,27 @@ func (e *Engine) observer() (ReadObserver, error) {
 		}
 		return security.SecureFileCreate(filepath.Join(outDir, name), outDir)
 	}
-	fileName := func(file string) string {
-		if file == "" {
-			return ""
-		}
-		if e.gzipOutput() {
-			return gzName(filepath.Base(file))
-		}
-		return filepath.Base(file)
+	return nanopore.NewSummaryWriter(e.ontRunInfo(), e.maxPhred(), open, e.summaryFileName), nil
+}
+
+// summaryFileName is the filename_fastq value of a read written to file.
+func (e *Engine) summaryFileName(file string) string {
+	if file == "" {
+		return ""
 	}
-	return nanopore.NewSummaryWriter(e.ontRunInfo(), e.maxPhred(), open, fileName), nil
+	if e.gzipOutput() {
+		return gzName(filepath.Base(file))
+	}
+	return filepath.Base(file)
+}
+
+// summaryObserver returns a summary writer for one output unit of Generate,
+// writing its rows (with a header line) to part; Generate concatenates the
+// parts in unit order, so the summary does not depend on scheduling.
+func (e *Engine) summaryObserver(part string) ReadObserver {
+	dir := e.config.OutputDir
+	open := func(*seqread.Record) (io.WriteCloser, error) { return security.SecureFileCreate(part, dir) }
+	return nanopore.NewSummaryWriter(e.ontRunInfo(), e.maxPhred(), open, e.summaryFileName)
 }
 
 type nopWriteCloser struct{ io.Writer }

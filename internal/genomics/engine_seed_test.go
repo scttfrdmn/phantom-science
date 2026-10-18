@@ -203,36 +203,37 @@ func TestNewEngine_HMMMessagesNotOnStdout(t *testing.T) {
 	}
 }
 
-func TestNotImplemented_Errors(t *testing.T) {
-	cases := []struct {
-		name  string
-		edit  func(*types.SequencerConfig)
-		issue string
-	}{
-		{"total-bases", func(c *types.SequencerConfig) { c.TotalBases = 1e9 }, "#16"},
-		{"total-reads", func(c *types.SequencerConfig) { c.TotalReads = 1000 }, "#16"},
-		{"flow-cells", func(c *types.SequencerConfig) { c.FlowCells = 2 }, "#16"},
-		{"workers", func(c *types.SequencerConfig) { c.Workers = 8 }, "#16"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
+// The #16 settings are implemented: none returns ErrNotImplemented, and
+// Workers does not change streamed output.
+func TestScaleSettings_Implemented(t *testing.T) {
+	for name, edit := range map[string]func(*types.SequencerConfig){
+		"total-bases": func(c *types.SequencerConfig) { c.TotalBases = 500 },
+		"total-reads": func(c *types.SequencerConfig) { c.TotalReads = 9 },
+		"flow-cells":  func(c *types.SequencerConfig) { c.FlowCells = 2 },
+		"workers":     func(c *types.SequencerConfig) { c.Workers = 8 },
+	} {
+		t.Run(name, func(t *testing.T) {
 			c := goldenConfig(t.TempDir())
-			tc.edit(&c)
+			c.Seed = 12
+			edit(&c)
 			e := NewEngine(c)
 			defer e.Close()
-			for what, err := range map[string]error{
-				"GenerateToWriter":  e.GenerateToWriter(io.Discard, GenerateOpts{}),
-				"Generate":          e.Generate(),
-				"GenerateFASTQFile": e.GenerateFASTQFile(filepath.Join(c.OutputDir, "x.fastq"), 1, 1),
-			} {
-				if !errors.Is(err, ErrNotImplemented) || !strings.Contains(err.Error(), tc.issue) {
-					t.Errorf("%s: err = %v, want ErrNotImplemented mentioning %s", what, err, tc.issue)
+			if err := e.Generate(); err != nil {
+				t.Errorf("Generate: %v", err)
+			}
+			if c.FlowCells == 0 {
+				if err := e.GenerateToWriter(io.Discard, GenerateOpts{}); errors.Is(err, ErrNotImplemented) || err != nil {
+					t.Errorf("GenerateToWriter: %v", err)
 				}
 			}
-			if files, _ := os.ReadDir(c.OutputDir); len(files) != 0 {
-				t.Errorf("output written despite the error: %d files", len(files))
-			}
 		})
+	}
+	c := goldenConfig(t.TempDir())
+	c.Seed = 12
+	want := streamOutput(t, c, GenerateOpts{})
+	c.Workers = 8
+	if !bytes.Equal(streamOutput(t, c, GenerateOpts{}), want) {
+		t.Error("workers changed streamed output")
 	}
 }
 

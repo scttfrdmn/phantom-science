@@ -15,12 +15,31 @@ import (
 	"math/rand/v2"
 )
 
-// Stream IDs. File output uses one stream per (batch, mate) file; streamed
-// output (GenerateToWriter) uses one stream per batch with mate 0. Streams
-// with the high bit set are reserved for engine-internal use.
+// Stream IDs. File output uses one stream per (batch, mate) file, plus, for
+// paired-end output, the batch's pair stream (mate pairMate) for the
+// per-read values both mate files share; streamed output (GenerateToWriter)
+// uses one stream per batch with mate 0. Streams with the high bit set are
+// reserved for engine-internal use.
 const (
 	rawStream uint64 = 1 << 63 // GenerateRawSequence
+	pairMate         = 3       // mate slot of a batch's pair stream
 )
+
+// flowCellTag separates flow-cell seed derivation from every other use of
+// the run seed.
+const flowCellTag uint64 = 0x666c6f7763656c6c // "flowcell"
+
+// flowCellSeed returns the run seed of flow cell k (1-based) of a
+// multi-flow-cell run; attempt > 0 re-derives it when an earlier seed gave
+// a flow-cell ID already in use. The result is never zero.
+func flowCellSeed(seed uint64, k, attempt int) uint64 {
+	// #nosec G115 -- k and attempt are small and positive
+	s := splitmix64(seed ^ splitmix64(flowCellTag+uint64(k)<<16+uint64(attempt)))
+	if s == 0 {
+		s = 1
+	}
+	return s
+}
 
 // streamID returns the RNG stream for one output batch and mate (0 for an
 // interleaved stream holding both mates).
@@ -85,6 +104,14 @@ func (e *Engine) logSeed() {
 // seedable is implemented by HMM models whose generator can be reseeded.
 type seedable interface {
 	SetSeed(seed int64)
+}
+
+// reseed reseeds model (when it supports seeding) from r, so HMM-generated
+// reads are reproducible from the run seed as well.
+func reseed(model any, r *rand.Rand) {
+	if s, ok := model.(seedable); ok {
+		s.SetSeed(r.Int64())
+	}
 }
 
 // randomBases fills a new slice of n bases drawn uniformly from ACGT.
