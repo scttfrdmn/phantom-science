@@ -9,7 +9,8 @@ import (
 	"github.com/scttfrdmn/phantom-science/internal/genomics/authenticity/kmer"
 )
 
-// MetalKmerProcessor provides GPU-accelerated k-mer processing using Apple Metal
+// MetalKmerProcessor is a stub in this build (no CGO, or not macOS); its
+// constructor always returns an error.
 type MetalKmerProcessor struct{}
 
 // DeviceInfo contains information about the GPU device
@@ -45,14 +46,14 @@ type BenchmarkResults struct {
 	Throughput    float64
 }
 
-// IsAvailable returns false when CGO is disabled
+// IsAvailable returns false in this build
 func IsAvailable() bool {
 	return false
 }
 
-// NewMetalKmerProcessor returns an error when CGO is disabled
+// NewMetalKmerProcessor returns an error in this build
 func NewMetalKmerProcessor() (*MetalKmerProcessor, error) {
-	return nil, fmt.Errorf("Metal not available: CGO disabled")
+	return nil, fmt.Errorf("Metal not available: requires macOS and CGO")
 }
 
 // GetDeviceInfo returns empty device info
@@ -60,37 +61,38 @@ func (mp *MetalKmerProcessor) GetDeviceInfo() DeviceInfo {
 	return DeviceInfo{}
 }
 
-// ExtractKmerFrequenciesGPU returns an error when CGO is disabled
+// ExtractKmerFrequenciesGPU returns an error in this build
 func (mp *MetalKmerProcessor) ExtractKmerFrequenciesGPU(sequences [][]byte, k int) (*kmer.FrequencyTable, error) {
-	return nil, fmt.Errorf("Metal not available: CGO disabled")
+	return nil, fmt.Errorf("Metal not available: requires macOS and CGO")
 }
 
-// ExtractKmerFrequenciesGPUBatch returns an error when CGO is disabled
+// ExtractKmerFrequenciesGPUBatch returns an error in this build
 func (mp *MetalKmerProcessor) ExtractKmerFrequenciesGPUBatch(sequences [][]byte, k int, batchSize int) (*kmer.FrequencyTable, error) {
-	return nil, fmt.Errorf("Metal not available: CGO disabled")
+	return nil, fmt.Errorf("Metal not available: requires macOS and CGO")
 }
 
-// BenchmarkGPUPerformance returns an error when CGO is disabled
+// BenchmarkGPUPerformance returns an error in this build
 func (mp *MetalKmerProcessor) BenchmarkGPUPerformance(testSequences [][]byte, k int) (*BenchmarkResults, error) {
-	return nil, fmt.Errorf("Metal not available: CGO disabled")
+	return nil, fmt.Errorf("Metal not available: requires macOS and CGO")
 }
 
-// Close is a no-op when CGO is disabled
+// Close is a no-op in this build
 func (mp *MetalKmerProcessor) Close() error {
 	return nil
 }
 
-// GetPerformanceStats returns empty stats when CGO is disabled
+// GetPerformanceStats returns empty stats in this build
 func (mp *MetalKmerProcessor) GetPerformanceStats() PerformanceStats {
 	return PerformanceStats{}
 }
 
-// EstimateSpeedup returns 0 when CGO is disabled
+// EstimateSpeedup returns 0 in this build
 func EstimateSpeedup(maxThreads int) float64 {
 	return 0.0
 }
 
-// GenerateTestSequences generates test DNA sequences
+// GenerateTestSequences returns count sequences of the given length, each the
+// repeating pattern ATGC (benchmark input only).
 func GenerateTestSequences(count, length int) [][]byte {
 	sequences := make([][]byte, count)
 	bases := []byte{'A', 'T', 'G', 'C'}

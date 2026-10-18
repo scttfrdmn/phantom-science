@@ -10,34 +10,38 @@ import (
 	"github.com/scttfrdmn/phantom-science/internal/errors"
 )
 
-// HMMKmerModel represents a Hidden Markov Model for k-mer based sequence generation
+// HMMKmerModel is an order-(k-1) Markov chain for sequence generation. Each
+// state is the preceding k-1 bases and transitions give the next base, so no
+// state is hidden despite the name. Each state also has a quality
+// distribution, trained from simulateQuality's heuristic values rather than
+// real base qualities.
 type HMMKmerModel struct {
 	k                  int
-	stateSpace         []string              // All possible (k-1)-mers
-	transitionMatrix   [][]float64           // State -> base probabilities
-	emissionMatrix     [][]float64           // State -> quality probabilities
-	startProbabilities []float64             // Initial state probabilities
-	totalKmers         uint64                // Total k-mers processed during training
-	trained            bool                  // Whether model has been trained
-	mu                 sync.RWMutex          // Thread safety
-	rng                *rand.Rand            // Random number generator
+	stateSpace         []string     // All possible (k-1)-mers
+	transitionMatrix   [][]float64  // State -> base probabilities
+	emissionMatrix     [][]float64  // State -> quality probabilities
+	startProbabilities []float64    // Initial state probabilities
+	totalKmers         uint64       // Total k-mers processed during training
+	trained            bool         // Whether model has been trained
+	mu                 sync.RWMutex // Thread safety
+	rng                *rand.Rand   // Random number generator
 }
 
 // KmerState represents a state in the HMM (k-1 mer)
 type KmerState struct {
-	Index    int
-	Kmer     string
-	Transitions map[byte]float64  // Base -> probability
-	Emissions   map[int]float64   // Quality -> probability
+	Index       int
+	Kmer        string
+	Transitions map[byte]float64 // Base -> probability
+	Emissions   map[int]float64  // Quality -> probability
 }
 
 // GenerationResult represents the result of sequence generation
 type GenerationResult struct {
-	Sequence       []byte
-	Qualities      []byte
+	Sequence        []byte
+	Qualities       []byte
 	KmerFrequencies map[string]int
-	GenerationTime time.Duration
-	States         []int  // State sequence for debugging
+	GenerationTime  time.Duration
+	States          []int // State sequence for debugging
 }
 
 // NewHMMKmerModel creates a new HMM k-mer model
@@ -56,7 +60,7 @@ func NewHMMKmerModel(k int) *HMMKmerModel {
 
 	// Initialize state space (all possible k-1 mers)
 	model.stateSpace = model.generateStateSpace()
-	
+
 	// Initialize matrices
 	numStates := len(model.stateSpace)
 	model.transitionMatrix = make([][]float64, numStates)
@@ -148,9 +152,9 @@ func (m *HMMKmerModel) TrainFromReferenceGenome(refGenome GenomeInterface) error
 }
 
 // trainOnChromosome trains the model on a single chromosome
-func (m *HMMKmerModel) trainOnChromosome(chr ChromosomeInterface, 
+func (m *HMMKmerModel) trainOnChromosome(chr ChromosomeInterface,
 	transitionCounts, emissionCounts [][]int, startCounts []int) error {
-	
+
 	sequence := chr.GetSequence()
 	if len(sequence) < m.k {
 		return nil // Skip very short sequences
@@ -159,7 +163,7 @@ func (m *HMMKmerModel) trainOnChromosome(chr ChromosomeInterface,
 	// Process sequence with sliding window
 	for i := 0; i <= len(sequence)-m.k; i++ {
 		kmer := string(sequence[i : i+m.k])
-		
+
 		// Skip k-mers with N bases
 		if containsN(kmer) {
 			continue
@@ -187,8 +191,7 @@ func (m *HMMKmerModel) trainOnChromosome(chr ChromosomeInterface,
 			startCounts[stateIndex]++
 		}
 
-		// Simulate quality scores based on position and context
-		// This is a simplified model - in practice, we'd use real quality data
+		// No real quality data is used: qualities come from simulateQuality.
 		quality := m.simulateQuality(i, kmer)
 		qualityIndex := int(quality)
 		if qualityIndex >= 0 && qualityIndex < 42 {
@@ -211,7 +214,7 @@ func (m *HMMKmerModel) normalizeProbabilities(transitionCounts, emissionCounts [
 		for j := 0; j < 4; j++ {
 			total += float64(transitionCounts[i][j]) + smoothingFactor
 		}
-		
+
 		if total > 0 {
 			for j := 0; j < 4; j++ {
 				m.transitionMatrix[i][j] = (float64(transitionCounts[i][j]) + smoothingFactor) / total
@@ -230,7 +233,7 @@ func (m *HMMKmerModel) normalizeProbabilities(transitionCounts, emissionCounts [
 		for j := 0; j < 42; j++ {
 			total += float64(emissionCounts[i][j]) + smoothingFactor
 		}
-		
+
 		if total > 0 {
 			for j := 0; j < 42; j++ {
 				m.emissionMatrix[i][j] = (float64(emissionCounts[i][j]) + smoothingFactor) / total
@@ -248,7 +251,7 @@ func (m *HMMKmerModel) normalizeProbabilities(transitionCounts, emissionCounts [
 	for i := 0; i < len(m.stateSpace); i++ {
 		startTotal += float64(startCounts[i]) + smoothingFactor
 	}
-	
+
 	if startTotal > 0 {
 		for i := 0; i < len(m.stateSpace); i++ {
 			m.startProbabilities[i] = (float64(startCounts[i]) + smoothingFactor) / startTotal
@@ -262,7 +265,9 @@ func (m *HMMKmerModel) normalizeProbabilities(transitionCounts, emissionCounts [
 	}
 }
 
-// GenerateSequence generates a biologically authentic sequence using the trained HMM
+// GenerateSequence samples a sequence of the given length from the trained
+// transition probabilities, with a quality per base sampled from the state's
+// quality distribution.
 func (m *HMMKmerModel) GenerateSequence(length int) (*GenerationResult, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -276,7 +281,7 @@ func (m *HMMKmerModel) GenerateSequence(length int) (*GenerationResult, error) {
 	}
 
 	startTime := time.Now()
-	
+
 	sequence := make([]byte, length)
 	qualities := make([]byte, length)
 	states := make([]int, length-m.k+1)
@@ -332,14 +337,14 @@ func (m *HMMKmerModel) GenerateSequence(length int) (*GenerationResult, error) {
 func (m *HMMKmerModel) chooseInitialState() int {
 	r := m.rng.Float64()
 	cumulative := 0.0
-	
+
 	for i, prob := range m.startProbabilities {
 		cumulative += prob
 		if r <= cumulative {
 			return i
 		}
 	}
-	
+
 	// Fallback to last state
 	return len(m.stateSpace) - 1
 }
@@ -349,14 +354,14 @@ func (m *HMMKmerModel) sampleNextBase(stateIndex int) byte {
 	r := m.rng.Float64()
 	cumulative := 0.0
 	bases := []byte{'A', 'T', 'G', 'C'}
-	
+
 	for i, prob := range m.transitionMatrix[stateIndex] {
 		cumulative += prob
 		if r <= cumulative {
 			return bases[i]
 		}
 	}
-	
+
 	// Fallback to 'A'
 	return 'A'
 }
@@ -365,14 +370,14 @@ func (m *HMMKmerModel) sampleNextBase(stateIndex int) byte {
 func (m *HMMKmerModel) sampleQuality(stateIndex int) int {
 	r := m.rng.Float64()
 	cumulative := 0.0
-	
+
 	for i, prob := range m.emissionMatrix[stateIndex] {
 		cumulative += prob
 		if r <= cumulative {
 			return i
 		}
 	}
-	
+
 	// Fallback to quality 20
 	return 20
 }
@@ -383,11 +388,11 @@ func (m *HMMKmerModel) getNextState(currentState int, observedBase byte) int {
 		// For k=2, state is just the observed base
 		return m.getBaseIndex(observedBase)
 	}
-	
+
 	// For k>2, slide the window
 	currentKmer := m.stateSpace[currentState]
 	nextKmer := currentKmer[1:] + string(observedBase)
-	
+
 	return m.getStateIndex(nextKmer)
 }
 
@@ -407,23 +412,25 @@ func (m *HMMKmerModel) getBaseIndex(base byte) int {
 	}
 }
 
-// simulateQuality simulates quality scores based on position and context
+// simulateQuality returns a heuristic quality: 30 minus 0.01 per position,
+// a GC-deviation penalty and a homopolymer penalty, clamped to [0, 41].
+// position is the offset in the training sequence, so on long chromosomes
+// the value reaches 0 after about 3,000 bases.
 func (m *HMMKmerModel) simulateQuality(position int, kmer string) byte {
-	// Simplified quality model - in practice, this would be more sophisticated
 	baseQuality := 30.0
-	
+
 	// Quality degradation with position
 	positionDecay := float64(position) * 0.01
-	
+
 	// GC bias effect
 	gcContent := m.calculateGCContent(kmer)
 	gcBias := math.Abs(gcContent-0.5) * 10.0
-	
+
 	// Homopolymer effect
 	homopolymerPenalty := m.calculateHomopolymerPenalty(kmer)
-	
+
 	finalQuality := baseQuality - positionDecay - gcBias - homopolymerPenalty
-	
+
 	// Clamp to valid range
 	if finalQuality < 0 {
 		finalQuality = 0
@@ -431,7 +438,7 @@ func (m *HMMKmerModel) simulateQuality(position int, kmer string) byte {
 	if finalQuality > 41 {
 		finalQuality = 41
 	}
-	
+
 	return byte(finalQuality)
 }
 
@@ -450,7 +457,7 @@ func (m *HMMKmerModel) calculateGCContent(kmer string) float64 {
 func (m *HMMKmerModel) calculateHomopolymerPenalty(kmer string) float64 {
 	maxRun := 1
 	currentRun := 1
-	
+
 	for i := 1; i < len(kmer); i++ {
 		if kmer[i] == kmer[i-1] {
 			currentRun++
@@ -461,16 +468,16 @@ func (m *HMMKmerModel) calculateHomopolymerPenalty(kmer string) float64 {
 			currentRun = 1
 		}
 	}
-	
+
 	if currentRun > maxRun {
 		maxRun = currentRun
 	}
-	
+
 	// Penalty increases with run length
 	if maxRun >= 3 {
 		return float64(maxRun-2) * 2.0
 	}
-	
+
 	return 0.0
 }
 
@@ -495,10 +502,10 @@ func (m *HMMKmerModel) GetModelStats() map[string]interface{} {
 	defer m.mu.RUnlock()
 
 	stats := map[string]interface{}{
-		"k":             m.k,
-		"num_states":    len(m.stateSpace),
-		"trained":       m.trained,
-		"total_kmers":   m.totalKmers,
+		"k":           m.k,
+		"num_states":  len(m.stateSpace),
+		"trained":     m.trained,
+		"total_kmers": m.totalKmers,
 	}
 
 	if m.trained {
@@ -565,11 +572,11 @@ func (m *HMMKmerModel) SetSeed(seed int64) {
 
 // HMMGenerationResult represents the result of HMM generation
 type HMMGenerationResult struct {
-	Sequence       []byte
-	Qualities      []byte
+	Sequence        []byte
+	Qualities       []byte
 	KmerFrequencies map[string]int
-	GenerationTime time.Duration
-	States         []int
+	GenerationTime  time.Duration
+	States          []int
 }
 
 // ValidateModel validates the trained model for consistency

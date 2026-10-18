@@ -9,20 +9,20 @@ import (
 
 // KmerExtractor handles k-mer frequency extraction from genomic sequences
 type KmerExtractor struct {
-	k               int
-	frequencyTable  map[string]uint64
-	totalKmers      uint64
-	mu              sync.RWMutex
-	windowSize      int
-	skipNRegions    bool
+	k              int
+	frequencyTable map[string]uint64
+	totalKmers     uint64
+	mu             sync.RWMutex
+	windowSize     int
+	skipNRegions   bool
 }
 
 // KmerFrequencyTable represents k-mer frequencies for a given k
 type KmerFrequencyTable struct {
-	K          int
+	K           int
 	Frequencies map[string]float64
-	TotalKmers uint64
-	Coverage   float64
+	TotalKmers  uint64
+	Coverage    float64
 }
 
 // NewKmerExtractor creates a new k-mer extractor
@@ -36,7 +36,8 @@ func NewKmerExtractor(k int) *KmerExtractor {
 	}
 }
 
-// SetWindowSize sets the window size for sliding window k-mer extraction
+// SetWindowSize stores a window size. Extraction does not use it; every
+// k-mer position is counted.
 func (e *KmerExtractor) SetWindowSize(size int) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -50,7 +51,10 @@ func (e *KmerExtractor) SetSkipNRegions(skip bool) {
 	e.skipNRegions = skip
 }
 
-// ExtractKmerFrequencies extracts k-mer frequencies from a sequence
+// ExtractKmerFrequencies replaces the table with counts of every
+// overlapping k-mer made only of upper-case A, C, G and T. K-mers with N or
+// lower-case (soft-masked) bases are always skipped, whatever SetSkipNRegions
+// says.
 func (e *KmerExtractor) ExtractKmerFrequencies(sequence []byte) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -66,7 +70,7 @@ func (e *KmerExtractor) ExtractKmerFrequencies(sequence []byte) error {
 	// Sliding window k-mer enumeration
 	for i := 0; i <= len(sequence)-e.k; i++ {
 		kmer := string(sequence[i : i+e.k])
-		
+
 		// Skip k-mers containing N bases if configured
 		if e.skipNRegions && strings.Contains(kmer, "N") {
 			continue
@@ -100,10 +104,10 @@ func (e *KmerExtractor) GetFrequencyTable() *KmerFrequencyTable {
 	coverage := e.calculateCoverage()
 
 	return &KmerFrequencyTable{
-		K:          e.k,
+		K:           e.k,
 		Frequencies: frequencies,
-		TotalKmers: e.totalKmers,
-		Coverage:   coverage,
+		TotalKmers:  e.totalKmers,
+		Coverage:    coverage,
 	}
 }
 
@@ -142,10 +146,10 @@ func (e *KmerExtractor) MergeFrequencyTables(tables []*KmerFrequencyTable) (*Kme
 	}
 
 	return &KmerFrequencyTable{
-		K:          k,
+		K:           k,
 		Frequencies: frequencies,
-		TotalKmers: totalKmers,
-		Coverage:   e.calculateCoverageFromFreqs(frequencies, k),
+		TotalKmers:  totalKmers,
+		Coverage:    e.calculateCoverageFromFreqs(frequencies, k),
 	}, nil
 }
 
@@ -293,7 +297,7 @@ func (e *KmerExtractor) CompareFrequencies(table1, table2 *KmerFrequencyTable) m
 	}
 
 	differences := make(map[string]float64)
-	
+
 	// Get all unique k-mers from both tables
 	allKmers := make(map[string]bool)
 	for kmer := range table1.Frequencies {

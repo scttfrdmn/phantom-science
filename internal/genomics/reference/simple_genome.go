@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	
+
 	"github.com/scttfrdmn/phantom-science/internal/genomics/authenticity"
 )
 
@@ -27,7 +27,7 @@ func (g *SimpleReferenceGenome) GetChromosomeNames() []string {
 	if err != nil {
 		return nil
 	}
-	
+
 	var chromosomes []string
 	for _, file := range files {
 		if strings.HasSuffix(file.Name(), ".fasta") && strings.HasPrefix(file.Name(), "chr") {
@@ -36,14 +36,15 @@ func (g *SimpleReferenceGenome) GetChromosomeNames() []string {
 			chromosomes = append(chromosomes, chrName)
 		}
 	}
-	
+
 	return chromosomes
 }
 
-// LoadChromosome loads a specific chromosome
+// LoadChromosome reads <baseDir>/<name>.fasta, or <baseDir>/GRCh38.fasta when
+// that file does not exist (see readFastaFile for how records are matched).
 func (g *SimpleReferenceGenome) LoadChromosome(name string) (authenticity.ChromosomeInterface, error) {
 	fastaFile := filepath.Join(g.baseDir, name+".fasta")
-	
+
 	// Check if file exists
 	if _, err := os.Stat(fastaFile); os.IsNotExist(err) {
 		// Try the main GRCh38.fasta file
@@ -52,13 +53,13 @@ func (g *SimpleReferenceGenome) LoadChromosome(name string) (authenticity.Chromo
 			return nil, fmt.Errorf("chromosome file not found: %s", name)
 		}
 	}
-	
+
 	// Read FASTA file
 	sequence, err := readFastaFile(fastaFile, name)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read chromosome %s: %v", name, err)
 	}
-	
+
 	return &SimpleChromosome{
 		name:     name,
 		sequence: sequence,
@@ -88,23 +89,26 @@ func (c *SimpleChromosome) GetLength() int {
 	return c.length
 }
 
-// readFastaFile reads a FASTA file and returns the sequence for a specific chromosome
+// readFastaFile reads the whole FASTA file into memory and returns the
+// upper-cased sequence of every record whose header contains
+// targetChromosome as a substring, so "chr1" also collects chr10–chr19 when
+// they are in the same file.
 func readFastaFile(filename, targetChromosome string) ([]byte, error) {
 	data, err := os.ReadFile(filename) // #nosec G304
 	if err != nil {
 		return nil, err
 	}
-	
+
 	lines := strings.Split(string(data), "\n")
 	var sequence []byte
 	inTargetChromosome := false
-	
+
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
 		}
-		
+
 		if strings.HasPrefix(line, ">") {
 			// Header line
 			if strings.Contains(line, targetChromosome) {
@@ -117,11 +121,11 @@ func readFastaFile(filename, targetChromosome string) ([]byte, error) {
 			sequence = append(sequence, []byte(strings.ToUpper(line))...)
 		}
 	}
-	
+
 	if len(sequence) == 0 {
 		return nil, fmt.Errorf("chromosome %s not found in FASTA file", targetChromosome)
 	}
-	
+
 	return sequence, nil
 }
 

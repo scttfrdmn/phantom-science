@@ -15,13 +15,17 @@ import (
 	"github.com/scttfrdmn/phantom-science/internal/security"
 )
 
-// ExpertValidationOrchestrator manages real-time expert validation sessions
+// ExpertValidationOrchestrator runs expert blind-assessment sessions in
+// memory: it builds test cases from blind/ and reference/ sequence files,
+// records feedback through the session phases, enforces timeouts, optionally
+// sends SMTP notifications, and writes JSON reports. There is no web portal
+// or remote API; feedback is passed in by the caller.
 type ExpertValidationOrchestrator struct {
-	framework           *ExpertTestingFramework
-	sessionManager      *SessionManager
-	materialManager     *ValidationMaterialManager
-	reportGenerator     *ValidationReportGenerator
-	academicIntegrator  *AcademicIntegrator
+	framework          *ExpertTestingFramework
+	sessionManager     *SessionManager
+	materialManager    *ValidationMaterialManager
+	reportGenerator    *ValidationReportGenerator
+	academicIntegrator *AcademicIntegrator
 
 	// Configuration
 	config OrchestratorConfig
@@ -46,11 +50,11 @@ type OrchestratorConfig struct {
 	SessionTimeout        time.Duration
 	AutoReportGeneration  bool
 	AcademicIntegration   bool
-	
+
 	// Email and communication settings
-	SMTPConfig           SMTPConfig
-	EmailNotifications   bool
-	
+	SMTPConfig         SMTPConfig
+	EmailNotifications bool
+
 	// Validation parameters
 	MinimumExpertsRequired int
 	ConsensusThreshold     float64
@@ -74,15 +78,15 @@ type LiveValidationSession struct {
 	StartTime      time.Time
 	CurrentPhase   ValidationPhase
 	CompletedTests []string
-	
+
 	// Session state
-	IsActive       bool
-	LastActivity   time.Time
-	SessionData    map[string]interface{}
-	
+	IsActive     bool
+	LastActivity time.Time
+	SessionData  map[string]interface{}
+
 	// Progress tracking
 	ProgressTracker *SessionProgressTracker
-	
+
 	// Communication
 	FeedbackChannel chan ExpertFeedback
 	StatusChannel   chan SessionStatus
@@ -101,12 +105,12 @@ const (
 
 // SessionProgressTracker tracks session progress and performance
 type SessionProgressTracker struct {
-	TotalTestCases    int
-	CompletedCases    int
-	CurrentCaseID     string
-	PhaseStartTime    time.Time
+	TotalTestCases      int
+	CompletedCases      int
+	CurrentCaseID       string
+	PhaseStartTime      time.Time
 	EstimatedCompletion time.Time
-	
+
 	// Performance metrics
 	AverageResponseTime time.Duration
 	CurrentAccuracy     float64
@@ -115,21 +119,21 @@ type SessionProgressTracker struct {
 
 // ExpertFeedback represents real-time feedback from experts
 type ExpertFeedback struct {
-	SessionID     string
-	ExpertID      string
-	TestCaseID    string
-	Feedback      map[string]interface{}
-	Timestamp     time.Time
-	Phase         ValidationPhase
+	SessionID  string
+	ExpertID   string
+	TestCaseID string
+	Feedback   map[string]interface{}
+	Timestamp  time.Time
+	Phase      ValidationPhase
 }
 
 // SessionStatus represents session status updates
 type SessionStatus struct {
-	SessionID    string
-	Status       string
-	Message      string
-	Progress     float64
-	Timestamp    time.Time
+	SessionID string
+	Status    string
+	Message   string
+	Progress  float64
+	Timestamp time.Time
 }
 
 // NewExpertValidationOrchestrator creates a new expert validation orchestrator
@@ -138,7 +142,7 @@ func NewExpertValidationOrchestrator(config OrchestratorConfig) (*ExpertValidati
 	if err := config.Validate(); err != nil {
 		return nil, errors.WrapError(err, errors.ConfigurationError, "expert_orchestrator", "new_orchestrator", "invalid configuration")
 	}
-	
+
 	ctx, cancel := context.WithCancel(context.Background())
 	orchestrator := &ExpertValidationOrchestrator{
 		framework:           NewExpertTestingFramework(),
@@ -152,12 +156,12 @@ func NewExpertValidationOrchestrator(config OrchestratorConfig) (*ExpertValidati
 		ctx:                 ctx,
 		cancel:              cancel,
 	}
-	
+
 	// Initialize components
 	if err := orchestrator.initialize(); err != nil {
 		return nil, errors.WrapError(err, errors.InitializationError, "expert_orchestrator", "new_orchestrator", "failed to initialize components")
 	}
-	
+
 	return orchestrator, nil
 }
 
@@ -166,27 +170,27 @@ func (config *OrchestratorConfig) Validate() error {
 	if config.ExpertPackagePath == "" {
 		return fmt.Errorf("expert package path is required")
 	}
-	
+
 	if config.MaxConcurrentSessions <= 0 {
 		config.MaxConcurrentSessions = 5 // Default
 	}
-	
+
 	if config.SessionTimeout <= 0 {
 		config.SessionTimeout = 4 * time.Hour // Default 4 hours
 	}
-	
+
 	if config.MinimumExpertsRequired <= 0 {
 		config.MinimumExpertsRequired = 3 // Default minimum 3 experts
 	}
-	
+
 	if config.ConsensusThreshold <= 0 {
 		config.ConsensusThreshold = 0.70 // Default 70% consensus
 	}
-	
+
 	if config.MaxSessionDuration <= 0 {
 		config.MaxSessionDuration = 6 * time.Hour // Default max 6 hours
 	}
-	
+
 	return nil
 }
 
@@ -196,19 +200,19 @@ func (evo *ExpertValidationOrchestrator) initialize() error {
 	if err := evo.materialManager.LoadValidationMaterials(); err != nil {
 		return fmt.Errorf("failed to load validation materials: %w", err)
 	}
-	
+
 	// Initialize expert testing framework with materials
 	testCases, err := evo.materialManager.GetTestCases()
 	if err != nil {
 		return fmt.Errorf("failed to get test cases: %w", err)
 	}
-	
+
 	// Load synthetic and real data for test case generation
 	syntheticData, realData, err := evo.materialManager.LoadSequenceData()
 	if err != nil {
 		return fmt.Errorf("failed to load sequence data: %w", err)
 	}
-	
+
 	// Use the number of pre-defined test cases, or fall back to the number of available
 	// data files when no test cases have been explicitly defined.
 	numCases := len(testCases)
@@ -218,11 +222,11 @@ func (evo *ExpertValidationOrchestrator) initialize() error {
 	if err := evo.framework.GenerateTestCases(numCases, syntheticData, realData); err != nil {
 		return fmt.Errorf("failed to generate test cases: %w", err)
 	}
-	
+
 	// Start background monitoring
 	evo.wg.Add(1)
 	go evo.monitorSessions()
-	
+
 	return nil
 }
 
@@ -230,15 +234,15 @@ func (evo *ExpertValidationOrchestrator) initialize() error {
 func (evo *ExpertValidationOrchestrator) StartExpertValidationSession(expertID string, expertInfo *Expert) (*LiveValidationSession, error) {
 	evo.sessionMutex.Lock()
 	defer evo.sessionMutex.Unlock()
-	
+
 	// Check concurrent session limit
 	if len(evo.activeSessions) >= evo.config.MaxConcurrentSessions {
 		return nil, errors.NewResourceError("expert_orchestrator", "start_session", "maximum concurrent sessions reached")
 	}
-	
+
 	// Generate session ID
 	sessionID := fmt.Sprintf("session_%s_%d", expertID, time.Now().Unix())
-	
+
 	// Create session
 	session := &LiveValidationSession{
 		SessionID:       sessionID,
@@ -254,17 +258,17 @@ func (evo *ExpertValidationOrchestrator) StartExpertValidationSession(expertID s
 		FeedbackChannel: make(chan ExpertFeedback, 100),
 		StatusChannel:   make(chan SessionStatus, 50),
 	}
-	
+
 	// Initialize progress tracker
 	testCases := evo.framework.testCases
 	session.ProgressTracker.TotalTestCases = len(testCases)
-	
+
 	// Register expert with framework
 	evo.framework.RegisterExpert(expertInfo)
-	
+
 	// Store active session
 	evo.activeSessions[sessionID] = session
-	
+
 	// Send welcome notification
 	if evo.config.EmailNotifications {
 		evo.wg.Add(1)
@@ -275,11 +279,11 @@ func (evo *ExpertValidationOrchestrator) StartExpertValidationSession(expertID s
 			}
 		}()
 	}
-	
+
 	// Update metrics
 	evo.orchestratorMetrics.ActiveSessions++
 	evo.orchestratorMetrics.TotalSessionsStarted++
-	
+
 	// Send initial status
 	sendStatus(session.StatusChannel, SessionStatus{
 		SessionID: sessionID,
@@ -295,18 +299,18 @@ func (evo *ExpertValidationOrchestrator) StartExpertValidationSession(expertID s
 // ProcessExpertFeedback processes real-time feedback from experts
 func (evo *ExpertValidationOrchestrator) ProcessExpertFeedback(feedback ExpertFeedback) error {
 	sessionID := feedback.SessionID
-	
+
 	evo.sessionMutex.RLock()
 	session, exists := evo.activeSessions[sessionID]
 	evo.sessionMutex.RUnlock()
-	
+
 	if !exists {
 		return errors.NewValidationError("expert_orchestrator", "process_feedback", fmt.Sprintf("session not found: %s", sessionID))
 	}
-	
+
 	// Update session activity
 	session.LastActivity = time.Now()
-	
+
 	// Process feedback based on current phase
 	switch session.CurrentPhase {
 	case PhaseBlindAssessment:
@@ -323,36 +327,36 @@ func (evo *ExpertValidationOrchestrator) ProcessExpertFeedback(feedback ExpertFe
 // processBlindAssessmentFeedback processes feedback during blind assessment phase
 func (evo *ExpertValidationOrchestrator) processBlindAssessmentFeedback(session *LiveValidationSession, feedback ExpertFeedback) error {
 	testCaseID := feedback.TestCaseID
-	
+
 	// Extract feedback components
 	classification, ok := feedback.Feedback["classification"].(string)
 	if !ok {
 		return errors.NewValidationError("expert_orchestrator", "process_blind_feedback", "classification missing from feedback")
 	}
-	
+
 	confidence, ok := feedback.Feedback["confidence"].(float64)
 	if !ok {
 		return errors.NewValidationError("expert_orchestrator", "process_blind_feedback", "confidence missing from feedback")
 	}
-	
+
 	justification, ok := feedback.Feedback["justification"].(string)
 	if !ok {
 		justification = "" // Optional field
 	}
-	
+
 	// Record feedback with framework
 	if err := evo.framework.CollectExpertFeedback(testCaseID, session.ExpertID, classification, confidence, justification); err != nil {
 		return errors.WrapError(err, errors.ValidationError, "expert_orchestrator", "process_blind_feedback", "failed to collect expert feedback")
 	}
-	
+
 	// Update session progress
 	session.CompletedTests = append(session.CompletedTests, testCaseID)
 	session.ProgressTracker.CompletedCases++
 	session.ProgressTracker.CurrentCaseID = testCaseID
-	
+
 	// Calculate progress
 	progress := float64(session.ProgressTracker.CompletedCases) / float64(session.ProgressTracker.TotalTestCases)
-	
+
 	// Send progress update
 	sendStatus(session.StatusChannel, SessionStatus{
 		SessionID: session.SessionID,
@@ -361,12 +365,12 @@ func (evo *ExpertValidationOrchestrator) processBlindAssessmentFeedback(session 
 		Progress:  progress,
 		Timestamp: time.Now(),
 	})
-	
+
 	// Check if blind assessment phase is complete
 	if session.ProgressTracker.CompletedCases >= session.ProgressTracker.TotalTestCases {
 		return evo.advanceToNextPhase(session)
 	}
-	
+
 	return nil
 }
 
@@ -374,7 +378,7 @@ func (evo *ExpertValidationOrchestrator) processBlindAssessmentFeedback(session 
 func (evo *ExpertValidationOrchestrator) processReferenceComparisonFeedback(session *LiveValidationSession, feedback ExpertFeedback) error {
 	// Store reference comparison data
 	session.SessionData["reference_comparison"] = feedback.Feedback
-	
+
 	// Advance to discussion phase
 	return evo.advanceToNextPhase(session)
 }
@@ -383,7 +387,7 @@ func (evo *ExpertValidationOrchestrator) processReferenceComparisonFeedback(sess
 func (evo *ExpertValidationOrchestrator) processDiscussionFeedback(session *LiveValidationSession, feedback ExpertFeedback) error {
 	// Store discussion feedback
 	session.SessionData["discussion_feedback"] = feedback.Feedback
-	
+
 	// Complete the session
 	return evo.completeSession(session)
 }
@@ -403,9 +407,9 @@ func (evo *ExpertValidationOrchestrator) advanceToNextPhase(session *LiveValidat
 	default:
 		return errors.NewValidationError("expert_orchestrator", "advance_phase", fmt.Sprintf("cannot advance from phase: %v", session.CurrentPhase))
 	}
-	
+
 	session.ProgressTracker.PhaseStartTime = time.Now()
-	
+
 	// Send phase change notification
 	sendStatus(session.StatusChannel, SessionStatus{
 		SessionID: session.SessionID,
@@ -414,7 +418,7 @@ func (evo *ExpertValidationOrchestrator) advanceToNextPhase(session *LiveValidat
 		Progress:  evo.calculatePhaseProgress(session),
 		Timestamp: time.Now(),
 	})
-	
+
 	return nil
 }
 
@@ -422,27 +426,27 @@ func (evo *ExpertValidationOrchestrator) advanceToNextPhase(session *LiveValidat
 func (evo *ExpertValidationOrchestrator) completeSession(session *LiveValidationSession) error {
 	evo.sessionMutex.Lock()
 	defer evo.sessionMutex.Unlock()
-	
+
 	// Mark session as completed
 	session.IsActive = false
 	session.CurrentPhase = PhaseCompletion
-	
+
 	// Generate individual session report
 	sessionReport, err := evo.generateSessionReport(session)
 	if err != nil {
 		return errors.WrapError(err, errors.ResourceError, "expert_orchestrator", "complete_session", "failed to generate session report")
 	}
-	
+
 	// Store session report
 	session.SessionData["final_report"] = sessionReport
-	
+
 	// Remove from active sessions
 	delete(evo.activeSessions, session.SessionID)
-	
+
 	// Update metrics
 	evo.orchestratorMetrics.ActiveSessions--
 	evo.orchestratorMetrics.CompletedSessions++
-	
+
 	// Send completion notification
 	sendStatus(session.StatusChannel, SessionStatus{
 		SessionID: session.SessionID,
@@ -451,7 +455,7 @@ func (evo *ExpertValidationOrchestrator) completeSession(session *LiveValidation
 		Progress:  1.0,
 		Timestamp: time.Now(),
 	})
-	
+
 	// Send completion email
 	if evo.config.EmailNotifications {
 		expertInfo := session.ExpertInfo
@@ -475,7 +479,7 @@ func (evo *ExpertValidationOrchestrator) completeSession(session *LiveValidation
 			}
 		}()
 	}
-	
+
 	return nil
 }
 
@@ -483,41 +487,41 @@ func (evo *ExpertValidationOrchestrator) completeSession(session *LiveValidation
 func (evo *ExpertValidationOrchestrator) generateSessionReport(session *LiveValidationSession) (*SessionValidationReport, error) {
 	// Calculate session metrics
 	sessionDuration := time.Since(session.StartTime)
-	
+
 	// Get expert performance from framework
 	expertStats := evo.framework.GetFrameworkStats()
 	expertPerformance, exists := expertStats["expert_performance"].(map[string]float64)
 	if !exists {
 		expertPerformance = make(map[string]float64)
 	}
-	
+
 	accuracy := expertPerformance[session.ExpertID]
-	
+
 	report := &SessionValidationReport{
-		SessionID:      session.SessionID,
-		ExpertID:       session.ExpertID,
-		ExpertInfo:     session.ExpertInfo,
+		SessionID:       session.SessionID,
+		ExpertID:        session.ExpertID,
+		ExpertInfo:      session.ExpertInfo,
 		SessionDuration: sessionDuration,
-		CompletedCases: len(session.CompletedTests),
-		TotalCases:     session.ProgressTracker.TotalTestCases,
-		Accuracy:       accuracy,
-		Timestamp:      time.Now(),
-		SessionData:    session.SessionData,
+		CompletedCases:  len(session.CompletedTests),
+		TotalCases:      session.ProgressTracker.TotalTestCases,
+		Accuracy:        accuracy,
+		Timestamp:       time.Now(),
+		SessionData:     session.SessionData,
 	}
-	
+
 	// Add phase-specific analysis
 	if blindData, exists := session.SessionData["blind_assessment"]; exists {
 		report.BlindAssessmentResults = blindData
 	}
-	
+
 	if refData, exists := session.SessionData["reference_comparison"]; exists {
 		report.ReferenceComparisonResults = refData
 	}
-	
+
 	if discussionData, exists := session.SessionData["discussion_feedback"]; exists {
 		report.DiscussionResults = discussionData
 	}
-	
+
 	return report, nil
 }
 
@@ -527,27 +531,27 @@ func (evo *ExpertValidationOrchestrator) generateOverallValidationReport() error
 	if err := evo.framework.AggregateResults(); err != nil {
 		return errors.WrapError(err, errors.ValidationError, "expert_orchestrator", "generate_overall_report", "failed to aggregate results")
 	}
-	
+
 	// Generate comprehensive report
 	overallReport := &OverallValidationReport{
-		Timestamp:         time.Now(),
-		TotalExperts:      evo.orchestratorMetrics.CompletedSessions,
-		FrameworkStats:    evo.framework.GetFrameworkStats(),
-		ConsensusResults:  evo.framework.resultAggregator.consensusResults,
+		Timestamp:            time.Now(),
+		TotalExperts:         evo.orchestratorMetrics.CompletedSessions,
+		FrameworkStats:       evo.framework.GetFrameworkStats(),
+		ConsensusResults:     evo.framework.resultAggregator.consensusResults,
 		DisagreementAnalysis: evo.framework.resultAggregator.disagreementAnalysis,
-		AuthenticityScore: evo.framework.GetAuthenticityScore(),
-		OrchestratorMetrics: evo.orchestratorMetrics,
+		AuthenticityScore:    evo.framework.GetAuthenticityScore(),
+		OrchestratorMetrics:  evo.orchestratorMetrics,
 	}
-	
+
 	// Add detailed analysis
 	overallReport.QualityAssessment = evo.assessOverallQuality()
 	overallReport.Recommendations = evo.generateRecommendations()
-	
+
 	// Save report to file system
 	if err := evo.saveOverallReport(overallReport); err != nil {
 		return errors.WrapError(err, errors.ResourceError, "expert_orchestrator", "generate_overall_report", "failed to save overall report")
 	}
-	
+
 	// Generate publication materials if enabled
 	if evo.config.AutoReportGeneration {
 		evo.wg.Add(1)
@@ -569,14 +573,14 @@ func (evo *ExpertValidationOrchestrator) generateOverallValidationReport() error
 			}
 		}()
 	}
-	
+
 	return nil
 }
 
 // calculatePhaseProgress calculates progress within the current phase
 func (evo *ExpertValidationOrchestrator) calculatePhaseProgress(session *LiveValidationSession) float64 {
 	baseProgress := float64(int(session.CurrentPhase)) / 4.0 // 4 main phases
-	
+
 	switch session.CurrentPhase {
 	case PhaseBlindAssessment:
 		phaseProgress := float64(session.ProgressTracker.CompletedCases) / float64(session.ProgressTracker.TotalTestCases)
@@ -644,7 +648,7 @@ func (evo *ExpertValidationOrchestrator) handleSessionTimeout(sessionID string, 
 		Progress:  evo.calculatePhaseProgress(session),
 		Timestamp: time.Now(),
 	})
-	
+
 	// Send email notification if configured
 	if evo.config.EmailNotifications {
 		evo.sendTimeoutWarningEmail(session.ExpertInfo, sessionID)
@@ -655,22 +659,22 @@ func (evo *ExpertValidationOrchestrator) handleSessionTimeout(sessionID string, 
 func (evo *ExpertValidationOrchestrator) handleSessionExpiry(sessionID string, session *LiveValidationSession) {
 	evo.sessionMutex.Lock()
 	defer evo.sessionMutex.Unlock()
-	
+
 	// Mark session as expired
 	session.IsActive = false
-	
+
 	// Generate partial report
 	partialReport, _ := evo.generateSessionReport(session)
 	session.SessionData["partial_report"] = partialReport
 	session.SessionData["expiry_reason"] = "maximum_duration_exceeded"
-	
+
 	// Remove from active sessions
 	delete(evo.activeSessions, sessionID)
-	
+
 	// Update metrics
 	evo.orchestratorMetrics.ActiveSessions--
 	evo.orchestratorMetrics.ExpiredSessions++
-	
+
 	// Send expiry notification
 	sendStatus(session.StatusChannel, SessionStatus{
 		SessionID: sessionID,
@@ -695,21 +699,21 @@ func sendStatus(ch chan SessionStatus, status SessionStatus) {
 func (evo *ExpertValidationOrchestrator) GetActiveSessionStats() map[string]interface{} {
 	evo.sessionMutex.RLock()
 	defer evo.sessionMutex.RUnlock()
-	
+
 	stats := map[string]interface{}{
 		"active_sessions":    len(evo.activeSessions),
 		"completed_sessions": evo.orchestratorMetrics.CompletedSessions,
 		"expired_sessions":   evo.orchestratorMetrics.ExpiredSessions,
 		"total_started":      evo.orchestratorMetrics.TotalSessionsStarted,
 	}
-	
+
 	// Add per-phase breakdown
 	phaseBreakdown := make(map[string]int)
 	for _, session := range evo.activeSessions {
 		phaseBreakdown[session.CurrentPhase.String()]++
 	}
 	stats["phase_breakdown"] = phaseBreakdown
-	
+
 	return stats
 }
 
@@ -745,15 +749,15 @@ func NewSessionManager() *SessionManager {
 }
 
 type ValidationMaterialManager struct {
-	basePath string
-	testCases []TestCase
+	basePath     string
+	testCases    []TestCase
 	sequenceData map[string][]byte
 }
 
 func NewValidationMaterialManager(basePath string) *ValidationMaterialManager {
 	return &ValidationMaterialManager{
-		basePath: basePath,
-		testCases: make([]TestCase, 0),
+		basePath:     basePath,
+		testCases:    make([]TestCase, 0),
 		sequenceData: make(map[string][]byte),
 	}
 }
@@ -764,13 +768,13 @@ func (vmm *ValidationMaterialManager) LoadValidationMaterials() error {
 	if err := vmm.loadSequencesFromDirectory(blindPath, "blind"); err != nil {
 		return fmt.Errorf("failed to load blind sequences: %w", err)
 	}
-	
+
 	// Load reference sequences
 	refPath := filepath.Join(vmm.basePath, "reference_sequences")
 	if err := vmm.loadSequencesFromDirectory(refPath, "reference"); err != nil {
 		return fmt.Errorf("failed to load reference sequences: %w", err)
 	}
-	
+
 	return nil
 }
 
@@ -779,21 +783,21 @@ func (vmm *ValidationMaterialManager) loadSequencesFromDirectory(dirPath, seqTyp
 	if err != nil {
 		return fmt.Errorf("failed to read directory %s: %w", dirPath, err)
 	}
-	
+
 	for _, file := range files {
 		if file.IsDir() || filepath.Ext(file.Name()) != ".fasta" {
 			continue
 		}
-		
+
 		filePath := filepath.Join(dirPath, file.Name())
 		content, err := os.ReadFile(filePath) // #nosec G304
 		if err != nil {
 			return fmt.Errorf("failed to read file %s: %w", filePath, err)
 		}
-		
+
 		vmm.sequenceData[seqType+"/"+file.Name()] = content
 	}
-	
+
 	return nil
 }
 
@@ -803,7 +807,7 @@ func (vmm *ValidationMaterialManager) GetTestCases() ([]TestCase, error) {
 
 func (vmm *ValidationMaterialManager) LoadSequenceData() ([][]byte, [][]byte, error) {
 	var synthetic, real [][]byte
-	
+
 	for filename, content := range vmm.sequenceData {
 		// Files are keyed as "seqType/filename", where seqType is "blind" or "reference"
 		if strings.HasPrefix(filename, "blind/") {
@@ -812,7 +816,7 @@ func (vmm *ValidationMaterialManager) LoadSequenceData() ([][]byte, [][]byte, er
 			real = append(real, content)
 		}
 	}
-	
+
 	return synthetic, real, nil
 }
 
@@ -836,20 +840,20 @@ func NewAcademicIntegrator() *AcademicIntegrator {
 }
 
 func (ai *AcademicIntegrator) SubmitValidationResults(report *OverallValidationReport) error {
-	// Placeholder for academic system integration
+	// Stub: nothing is submitted.
 	return nil
 }
 
 type OrchestratorMetrics struct {
 	TotalSessionsStarted int
-	ActiveSessions      int
-	CompletedSessions   int
-	ExpiredSessions     int
-	
+	ActiveSessions       int
+	CompletedSessions    int
+	ExpiredSessions      int
+
 	// Performance metrics
 	AverageSessionDuration time.Duration
-	AverageAccuracy       float64
-	ExpertParticipation   map[string]int
+	AverageAccuracy        float64
+	ExpertParticipation    map[string]int
 }
 
 func NewOrchestratorMetrics() *OrchestratorMetrics {
@@ -867,42 +871,42 @@ func NewSessionProgressTracker() *SessionProgressTracker {
 // Report structures
 
 type SessionValidationReport struct {
-	SessionID      string
-	ExpertID       string
-	ExpertInfo     *Expert
+	SessionID       string
+	ExpertID        string
+	ExpertInfo      *Expert
 	SessionDuration time.Duration
-	CompletedCases int
-	TotalCases     int
-	Accuracy       float64
-	Timestamp      time.Time
-	SessionData    map[string]interface{}
-	
+	CompletedCases  int
+	TotalCases      int
+	Accuracy        float64
+	Timestamp       time.Time
+	SessionData     map[string]interface{}
+
 	// Phase-specific results
-	BlindAssessmentResults      interface{}
-	ReferenceComparisonResults  interface{}
+	BlindAssessmentResults     interface{}
+	ReferenceComparisonResults interface{}
 	DiscussionResults          interface{}
 }
 
 type OverallValidationReport struct {
-	Timestamp         time.Time
-	TotalExperts      int
-	FrameworkStats    map[string]interface{}
-	ConsensusResults  []ConsensusResult
+	Timestamp            time.Time
+	TotalExperts         int
+	FrameworkStats       map[string]interface{}
+	ConsensusResults     []ConsensusResult
 	DisagreementAnalysis []DisagreementAnalysis
-	AuthenticityScore float64
-	OrchestratorMetrics *OrchestratorMetrics
-	
+	AuthenticityScore    float64
+	OrchestratorMetrics  *OrchestratorMetrics
+
 	// Analysis results
 	QualityAssessment QualityAssessment
 	Recommendations   []string
 }
 
 type QualityAssessment struct {
-	OverallQuality     string
-	StrengthAreas      []string
-	ImprovementAreas   []string
+	OverallQuality       string
+	StrengthAreas        []string
+	ImprovementAreas     []string
 	PublicationReadiness bool
-	ClinicalUtility    string
+	ClinicalUtility      string
 }
 
 // Email and notification methods
@@ -937,8 +941,7 @@ func (evo *ExpertValidationOrchestrator) sendWelcomeEmail(expert *Expert, sessio
 		"Dear %s,\n\nYou have been invited to participate in an expert validation session.\n\n"+
 			"Session ID: %s\n"+
 			"Institution: %s\n\n"+
-			"Please log in to the validation portal and navigate to the session above "+
-			"to begin your blind assessment.\n\n"+
+			"Please quote the session ID above with your blind assessment.\n\n"+
 			"Thank you for your contribution.\n\nPhantomScience Validation Team\n",
 		expert.Name, sessionID, expert.Institution,
 	)
@@ -966,7 +969,7 @@ func (evo *ExpertValidationOrchestrator) sendTimeoutWarningEmail(expert *Expert,
 	subject := fmt.Sprintf("[PhantomScience] Session %s — Inactivity Warning", sessionID)
 	body := fmt.Sprintf(
 		"Dear %s,\n\nYour validation session %s is approaching the inactivity timeout.\n\n"+
-			"Please return to the portal and continue your assessment to avoid losing progress.\n\n"+
+			"Please continue your assessment before the session expires.\n\n"+
 			"PhantomScience Validation Team\n",
 		expert.Name, sessionID,
 	)
@@ -975,13 +978,16 @@ func (evo *ExpertValidationOrchestrator) sendTimeoutWarningEmail(expert *Expert,
 
 // Analysis methods
 
+// assessOverallQuality grades the expert authenticity score with fixed
+// cut-offs. PublicationReadiness is only "score >= 60"; strength and
+// improvement areas and clinical utility are not assessed.
 func (evo *ExpertValidationOrchestrator) assessOverallQuality() QualityAssessment {
 	authenticityScore := evo.framework.GetAuthenticityScore()
 	_ = evo.framework.GetFrameworkStats()
 
 	var quality string
 	var publicationReady bool
-	
+
 	if authenticityScore >= 75.0 {
 		quality = "excellent"
 		publicationReady = true
@@ -995,29 +1001,29 @@ func (evo *ExpertValidationOrchestrator) assessOverallQuality() QualityAssessmen
 		quality = "needs_improvement"
 		publicationReady = false
 	}
-	
+
 	return QualityAssessment{
 		OverallQuality:       quality,
-		StrengthAreas:        []string{"population_specificity", "k_mer_complexity"},
-		ImprovementAreas:     []string{"gc_content_variation", "homopolymer_runs"},
+		StrengthAreas:        []string{"not assessed"},
+		ImprovementAreas:     []string{"not assessed"},
 		PublicationReadiness: publicationReady,
-		ClinicalUtility:      "moderate",
+		ClinicalUtility:      "not assessed",
 	}
 }
 
+// generateRecommendations returns a fixed list; it does not depend on the
+// results.
 func (evo *ExpertValidationOrchestrator) generateRecommendations() []string {
 	recommendations := []string{
 		"Continue validation with additional expert panels",
 		"Optimize HMM parameters for improved authenticity scores",
-		"Develop clinical application workflows",
-		"Prepare manuscript for peer-reviewed publication",
 	}
-	
+
 	return recommendations
 }
 
 func (evo *ExpertValidationOrchestrator) generatePublicationMaterials(report *OverallValidationReport) error {
-	// Placeholder for publication material generation
+	// Stub: no publication material is generated.
 	return nil
 }
 
@@ -1027,21 +1033,21 @@ func (evo *ExpertValidationOrchestrator) saveOverallReport(report *OverallValida
 	if err := security.SecureMkdirAll(reportsDir, evo.config.ExpertPackagePath); err != nil {
 		return fmt.Errorf("failed to create reports directory: %w", err)
 	}
-	
+
 	// Generate filename with timestamp
 	filename := fmt.Sprintf("overall_validation_report_%d.json", time.Now().Unix())
 	filePath := filepath.Join(reportsDir, filename)
-	
+
 	// Marshal report to JSON
 	reportData, err := json.MarshalIndent(report, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal report: %w", err)
 	}
-	
+
 	// Write to file
 	if err := os.WriteFile(filePath, reportData, 0600); err != nil {
 		return fmt.Errorf("failed to write report file: %w", err)
 	}
-	
+
 	return nil
 }

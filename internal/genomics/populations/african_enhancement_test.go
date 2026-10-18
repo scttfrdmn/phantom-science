@@ -121,17 +121,17 @@ func TestH3AfricaPopulation_Construction(t *testing.T) {
 
 func TestH3AfricaStudy_Construction(t *testing.T) {
 	study := &populations.H3AfricaStudy{
-		StudyID:           "STUDY001",
-		StudyName:         "Test Study",
-		Institution:       "Test University",
-		Country:           "Kenya",
-		StudyType:         "GWAS",
-		Populations:       []string{"YRI", "LWK"},
-		SampleSize:        500,
+		StudyID:            "STUDY001",
+		StudyName:          "Test Study",
+		Institution:        "Test University",
+		Country:            "Kenya",
+		StudyType:          "GWAS",
+		Populations:        []string{"YRI", "LWK"},
+		SampleSize:         500,
 		SequencingPlatform: "Illumina HiSeq",
-		DataType:          "WGS",
-		DOI:               "10.1038/example",
-		DataAvailability:  "public",
+		DataType:           "WGS",
+		DOI:                "10.1038/example",
+		DataAvailability:   "public",
 	}
 	assert.Equal(t, "STUDY001", study.StudyID)
 	assert.Equal(t, 500, study.SampleSize)
@@ -149,12 +149,12 @@ func TestAfricanVariant_Construction(t *testing.T) {
 			"YRI": 0.12,
 			"LWK": 0.15,
 		},
-		FunctionalClass: "missense_variant",
-		GeneSymbol:      "HBB",
-		Consequence:     "p.Glu7Val",
+		FunctionalClass:   "missense_variant",
+		GeneSymbol:        "HBB",
+		Consequence:       "p.Glu7Val",
 		ClinicalRelevance: "Sickle cell trait",
-		DiscoveryStudy:  "STUDY001",
-		ValidationStatus: "validated",
+		DiscoveryStudy:    "STUDY001",
+		ValidationStatus:  "validated",
 	}
 	assert.Equal(t, "rs334", v.VariantID)
 	assert.Equal(t, 0.12, v.PopulationFreqs["YRI"])
@@ -214,10 +214,10 @@ func TestBottleneckEvent_Construction(t *testing.T) {
 
 func TestPGxVariant_Construction(t *testing.T) {
 	pgx := &populations.PGxVariant{
-		VariantID:    "rs4244285",
-		GeneSymbol:   "CYP2C19",
-		DrugName:     "Clopidogrel",
-		Phenotype:    "Poor Metabolizer",
+		VariantID:      "rs4244285",
+		GeneSymbol:     "CYP2C19",
+		DrugName:       "Clopidogrel",
+		Phenotype:      "Poor Metabolizer",
 		PopulationFreq: map[string]float64{"GWD": 0.155},
 		ClinicalImpact: "Reduced efficacy",
 		StudyEvidence:  []string{"PMID:12345"},
@@ -228,14 +228,14 @@ func TestPGxVariant_Construction(t *testing.T) {
 
 func TestStructuralVariant_Construction(t *testing.T) {
 	sv := &populations.StructuralVariant{
-		SVID:       "SV001",
-		Type:       "DEL",
-		Chromosome: "1",
-		StartPos:   1000000,
-		EndPos:     1010000,
-		Size:       10000,
-		PopulationFreq: map[string]float64{"YRI": 0.05},
-		GeneOverlap:    []string{"GENE1"},
+		SVID:             "SV001",
+		Type:             "DEL",
+		Chromosome:       "1",
+		StartPos:         1000000,
+		EndPos:           1010000,
+		Size:             10000,
+		PopulationFreq:   map[string]float64{"YRI": 0.05},
+		GeneOverlap:      []string{"GENE1"},
 		FunctionalImpact: "gene_deletion",
 	}
 	assert.Equal(t, "DEL", sv.Type)
@@ -290,12 +290,12 @@ func TestPopulationStructure_Construction(t *testing.T) {
 
 func TestCoalescentParams_Construction(t *testing.T) {
 	cp := &populations.CoalescentParams{
-		ThetaWatterson:    0.00108,
-		ThetaPi:           0.00125,
-		TajimasD:          0.32,
-		FuAndLiD:          -0.15,
+		ThetaWatterson:      0.00108,
+		ThetaPi:             0.00125,
+		TajimasD:            0.32,
+		FuAndLiD:            -0.15,
 		NucleotideDiversity: 0.00125,
-		SegregationSites:  1250,
+		SegregationSites:    1250,
 	}
 	assert.Equal(t, 0.00108, cp.ThetaWatterson)
 	assert.Equal(t, 1250, cp.SegregationSites)
@@ -382,7 +382,7 @@ func TestGenerateAfricanSyntheticData_Basic(t *testing.T) {
 	assert.Equal(t, 10, dataset.SampleSize)
 	assert.Len(t, dataset.GeneratedSamples, 10)
 	assert.NotNil(t, dataset.QualityMetrics)
-	assert.Equal(t, "validated", dataset.ValidationStatus)
+	assert.Equal(t, "unvalidated", dataset.ValidationStatus)
 }
 
 func TestGenerateAfricanSyntheticData_SampleFields(t *testing.T) {

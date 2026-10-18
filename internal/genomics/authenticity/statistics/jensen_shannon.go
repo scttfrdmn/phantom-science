@@ -1,3 +1,7 @@
+// Package statistics implements distribution and population-genetics
+// statistics: Jensen-Shannon divergence and related distances between k-mer
+// distributions, and (in non-release builds only) Weir-Cockerham F_ST, a
+// Hardy-Weinberg chi-square test and pairwise linkage disequilibrium.
 package statistics
 
 import (
@@ -115,21 +119,21 @@ func (js *JensenShannonDivergence) validateProbabilityDistribution(dist map[stri
 // getUnionKeys returns all unique keys from both distributions
 func (js *JensenShannonDivergence) getUnionKeys(p, q map[string]float64) map[string]bool {
 	allKeys := make(map[string]bool)
-	
+
 	for key := range p {
 		allKeys[key] = true
 	}
 	for key := range q {
 		allKeys[key] = true
 	}
-	
+
 	return allKeys
 }
 
 // normalizeWithSmoothing creates a normalized distribution with smoothing for missing keys
 func (js *JensenShannonDivergence) normalizeWithSmoothing(dist map[string]float64, allKeys map[string]bool) map[string]float64 {
 	normalized := make(map[string]float64)
-	
+
 	// Add smoothing to all keys
 	for key := range allKeys {
 		if prob, exists := dist[key]; exists {
@@ -144,7 +148,7 @@ func (js *JensenShannonDivergence) normalizeWithSmoothing(dist map[string]float6
 	for _, prob := range normalized {
 		sum += prob
 	}
-	
+
 	if sum > 0 {
 		for key := range normalized {
 			normalized[key] /= sum
@@ -157,15 +161,15 @@ func (js *JensenShannonDivergence) normalizeWithSmoothing(dist map[string]float6
 // calculateKLDivergence computes Kullback-Leibler divergence KL(P || Q)
 func (js *JensenShannonDivergence) calculateKLDivergence(p, q map[string]float64) float64 {
 	klDiv := 0.0
-	
+
 	for key, pProb := range p {
 		qProb := q[key]
-		
+
 		if pProb > 0 && qProb > 0 {
 			klDiv += pProb * math.Log(pProb/qProb) / math.Log(js.Base)
 		}
 	}
-	
+
 	return klDiv
 }
 
@@ -176,9 +180,9 @@ func (js *JensenShannonDivergence) CompareDistributions(p, q map[string]float64)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	jsDistance := math.Sqrt(jsDivergence)
-	
+
 	// Calculate additional metrics
 	comparison := &DistributionComparison{
 		JSDivergence:          jsDivergence,
@@ -192,7 +196,7 @@ func (js *JensenShannonDivergence) CompareDistributions(p, q map[string]float64)
 		KeysOnlyInQ:           js.getKeysOnlyIn(q, p),
 		CommonKeys:            js.getCommonKeys(p, q),
 	}
-	
+
 	return comparison, nil
 }
 
@@ -214,13 +218,13 @@ type DistributionComparison struct {
 func (js *JensenShannonDivergence) calculateTotalVariation(p, q map[string]float64) float64 {
 	allKeys := js.getUnionKeys(p, q)
 	totalVar := 0.0
-	
+
 	for key := range allKeys {
 		pProb := p[key]
 		qProb := q[key]
 		totalVar += math.Abs(pProb - qProb)
 	}
-	
+
 	return totalVar / 2.0
 }
 
@@ -228,13 +232,13 @@ func (js *JensenShannonDivergence) calculateTotalVariation(p, q map[string]float
 func (js *JensenShannonDivergence) calculateHellingerDistance(p, q map[string]float64) float64 {
 	allKeys := js.getUnionKeys(p, q)
 	sum := 0.0
-	
+
 	for key := range allKeys {
 		pProb := p[key]
 		qProb := q[key]
 		sum += math.Pow(math.Sqrt(pProb)-math.Sqrt(qProb), 2)
 	}
-	
+
 	return math.Sqrt(sum / 2.0)
 }
 
@@ -304,7 +308,7 @@ func (js *JensenShannonDivergence) calculateWassersteinDistance(p, q map[string]
 func (js *JensenShannonDivergence) calculateChiSquared(p, q map[string]float64) float64 {
 	allKeys := js.getUnionKeys(p, q)
 	chiSq := 0.0
-	
+
 	for key := range allKeys {
 		pProb := p[key]
 		qProb := q[key]
@@ -312,7 +316,7 @@ func (js *JensenShannonDivergence) calculateChiSquared(p, q map[string]float64) 
 			chiSq += math.Pow(pProb-qProb, 2) / qProb
 		}
 	}
-	
+
 	return chiSq
 }
 
@@ -364,11 +368,11 @@ func NewBatchComparison() *BatchComparison {
 func (bc *BatchComparison) AddComparison(id string, p, q map[string]float64) {
 	jsDivergence, err := bc.calculator.Calculate(p, q)
 	var jsDistance float64
-	
+
 	if err == nil {
 		jsDistance = math.Sqrt(jsDivergence)
 	}
-	
+
 	bc.results = append(bc.results, BatchResult{
 		ID:           id,
 		JSDivergence: jsDivergence,
@@ -399,12 +403,12 @@ func (bc *BatchComparison) GetAverageJSDivergence() float64 {
 	if len(successful) == 0 {
 		return 0.0
 	}
-	
+
 	sum := 0.0
 	for _, result := range successful {
 		sum += result.JSDivergence
 	}
-	
+
 	return sum / float64(len(successful))
 }
 
@@ -414,14 +418,14 @@ func (bc *BatchComparison) GetMaxJSDivergence() float64 {
 	if len(successful) == 0 {
 		return 0.0
 	}
-	
+
 	max := successful[0].JSDivergence
 	for _, result := range successful {
 		if result.JSDivergence > max {
 			max = result.JSDivergence
 		}
 	}
-	
+
 	return max
 }
 
@@ -431,14 +435,14 @@ func (bc *BatchComparison) GetMinJSDivergence() float64 {
 	if len(successful) == 0 {
 		return 0.0
 	}
-	
+
 	min := successful[0].JSDivergence
 	for _, result := range successful {
 		if result.JSDivergence < min {
 			min = result.JSDivergence
 		}
 	}
-	
+
 	return min
 }
 
@@ -448,31 +452,31 @@ func (bc *BatchComparison) IsWithinThreshold(threshold float64) bool {
 	if len(successful) == 0 {
 		return false
 	}
-	
+
 	for _, result := range successful {
 		if result.JSDivergence > threshold {
 			return false
 		}
 	}
-	
+
 	return true
 }
 
 // GetStatistics returns comprehensive statistics about the batch results
 func (bc *BatchComparison) GetStatistics() BatchStatistics {
 	successful := bc.GetSuccessfulResults()
-	
+
 	stats := BatchStatistics{
 		TotalComparisons:      len(bc.results),
 		SuccessfulComparisons: len(successful),
 		FailedComparisons:     len(bc.results) - len(successful),
 	}
-	
+
 	if len(successful) > 0 {
 		stats.AverageJSDivergence = bc.GetAverageJSDivergence()
 		stats.MaxJSDivergence = bc.GetMaxJSDivergence()
 		stats.MinJSDivergence = bc.GetMinJSDivergence()
-		
+
 		// Calculate standard deviation
 		mean := stats.AverageJSDivergence
 		sumSquares := 0.0
@@ -485,7 +489,7 @@ func (bc *BatchComparison) GetStatistics() BatchStatistics {
 			stats.StdDevJSDivergence = math.Sqrt(sumSquares / float64(n-1))
 		}
 	}
-	
+
 	return stats
 }
 

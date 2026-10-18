@@ -1,3 +1,8 @@
+// Package kmer counts k-mer frequencies in DNA sequences, either into a map
+// (FrequencyTable) or into a dense 4^k bit-packed array
+// (PackedFrequencyTable), and computes summary statistics over the counts.
+// GPUPackedProcessor wraps the packed extractor behind a GPU-shaped API, but
+// no GPU processor is ever attached to it, so it always counts on the CPU.
 package kmer
 
 import (
@@ -19,11 +24,11 @@ type FrequencyTable struct {
 
 // FrequencyExtractor extracts k-mer frequencies from DNA sequences
 type FrequencyExtractor struct {
-	K                  int
-	IgnoreN            bool
-	CaseSensitive      bool
-	CircularSequence   bool
-	MinFrequency       int
+	K                int
+	IgnoreN          bool
+	CaseSensitive    bool
+	CircularSequence bool
+	MinFrequency     int
 }
 
 // NewFrequencyExtractor creates a new k-mer frequency extractor
@@ -60,12 +65,12 @@ func (fe *FrequencyExtractor) ExtractFromSequence(sequence []byte) (*FrequencyTa
 	// Extract k-mers using sliding window
 	for i := 0; i < numKmers; i++ {
 		var kmer string
-		
+
 		if fe.CircularSequence && i+fe.K > len(sequence) {
 			// Handle circular sequence wrapping
 			kmer = string(sequence[i:]) + string(sequence[:i+fe.K-len(sequence)])
 		} else {
-			kmer = string(sequence[i:i+fe.K])
+			kmer = string(sequence[i : i+fe.K])
 		}
 
 		// Skip k-mers containing N bases if IgnoreN is true
@@ -120,7 +125,7 @@ func (fe *FrequencyExtractor) ExtractFromMultipleSequences(sequences [][]byte) (
 		for kmer, count := range freqTable.Frequencies {
 			combinedFrequencies[kmer] += count
 		}
-		
+
 		totalCount += freqTable.TotalCount
 		totalKmers += freqTable.TotalKmers
 	}
@@ -154,7 +159,7 @@ func (fe *FrequencyExtractor) isValidKmer(kmer string) bool {
 // GetProbabilityDistribution returns the probability distribution of k-mers
 func (ft *FrequencyTable) GetProbabilityDistribution() map[string]float64 {
 	probabilities := make(map[string]float64)
-	
+
 	if ft.TotalCount == 0 {
 		return probabilities
 	}
@@ -169,7 +174,7 @@ func (ft *FrequencyTable) GetProbabilityDistribution() map[string]float64 {
 // GetTopKmers returns the top N most frequent k-mers
 func (ft *FrequencyTable) GetTopKmers(n int) []KmerFrequency {
 	var kmerFreqs []KmerFrequency
-	
+
 	for kmer, count := range ft.Frequencies {
 		kmerFreqs = append(kmerFreqs, KmerFrequency{
 			Kmer:      kmer,
@@ -258,11 +263,11 @@ func GetMaxEntropy(k int) float64 {
 func (ft *FrequencyTable) GetNormalizedEntropy() float64 {
 	shannon := ft.GetEntropyShannon()
 	maxEntropy := GetMaxEntropy(ft.K)
-	
+
 	if maxEntropy == 0 {
 		return 0.0
 	}
-	
+
 	return shannon / maxEntropy
 }
 
@@ -320,14 +325,14 @@ func (ft *FrequencyTable) GetGCContent() float64 {
 // GetKmerStats returns comprehensive statistics about the k-mer frequency table
 func (ft *FrequencyTable) GetKmerStats() KmerStats {
 	_ = ft.GetProbabilityDistribution()
-	
+
 	var counts []int
 	for _, count := range ft.Frequencies {
 		counts = append(counts, count)
 	}
-	
+
 	sort.Ints(counts)
-	
+
 	stats := KmerStats{
 		K:                 ft.K,
 		TotalKmers:        ft.TotalKmers,
@@ -342,14 +347,14 @@ func (ft *FrequencyTable) GetKmerStats() KmerStats {
 	if len(counts) > 0 {
 		stats.MinCount = counts[0]
 		stats.MaxCount = counts[len(counts)-1]
-		
+
 		// Calculate median
 		if len(counts)%2 == 0 {
 			stats.MedianCount = float64(counts[len(counts)/2-1]+counts[len(counts)/2]) / 2.0
 		} else {
 			stats.MedianCount = float64(counts[len(counts)/2])
 		}
-		
+
 		// Calculate mean
 		sum := 0
 		for _, count := range counts {
@@ -399,13 +404,13 @@ func (ft *FrequencyTable) FilterByFrequency(minFreq, maxFreq int) *FrequencyTabl
 // GetRareKmers returns k-mers that appear less than the threshold
 func (ft *FrequencyTable) GetRareKmers(threshold int) []string {
 	var rare []string
-	
+
 	for kmer, count := range ft.Frequencies {
 		if count < threshold {
 			rare = append(rare, kmer)
 		}
 	}
-	
+
 	sort.Strings(rare)
 	return rare
 }
@@ -413,13 +418,13 @@ func (ft *FrequencyTable) GetRareKmers(threshold int) []string {
 // GetAbundantKmers returns k-mers that appear more than the threshold
 func (ft *FrequencyTable) GetAbundantKmers(threshold int) []string {
 	var abundant []string
-	
+
 	for kmer, count := range ft.Frequencies {
 		if count > threshold {
 			abundant = append(abundant, kmer)
 		}
 	}
-	
+
 	sort.Strings(abundant)
 	return abundant
 }

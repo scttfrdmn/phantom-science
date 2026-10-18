@@ -2,18 +2,19 @@ package features
 
 import "math"
 
-// GCBiasModel models GC content bias in genomic sequences
+// GCBiasModel reports the GC content of a sequence.
 type GCBiasModel struct {
 	windowSize int
 }
 
-// GCBiasDetails contains detailed GC bias analysis results
+// GCBiasDetails holds the GC fraction. WindowScores is never filled.
 type GCBiasDetails struct {
 	GCContent    float64
 	WindowScores []float64
 }
 
-// NewGCBiasModel creates a new GC bias model
+// NewGCBiasModel creates a GC content model. windowSize (default 100) is
+// stored but not used.
 func NewGCBiasModel(windowSize int) (*GCBiasModel, error) {
 	if windowSize <= 0 {
 		windowSize = 100
@@ -21,7 +22,9 @@ func NewGCBiasModel(windowSize int) (*GCBiasModel, error) {
 	return &GCBiasModel{windowSize: windowSize}, nil
 }
 
-// AnalyzeSequence analyzes GC bias in a DNA sequence
+// AnalyzeSequence returns the whole-sequence GC fraction (G and C, either
+// case, over all bytes) as the score. There is no windowing and no
+// comparison with an expected bias.
 func (m *GCBiasModel) AnalyzeSequence(seq []byte) (float64, *GCBiasDetails, error) {
 	if len(seq) == 0 {
 		return 0.0, &GCBiasDetails{}, nil
@@ -36,18 +39,21 @@ func (m *GCBiasModel) AnalyzeSequence(seq []byte) (float64, *GCBiasDetails, erro
 	return score, &GCBiasDetails{GCContent: score}, nil
 }
 
-// RepetitiveElementModel models repetitive elements in genomic sequences
+// RepetitiveElementModel scores sequence complexity from dinucleotide
+// entropy. It does not detect repeat families (no RepeatMasker or Dfam data).
 type RepetitiveElementModel struct {
 	complexityThreshold float64
 }
 
-// RepetitiveElementDetails contains detailed repetitive element analysis results
+// RepetitiveElementDetails contains the complexity score and homopolymer run
+// count.
 type RepetitiveElementDetails struct {
 	RepeatScore float64
 	RepeatCount int
 }
 
-// NewRepetitiveElementModel creates a new repetitive element model
+// NewRepetitiveElementModel creates a repetitive element model.
+// complexityThreshold is stored but not used.
 func NewRepetitiveElementModel(complexityThreshold float64) (*RepetitiveElementModel, error) {
 	return &RepetitiveElementModel{complexityThreshold: complexityThreshold}, nil
 }
@@ -56,8 +62,8 @@ func NewRepetitiveElementModel(complexityThreshold float64) (*RepetitiveElementM
 //
 // Algorithm: entropy-based complexity score using dinucleotide (2-mer) frequencies.
 //
-//   entropy = −Σ p_i · log₂(p_i)   over all observed dinucleotides
-//   score   = entropy / log₂(min(16, n−1))   (normalised to [0, 1])
+//	entropy = −Σ p_i · log₂(p_i)   over all observed dinucleotides
+//	score   = entropy / log₂(min(16, n−1))   (normalised to [0, 1])
 //
 // score ≈ 1.0 → high complexity (non-repetitive)
 // score ≈ 0.0 → low complexity (highly repetitive, e.g. AAAAAAA…)

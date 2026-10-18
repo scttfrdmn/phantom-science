@@ -1,3 +1,13 @@
+// Package population simulates neutral population-genetic variation with the
+// coalescent.
+//
+// SimulateJointPanel runs a structured coalescent over a population tree
+// (splits and piecewise-exponential size histories; no migration, admixture
+// or within-locus recombination) on unlinked loci, so that every population
+// is scored at the same sites. PopulationPanel and NewJointPanels wrap it
+// using the demographic presets for YRI, CEU, CHB and MXL in presets.go;
+// other population names fall back to a constant-size model.
+// CoalescentSimulator is the older single-population simulator.
 package population
 
 import (
@@ -9,7 +19,11 @@ import (
 	"time"
 )
 
-// CoalescentSimulator implements coalescent theory for population genetics simulation
+// CoalescentSimulator simulates single-population coalescent genealogies
+// under a piecewise population-size history, with mutations placed on
+// branches by length. Recombination events are recorded but do not change
+// the genealogy, and migration and admixture events are ignored. Its random
+// source is seeded from the clock until SetSeed is called.
 type CoalescentSimulator struct {
 	effectivePopSize   int
 	mutationRate       float64
@@ -57,7 +71,7 @@ type MutationEvent struct {
 	Time     float64
 	Lineage  *CoalescentNode
 	Mutation Mutation
-	Type     string // "transition", "transversion", "indel"
+	Type     string // "transition" or "transversion"
 }
 
 // RecombinationEvent represents a recombination event
@@ -434,7 +448,10 @@ func (s *CoalescentSimulator) nodeInheritsMutation(node *CoalescentNode, mutatio
 	return false
 }
 
-// addRecombinationEvents adds recombination events to the genealogy
+// addRecombinationEvents records Poisson-distributed recombination events on
+// the genealogy. They are bookkeeping only: the tree, and so the mutations and
+// allele frequencies, are the same as without them (no ancestral
+// recombination graph is built).
 func (s *CoalescentSimulator) addRecombinationEvents(genealogy *Genealogy, regionLength int) {
 	totalTime := genealogy.TotalTime
 	expectedRecombinations := s.recombinationRate * float64(regionLength) * totalTime
@@ -479,7 +496,9 @@ func (s *CoalescentSimulator) getActiveLineagesAtTime(genealogy *Genealogy, time
 	return activeLineages
 }
 
-// SimulateAlleleFrequencies simulates allele frequencies for a number of sites
+// SimulateAlleleFrequencies simulates one genealogy over a region of numSites
+// bp and returns the sample frequency of each mutation keyed "site_<pos>".
+// Mutations that hit the same position share a key, so the last one wins.
 func (s *CoalescentSimulator) SimulateAlleleFrequencies(numSites int, sampleSize int) (map[string]float64, error) {
 	frequencies := make(map[string]float64)
 
@@ -551,7 +570,9 @@ func (s *CoalescentSimulator) calculateThetaWatterson(spectrum *AlleleFrequencyS
 	return float64(segregatingSites) / harmonicNumber
 }
 
-// calculateThetaPi calculates nucleotide diversity (pi)
+// calculateThetaPi returns Σ f(1−f)·ξ_f · n/(n−1) over the SFS. This is half
+// of Tajima's (1983) estimator θ_π = Σ i(n−i)ξ_i / C(n,2), so ThetaPi, and the
+// TajimaD and FayWuH values derived from it, are biased low.
 func (s *CoalescentSimulator) calculateThetaPi(spectrum *AlleleFrequencySpectrum, sampleSize int) float64 {
 	pi := 0.0
 

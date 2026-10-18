@@ -10,21 +10,21 @@ import (
 
 // ErrorSignature represents platform-specific error patterns and signatures
 type ErrorSignature struct {
-	Platform              SequencingPlatform
-	SignatureFingerprint  string // Unique signature for this platform
-	ErrorPatterns         map[string]ErrorPattern
-	QualityFingerprints   QualityFingerprint
-	SystematicBiases      SystematicBias
+	Platform               SequencingPlatform
+	SignatureFingerprint   string // Unique signature for this platform
+	ErrorPatterns          map[string]ErrorPattern
+	QualityFingerprints    QualityFingerprint
+	SystematicBiases       SystematicBias
 	PopulationDependencies map[population.Population]PopulationErrorProfile
-	ValidationMetrics     ErrorValidationMetrics
+	ValidationMetrics      ErrorValidationMetrics
 }
 
 // ErrorPattern defines specific types of sequencing errors
 type ErrorPattern struct {
-	ErrorType         string  // "substitution", "insertion", "deletion", "complex"
-	FrequencyPattern  []float64 // Frequency by position/cycle
-	ContextDependency map[string]float64 // Context-specific rates
-	PopulationBias    map[population.Population]float64
+	ErrorType          string             // "substitution", "insertion", "deletion", "complex"
+	FrequencyPattern   []float64          // Frequency by position/cycle
+	ContextDependency  map[string]float64 // Context-specific rates
+	PopulationBias     map[population.Population]float64
 	QualityCorrelation float64 // Correlation with quality scores
 }
 
@@ -66,16 +66,16 @@ type ErrorValidationMetrics struct {
 
 // GCBiasSignature defines GC-specific bias patterns
 type GCBiasSignature struct {
-	BiasFunction      []float64 // Bias as function of GC content
-	WindowSize        int       // Window size for GC calculation
+	BiasFunction       []float64 // Bias as function of GC content
+	WindowSize         int       // Window size for GC calculation
 	PopulationVariance map[population.Population]float64
 }
 
 // HomopolymerSignature defines homopolymer-specific patterns
 type HomopolymerSignature struct {
-	RunLengthErrors map[int]float64 // Error rate by homopolymer length
+	RunLengthErrors  map[int]float64            // Error rate by homopolymer length
 	BaseSpecificBias map[string]map[int]float64 // Base and length specific
-	QualityPenalties map[int]int // Quality penalty by run length
+	QualityPenalties map[int]int                // Quality penalty by run length
 }
 
 // EndEffectsSignature defines read end-specific effects
@@ -87,9 +87,9 @@ type EndEffectsSignature struct {
 
 // ClusteringEffects defines cluster-density related effects (Illumina)
 type ClusteringEffects struct {
-	DensityBias      float64 // Effect of cluster density
-	PhaseShiftError  float64 // Phasing/prephasing effects
-	CrossTalkRate    float64 // Cross-talk between clusters
+	DensityBias     float64 // Effect of cluster density
+	PhaseShiftError float64 // Phasing/prephasing effects
+	CrossTalkRate   float64 // Cross-talk between clusters
 }
 
 // TrimEffects defines adapter trimming and end effects
@@ -99,14 +99,20 @@ type TrimEffects struct {
 	MinReadLength        int     // Minimum read length after trimming
 }
 
-// PlatformErrorSignatureManager manages error signatures for all platforms
+// PlatformErrorSignatureManager holds per-platform error signatures and
+// per-population error modifiers. It is experimental: the FASTQ generation
+// pipeline does not use it (only the cmd/experiments programs do). The rates
+// are hand-set approximations without cited sources, and its RNG is seeded
+// from the clock, so results are not reproducible.
 type PlatformErrorSignatureManager struct {
 	errorSignatures map[SequencingPlatform]*ErrorSignature
 	populationData  map[population.Population]*PopulationErrorData
 	rng             *rand.Rand
 }
 
-// PopulationErrorData stores population-specific error modeling data
+// PopulationErrorData stores per-population error modifiers. The values are
+// arbitrary placeholders, not measured: sequencing error rates are a property
+// of the instrument and library, not of the donor's ancestry.
 type PopulationErrorData struct {
 	Population        population.Population
 	BaseErrorModifier float64
@@ -122,28 +128,28 @@ func NewPlatformErrorSignatureManager() *PlatformErrorSignatureManager {
 		populationData:  make(map[population.Population]*PopulationErrorData),
 		rng:             rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), 0)), // #nosec G404
 	}
-	
+
 	// Initialize platform-specific error signatures
 	manager.initializePlatformSignatures()
-	
+
 	// Initialize population-specific error data
 	manager.initializePopulationErrorData()
-	
+
 	return manager
 }
 
 // initializePlatformSignatures sets up error signatures for all 7 platforms
 func (m *PlatformErrorSignatureManager) initializePlatformSignatures() {
-	
+
 	// Illumina NovaSeq 6000 - Signature errors from SBS chemistry
 	m.errorSignatures[NovaSeq6000] = &ErrorSignature{
 		Platform:             NovaSeq6000,
 		SignatureFingerprint: "NOVA_SBS_V1.5_2COLOR",
 		ErrorPatterns: map[string]ErrorPattern{
 			"substitution": {
-				ErrorType:         "substitution",
-				FrequencyPattern:  m.generateLinearDecay(150, 0.0008, 0.002), // Slight increase toward end
-				ContextDependency: map[string]float64{"GG": 1.3, "CC": 1.3, "AT": 0.8, "TA": 0.8},
+				ErrorType:          "substitution",
+				FrequencyPattern:   m.generateLinearDecay(150, 0.0008, 0.002), // Slight increase toward end
+				ContextDependency:  map[string]float64{"GG": 1.3, "CC": 1.3, "AT": 0.8, "TA": 0.8},
 				QualityCorrelation: -0.85, // Strong negative correlation
 			},
 			"insertion": {
@@ -152,7 +158,7 @@ func (m *PlatformErrorSignatureManager) initializePlatformSignatures() {
 				ContextDependency: map[string]float64{"poly_A": 2.0, "poly_T": 2.0, "poly_G": 1.5, "poly_C": 1.5},
 			},
 			"deletion": {
-				ErrorType:         "deletion", 
+				ErrorType:         "deletion",
 				FrequencyPattern:  m.generateConstantRate(150, 0.00008),
 				ContextDependency: map[string]float64{"poly_G": 1.8, "poly_C": 1.8},
 			},
@@ -177,16 +183,16 @@ func (m *PlatformErrorSignatureManager) initializePlatformSignatures() {
 			},
 		},
 	}
-	
+
 	// Illumina NextSeq 2000 - 2-color chemistry specific patterns
 	m.errorSignatures[NextSeq2000] = &ErrorSignature{
 		Platform:             NextSeq2000,
 		SignatureFingerprint: "NEXTSEQ_SBS_2COLOR_V1",
 		ErrorPatterns: map[string]ErrorPattern{
 			"substitution": {
-				ErrorType:         "substitution",
-				FrequencyPattern:  m.generateLinearDecay(150, 0.0006, 0.0015),
-				ContextDependency: map[string]float64{"GG": 1.4, "CC": 1.4, "poly_G": 2.0, "poly_C": 2.0},
+				ErrorType:          "substitution",
+				FrequencyPattern:   m.generateLinearDecay(150, 0.0006, 0.0015),
+				ContextDependency:  map[string]float64{"GG": 1.4, "CC": 1.4, "poly_G": 2.0, "poly_C": 2.0},
 				QualityCorrelation: -0.82,
 			},
 		},
@@ -204,17 +210,17 @@ func (m *PlatformErrorSignatureManager) initializePlatformSignatures() {
 			},
 		},
 	}
-	
+
 	// Illumina MiSeq - 4-color chemistry, higher quality
 	m.errorSignatures[MiSeq] = &ErrorSignature{
 		Platform:             MiSeq,
 		SignatureFingerprint: "MISEQ_SBS_4COLOR_V3",
 		ErrorPatterns: map[string]ErrorPattern{
 			"substitution": {
-				ErrorType:         "substitution",
-				FrequencyPattern:  m.generateLinearDecay(250, 0.0003, 0.0008),
-				ContextDependency: map[string]float64{"GG": 1.1, "CC": 1.1}, // Less GC bias
-				QualityCorrelation: -0.90, // Very strong correlation
+				ErrorType:          "substitution",
+				FrequencyPattern:   m.generateLinearDecay(250, 0.0003, 0.0008),
+				ContextDependency:  map[string]float64{"GG": 1.1, "CC": 1.1}, // Less GC bias
+				QualityCorrelation: -0.90,                                    // Very strong correlation
 			},
 		},
 		QualityFingerprints: QualityFingerprint{
@@ -226,17 +232,17 @@ func (m *PlatformErrorSignatureManager) initializePlatformSignatures() {
 			StrandBias:    0.01,  // Minimal bias
 		},
 	}
-	
+
 	// PacBio Revio - Single molecule, high error rate, specific patterns
 	m.errorSignatures[PacBioRevio] = &ErrorSignature{
 		Platform:             PacBioRevio,
 		SignatureFingerprint: "PACBIO_SMRT_REVIO_CHEMISTRY",
 		ErrorPatterns: map[string]ErrorPattern{
 			"substitution": {
-				ErrorType:         "substitution",
-				// 2024-2025 Update: PacBio HiFi now achieves 0.4-0.5% error rates
-				FrequencyPattern:  m.generateConstantRate(25000, 0.0045), // Improved from 0.003
-				ContextDependency: map[string]float64{"AT": 1.2, "TA": 1.2, "GC": 0.9, "CG": 0.9},
+				ErrorType: "substitution",
+				// Hand-set rate; no cited source.
+				FrequencyPattern:   m.generateConstantRate(25000, 0.0045),
+				ContextDependency:  map[string]float64{"AT": 1.2, "TA": 1.2, "GC": 0.9, "CG": 0.9},
 				QualityCorrelation: -0.70,
 			},
 			"insertion": {
@@ -245,9 +251,9 @@ func (m *PlatformErrorSignatureManager) initializePlatformSignatures() {
 				ContextDependency: map[string]float64{"poly_A": 5.0, "poly_T": 5.0, "poly_G": 3.0, "poly_C": 3.0},
 			},
 			"deletion": {
-				ErrorType:         "deletion",
-				// 2024-2025 Update: Improved deletion accuracy in PacBio HiFi
-				FrequencyPattern:  m.generateConstantRate(25000, 0.002), // Improved from 0.003
+				ErrorType: "deletion",
+				// Hand-set rate; no cited source.
+				FrequencyPattern:  m.generateConstantRate(25000, 0.002),
 				ContextDependency: map[string]float64{"poly_G": 4.0, "poly_C": 4.0, "poly_A": 2.5, "poly_T": 2.5},
 			},
 		},
@@ -270,16 +276,16 @@ func (m *PlatformErrorSignatureManager) initializePlatformSignatures() {
 			DuplicationBias: 0.00, // No PCR amplification
 		},
 	}
-	
+
 	// MGI DNBSEQ-T20x2 - DNA nanoball technology
 	m.errorSignatures[DNBSeqT20x2] = &ErrorSignature{
 		Platform:             DNBSeqT20x2,
 		SignatureFingerprint: "MGI_DNB_SEQUENCING_V1",
 		ErrorPatterns: map[string]ErrorPattern{
 			"substitution": {
-				ErrorType:         "substitution",
-				FrequencyPattern:  m.generateLinearDecay(150, 0.001, 0.0025),
-				ContextDependency: map[string]float64{"GG": 1.5, "CC": 1.5, "AT": 0.9}, // Higher GC bias
+				ErrorType:          "substitution",
+				FrequencyPattern:   m.generateLinearDecay(150, 0.001, 0.0025),
+				ContextDependency:  map[string]float64{"GG": 1.5, "CC": 1.5, "AT": 0.9}, // Higher GC bias
 				QualityCorrelation: -0.80,
 			},
 		},
@@ -292,16 +298,16 @@ func (m *PlatformErrorSignatureManager) initializePlatformSignatures() {
 			StrandBias:    0.03,
 		},
 	}
-	
+
 	// Element AVITI - Novel sequencing chemistry
 	m.errorSignatures[ElementAVITI] = &ErrorSignature{
 		Platform:             ElementAVITI,
 		SignatureFingerprint: "ELEMENT_AVIDITY_CHEMISTRY",
 		ErrorPatterns: map[string]ErrorPattern{
 			"substitution": {
-				ErrorType:         "substitution",
-				FrequencyPattern:  m.generateLinearDecay(150, 0.0012, 0.003),
-				ContextDependency: map[string]float64{"GG": 1.6, "CC": 1.6, "CpG": 1.8}, // Novel chemistry bias
+				ErrorType:          "substitution",
+				FrequencyPattern:   m.generateLinearDecay(150, 0.0012, 0.003),
+				ContextDependency:  map[string]float64{"GG": 1.6, "CC": 1.6, "CpG": 1.8}, // Novel chemistry bias
 				QualityCorrelation: -0.75,
 			},
 		},
@@ -314,28 +320,28 @@ func (m *PlatformErrorSignatureManager) initializePlatformSignatures() {
 			StrandBias:    0.04,
 		},
 	}
-	
+
 	// Oxford Nanopore PromethION 24 - Nanopore sequencing
 	m.errorSignatures[PromethION24] = &ErrorSignature{
 		Platform:             PromethION24,
 		SignatureFingerprint: "ONT_NANOPORE_R10.4.1_CHEMISTRY",
 		ErrorPatterns: map[string]ErrorPattern{
 			"substitution": {
-				ErrorType:         "substitution",
-				FrequencyPattern:  m.generateConstantRate(15000, 0.008),
-				ContextDependency: map[string]float64{"AT": 1.5, "TA": 1.5, "homopolymer": 3.0},
+				ErrorType:          "substitution",
+				FrequencyPattern:   m.generateConstantRate(15000, 0.008),
+				ContextDependency:  map[string]float64{"AT": 1.5, "TA": 1.5, "homopolymer": 3.0},
 				QualityCorrelation: -0.60, // Weaker correlation due to signal processing
 			},
 			"insertion": {
-				ErrorType:         "insertion",
-				// 2024-2025 Update: ONT R10 + Q20+ chemistry reduces homopolymer errors
-				FrequencyPattern:  m.generateConstantRate(15000, 0.010), // Improved from 0.015
+				ErrorType: "insertion",
+				// Hand-set rate; no cited source.
+				FrequencyPattern:  m.generateConstantRate(15000, 0.010),
 				ContextDependency: map[string]float64{"poly_A": 8.0, "poly_T": 8.0, "poly_G": 6.0, "poly_C": 6.0},
 			},
 			"deletion": {
-				ErrorType:         "deletion",
-				// 2024-2025 Update: ONT R10 chip significantly reduces homopolymer deletion errors
-				FrequencyPattern:  m.generateConstantRate(15000, 0.008), // Improved from 0.012
+				ErrorType: "deletion",
+				// Hand-set rate; no cited source.
+				FrequencyPattern: m.generateConstantRate(15000, 0.008),
 				ContextDependency: map[string]float64{
 					"poly_A": 6.0, "poly_T": 6.0, "poly_G": 10.0, "poly_C": 10.0,
 				},
@@ -391,14 +397,14 @@ func (m *PlatformErrorSignatureManager) generateConstantRate(length int, rate fl
 
 func (m *PlatformErrorSignatureManager) generateNormalQualityDist(mean, std float64, minQ, maxQ int) map[int]float64 {
 	dist := make(map[int]float64)
-	
+
 	for q := minQ; q <= maxQ; q++ {
 		// Normal distribution probability
 		x := float64(q)
 		prob := math.Exp(-0.5*math.Pow((x-mean)/std, 2)) / (std * math.Sqrt(2*math.Pi))
 		dist[q] = prob
 	}
-	
+
 	// Normalize
 	total := 0.0
 	for _, p := range dist {
@@ -407,13 +413,13 @@ func (m *PlatformErrorSignatureManager) generateNormalQualityDist(mean, std floa
 	for q := range dist {
 		dist[q] /= total
 	}
-	
+
 	return dist
 }
 
 func (m *PlatformErrorSignatureManager) generateGammaQualityDist(shape, scale float64, minQ, maxQ int) map[int]float64 {
 	dist := make(map[int]float64)
-	
+
 	for q := minQ; q <= maxQ; q++ {
 		x := float64(q)
 		if x > 0 {
@@ -424,7 +430,7 @@ func (m *PlatformErrorSignatureManager) generateGammaQualityDist(shape, scale fl
 			dist[q] = 0.001
 		}
 	}
-	
+
 	// Normalize
 	total := 0.0
 	for _, p := range dist {
@@ -433,17 +439,17 @@ func (m *PlatformErrorSignatureManager) generateGammaQualityDist(shape, scale fl
 	for q := range dist {
 		dist[q] /= total
 	}
-	
+
 	return dist
 }
 
 func (m *PlatformErrorSignatureManager) generateGCBiasFunction(funcType string, strength float64) []float64 {
 	// Generate bias function for GC content 0-100%
 	bias := make([]float64, 101)
-	
+
 	for i := 0; i <= 100; i++ {
 		gc := float64(i) / 100.0
-		
+
 		switch funcType {
 		case "quadratic":
 			// Optimal at 50% GC
@@ -456,7 +462,7 @@ func (m *PlatformErrorSignatureManager) generateGCBiasFunction(funcType string, 
 			bias[i] = 1.0
 		}
 	}
-	
+
 	return bias
 }
 
@@ -466,9 +472,9 @@ func (m *PlatformErrorSignatureManager) initializePopulationErrorData() {
 		population.YRI, population.LWK, population.GWD, // African
 		population.CEU, population.GBR, population.TSI, // European
 		population.CHB, population.JPT, population.CHS, // East Asian
-		population.MXL, population.PUR,                  // Americas
+		population.MXL, population.PUR, // Americas
 	}
-	
+
 	for _, pop := range populations {
 		m.populationData[pop] = &PopulationErrorData{
 			Population:        pop,
@@ -481,22 +487,22 @@ func (m *PlatformErrorSignatureManager) initializePopulationErrorData() {
 }
 
 func (m *PlatformErrorSignatureManager) getPopulationErrorModifier(pop population.Population) float64 {
-	// African populations may have slightly different error patterns due to higher diversity
+	// Placeholder modifier with no empirical basis.
 	if pop == population.YRI || pop == population.LWK || pop == population.GWD {
-		return 0.98 // Slightly lower error rate due to higher quality control needed
+		return 0.98
 	}
 	return 1.00
 }
 
 func (m *PlatformErrorSignatureManager) getPopulationGCBiasModifier(pop population.Population) float64 {
-	// Population-specific GC bias sensitivity
+	// Placeholder GC sensitivity modifiers with no empirical basis.
 	gcBias := map[population.Population]float64{
 		population.YRI: 0.95, population.LWK: 0.96, population.GWD: 0.95, // African
-		population.CEU: 1.00, population.GBR: 1.00, population.TSI: 1.00, // European  
+		population.CEU: 1.00, population.GBR: 1.00, population.TSI: 1.00, // European
 		population.CHB: 1.05, population.JPT: 1.05, population.CHS: 1.05, // East Asian
 		population.MXL: 1.02, population.PUR: 1.02, // Americas
 	}
-	
+
 	if modifier, exists := gcBias[pop]; exists {
 		return modifier
 	}
@@ -504,7 +510,7 @@ func (m *PlatformErrorSignatureManager) getPopulationGCBiasModifier(pop populati
 }
 
 func (m *PlatformErrorSignatureManager) getPopulationRepeatTolerance(pop population.Population) float64 {
-	// African populations have lower repeat content, higher tolerance
+	// Placeholder modifier with no empirical basis.
 	if pop == population.YRI || pop == population.LWK || pop == population.GWD {
 		return 1.10
 	}
@@ -512,21 +518,24 @@ func (m *PlatformErrorSignatureManager) getPopulationRepeatTolerance(pop populat
 }
 
 func (m *PlatformErrorSignatureManager) getPopulationQualityBias(pop population.Population) float64 {
-	// Slight population-specific quality biases
+	// Placeholder quality modifiers with no empirical basis.
 	qualityBias := map[population.Population]float64{
 		population.YRI: 1.02, population.LWK: 1.01, population.GWD: 1.01, // African
 		population.CEU: 1.00, population.GBR: 1.00, population.TSI: 1.00, // European
 		population.CHB: 0.99, population.JPT: 0.99, population.CHS: 0.99, // East Asian
 		population.MXL: 1.00, population.PUR: 1.00, // Americas
 	}
-	
+
 	if bias, exists := qualityBias[pop]; exists {
 		return bias
 	}
 	return 1.00
 }
 
-// ApplyErrorSignature applies platform and population-specific error signatures
+// ApplyErrorSignature applies a platform's error signature to one read.
+// Only substitutions change the sequence: insertion and deletion events are
+// drawn and counted, and lower the quality at that position, but the
+// sequence length is unchanged. The indel context multipliers are not used.
 func (m *PlatformErrorSignatureManager) ApplyErrorSignature(
 	platform SequencingPlatform,
 	pop population.Population,
@@ -534,7 +543,7 @@ func (m *PlatformErrorSignatureManager) ApplyErrorSignature(
 	qualities []int,
 	readPosition int,
 ) (string, []int, ErrorApplicationResult) {
-	
+
 	signature := m.errorSignatures[platform]
 	if signature == nil {
 		return sequence, qualities, ErrorApplicationResult{
@@ -544,18 +553,18 @@ func (m *PlatformErrorSignatureManager) ApplyErrorSignature(
 			Message:       "No signature found for platform",
 		}
 	}
-	
+
 	popData := m.populationData[pop]
 	if popData == nil {
 		popData = &PopulationErrorData{Population: pop, BaseErrorModifier: 1.0}
 	}
-	
+
 	modifiedSequence := sequence
 	modifiedQualities := make([]int, len(qualities))
 	copy(modifiedQualities, qualities)
-	
+
 	errorsApplied := 0
-	
+
 	// Apply substitution errors
 	if subPattern, exists := signature.ErrorPatterns["substitution"]; exists {
 		seq, qual, numErrors := m.applySubstitutionErrors(
@@ -565,7 +574,7 @@ func (m *PlatformErrorSignatureManager) ApplyErrorSignature(
 		modifiedQualities = qual
 		errorsApplied += numErrors
 	}
-	
+
 	// Apply insertion errors (for long-read platforms)
 	if insPattern, exists := signature.ErrorPatterns["insertion"]; exists {
 		seq, qual, numErrors := m.applyInsertionErrors(
@@ -575,7 +584,7 @@ func (m *PlatformErrorSignatureManager) ApplyErrorSignature(
 		modifiedQualities = qual
 		errorsApplied += numErrors
 	}
-	
+
 	// Apply deletion errors (for long-read platforms)
 	if delPattern, exists := signature.ErrorPatterns["deletion"]; exists {
 		seq, qual, numErrors := m.applyDeletionErrors(
@@ -585,7 +594,7 @@ func (m *PlatformErrorSignatureManager) ApplyErrorSignature(
 		modifiedQualities = qual
 		errorsApplied += numErrors
 	}
-	
+
 	return modifiedSequence, modifiedQualities, ErrorApplicationResult{
 		Platform:      platform,
 		Population:    pop,
@@ -609,22 +618,22 @@ type ErrorApplicationResult struct {
 func (m *PlatformErrorSignatureManager) applySubstitutionErrors(
 	sequence string, qualities []int, pattern ErrorPattern, popData *PopulationErrorData, readPos int,
 ) (string, []int, int) {
-	
+
 	modifiedSeq := []byte(sequence)
 	modifiedQual := make([]int, len(qualities))
 	copy(modifiedQual, qualities)
 	errorsApplied := 0
-	
+
 	for i, base := range modifiedSeq {
 		if i < len(pattern.FrequencyPattern) {
 			errorRate := pattern.FrequencyPattern[i] * popData.BaseErrorModifier
-			
+
 			// Apply context dependency
 			context := m.getSequenceContext(sequence, i)
 			if contextMod, exists := pattern.ContextDependency[context]; exists {
 				errorRate *= contextMod
 			}
-			
+
 			// Apply error if random value is below threshold
 			if m.rng.Float64() < errorRate {
 				// Choose random alternative base
@@ -633,7 +642,7 @@ func (m *PlatformErrorSignatureManager) applySubstitutionErrors(
 					newBase := bases[m.rng.IntN(4)]
 					if newBase != base {
 						modifiedSeq[i] = newBase
-						
+
 						// Reduce quality score for error
 						qualityReduction := int(5 + m.rng.Float64()*10)
 						if modifiedQual[i] > qualityReduction {
@@ -641,7 +650,7 @@ func (m *PlatformErrorSignatureManager) applySubstitutionErrors(
 						} else {
 							modifiedQual[i] = 2
 						}
-						
+
 						errorsApplied++
 						break
 					}
@@ -649,23 +658,21 @@ func (m *PlatformErrorSignatureManager) applySubstitutionErrors(
 			}
 		}
 	}
-	
+
 	return string(modifiedSeq), modifiedQual, errorsApplied
 }
 
 func (m *PlatformErrorSignatureManager) applyInsertionErrors(
 	sequence string, qualities []int, pattern ErrorPattern, popData *PopulationErrorData,
 ) (string, []int, int) {
-	// Simplified insertion error application
-	// In a full implementation, this would modify sequence length
+	// Stub: counts insertion events and lowers quality; the sequence is unchanged.
 	errorsApplied := 0
 	modifiedQual := make([]int, len(qualities))
 	copy(modifiedQual, qualities)
-	
-	// For now, just track insertion errors without modifying sequence
+
 	for i := 0; i < len(sequence) && i < len(pattern.FrequencyPattern); i++ {
 		errorRate := pattern.FrequencyPattern[i] * popData.BaseErrorModifier
-		
+
 		if m.rng.Float64() < errorRate {
 			errorsApplied++
 			// Reduce quality at insertion site
@@ -674,22 +681,21 @@ func (m *PlatformErrorSignatureManager) applyInsertionErrors(
 			}
 		}
 	}
-	
+
 	return sequence, modifiedQual, errorsApplied
 }
 
 func (m *PlatformErrorSignatureManager) applyDeletionErrors(
 	sequence string, qualities []int, pattern ErrorPattern, popData *PopulationErrorData,
 ) (string, []int, int) {
-	// Simplified deletion error application
+	// Stub: counts deletion events and lowers quality; the sequence is unchanged.
 	errorsApplied := 0
 	modifiedQual := make([]int, len(qualities))
 	copy(modifiedQual, qualities)
-	
-	// For now, just track deletion errors without modifying sequence
+
 	for i := 0; i < len(sequence) && i < len(pattern.FrequencyPattern); i++ {
 		errorRate := pattern.FrequencyPattern[i] * popData.BaseErrorModifier
-		
+
 		if m.rng.Float64() < errorRate {
 			errorsApplied++
 			// Reduce quality at deletion site
@@ -698,7 +704,7 @@ func (m *PlatformErrorSignatureManager) applyDeletionErrors(
 			}
 		}
 	}
-	
+
 	return sequence, modifiedQual, errorsApplied
 }
 
@@ -707,9 +713,9 @@ func (m *PlatformErrorSignatureManager) getSequenceContext(sequence string, posi
 	if position >= len(sequence) {
 		return "unknown"
 	}
-	
+
 	base := sequence[position]
-	
+
 	// Check for homopolymer runs
 	runLength := 1
 	for i := position - 1; i >= 0 && sequence[i] == byte(base); i-- {
@@ -718,58 +724,62 @@ func (m *PlatformErrorSignatureManager) getSequenceContext(sequence string, posi
 	for i := position + 1; i < len(sequence) && sequence[i] == byte(base); i++ {
 		runLength++
 	}
-	
+
 	if runLength >= 3 {
 		return "poly_" + string(base)
 	}
-	
+
 	// Check for dinucleotide context
 	if position > 0 {
-		dinuc := sequence[position-1:position+1]
+		dinuc := sequence[position-1 : position+1]
 		return dinuc
 	}
-	
+
 	return "single"
 }
 
-// ValidatePlatformSignatures validates error signatures across all platforms
+// ValidatePlatformSignatures checks that the signature table is internally
+// consistent: all seven platforms are present with unique fingerprints, the
+// Illumina mean substitution rate is at most 0.2%, and the long-read platforms
+// have indel patterns. It does not compare against real data, and
+// "error_application_functional" is always true.
 func (m *PlatformErrorSignatureManager) ValidatePlatformSignatures() map[string]bool {
 	validation := make(map[string]bool)
-	
+
 	// Check that all 7 platforms have signatures
 	expectedPlatforms := []SequencingPlatform{
 		NovaSeq6000, NextSeq2000, MiSeq, PacBioRevio,
 		DNBSeqT20x2, ElementAVITI, PromethION24,
 	}
-	
+
 	signaturesConfigured := 0
 	for _, platform := range expectedPlatforms {
 		if _, exists := m.errorSignatures[platform]; exists {
 			signaturesConfigured++
 		}
 	}
-	
+
 	validation["all_platform_signatures_configured"] = signaturesConfigured == len(expectedPlatforms)
 	validation["population_error_data_loaded"] = len(m.populationData) >= 10
 	validation["error_application_functional"] = true // Basic functionality
-	
+
 	// Validate signature uniqueness
 	fingerprints := make(map[string]bool)
 	uniqueSignatures := 0
-	
+
 	for _, signature := range m.errorSignatures {
 		if !fingerprints[signature.SignatureFingerprint] {
 			fingerprints[signature.SignatureFingerprint] = true
 			uniqueSignatures++
 		}
 	}
-	
+
 	validation["signature_fingerprints_unique"] = uniqueSignatures == len(m.errorSignatures)
-	
+
 	// Validate platform-specific characteristics
 	illuminaCount := 0
 	longReadCount := 0
-	
+
 	for platform, signature := range m.errorSignatures {
 		if platform == NovaSeq6000 || platform == NextSeq2000 || platform == MiSeq {
 			illuminaCount++
@@ -780,13 +790,13 @@ func (m *PlatformErrorSignatureManager) ValidatePlatformSignatures() map[string]
 					avgErrorRate += rate
 				}
 				avgErrorRate /= float64(len(subPattern.FrequencyPattern))
-				
+
 				if avgErrorRate > 0.002 {
 					validation["illumina_error_rates_appropriate"] = false
 				}
 			}
 		}
-		
+
 		if platform == PacBioRevio || platform == PromethION24 {
 			longReadCount++
 			// Long read should have higher error rates and indels
@@ -798,10 +808,10 @@ func (m *PlatformErrorSignatureManager) ValidatePlatformSignatures() map[string]
 			}
 		}
 	}
-	
+
 	validation["illumina_platforms_represented"] = illuminaCount == 3
 	validation["long_read_platforms_represented"] = longReadCount == 2
-	
+
 	// Set defaults for tests that weren't explicitly failed
 	if _, exists := validation["illumina_error_rates_appropriate"]; !exists {
 		validation["illumina_error_rates_appropriate"] = true
@@ -809,7 +819,7 @@ func (m *PlatformErrorSignatureManager) ValidatePlatformSignatures() map[string]
 	if _, exists := validation["long_read_indel_patterns"]; !exists {
 		validation["long_read_indel_patterns"] = true
 	}
-	
+
 	return validation
 }
 

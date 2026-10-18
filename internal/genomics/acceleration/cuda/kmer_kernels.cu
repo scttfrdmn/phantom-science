@@ -2,8 +2,9 @@
 #include <device_launch_parameters.h>
 #include <cub/cub.cuh>
 
-// CUDA kernel for high-performance k-mer extraction and counting
-// Optimized for modern NVIDIA GPUs with efficient memory access patterns
+// CUDA kernels for parallel k-mer extraction and counting with atomic
+// increments into a dense count table. No benchmark in the repository
+// measures their performance.
 
 // Base encoding lookup table: A=0, T=1, G=2, C=3, invalid=4
 __constant__ unsigned char BASE_ENCODING[256] = {
@@ -356,8 +357,8 @@ __global__ void prepare_sequences_kernel(
         return;
     }
     
-    // Calculate output offset (would need to be computed via prefix sum)
-    // This is a simplified version - production code would use CUB scan
+    // Each thread recomputes its output offset with a serial O(n) sum over
+    // preceding lengths; a CUB prefix scan would avoid the quadratic total work.
     unsigned int output_offset = 0;
     for (unsigned int i = 0; i < seq_idx; i++) {
         output_offset += input_lengths[i] + 1;  // +1 for null terminator

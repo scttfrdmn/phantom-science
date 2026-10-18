@@ -8,18 +8,18 @@ import (
 
 // OpenReadingFrame represents a protein-coding sequence
 type OpenReadingFrame struct {
-	Start       int    // Start position (0-based)
-	End         int    // End position (0-based)
-	Frame       int    // Reading frame (0, 1, or 2)
-	Strand      string // "+" or "-"
-	Sequence    []byte // Nucleotide sequence
-	Protein     []byte // Translated protein sequence
-	Length      int    // Length in codons
-	GCContent   float64
-	StartCodon  string           // Start codon (ATG, etc.)
-	StopCodon   string           // Stop codon (TAA, TAG, TGA)
-	CodonCount  map[string]int   // Codon frequency counts
-	CAI         float64          // Codon Adaptation Index
+	Start      int    // Start position (0-based)
+	End        int    // End position (0-based)
+	Frame      int    // Reading frame (0, 1, or 2)
+	Strand     string // "0" (forward) or "1" (reverse complement)
+	Sequence   []byte // Nucleotide sequence
+	Protein    []byte // Translated protein sequence
+	Length     int    // Length in codons
+	GCContent  float64
+	StartCodon string         // Start codon (ATG, etc.)
+	StopCodon  string         // Stop codon (TAA, TAG, TGA)
+	CodonCount map[string]int // Codon frequency counts
+	CAI        float64        // Codon Adaptation Index
 }
 
 // GeneticCode represents the genetic code mapping
@@ -32,22 +32,22 @@ type GeneticCode struct {
 
 // CodonUsageTable represents codon usage frequencies for an organism
 type CodonUsageTable struct {
-	Organism          string
-	Tissue            string
-	GeneCount         int
-	CodonFrequencies  map[string]float64
+	Organism            string
+	Tissue              string
+	GeneCount           int
+	CodonFrequencies    map[string]float64
 	RelativeFrequencies map[string]float64 // Relative to synonymous codons
-	OptimalCodons     map[string]string    // Most frequent codon per amino acid
+	OptimalCodons       map[string]string  // Most frequent codon per amino acid
 }
 
 // CodonBiasResult represents the result of applying codon bias
 type CodonBiasResult struct {
-	OriginalSequence  []byte
-	BiasedSequence    []byte
-	CodonChanges      []CodonChange
-	ExpressionLevel   float64
-	BiasStrength      float64
-	ORFs              []OpenReadingFrame
+	OriginalSequence []byte
+	BiasedSequence   []byte
+	CodonChanges     []CodonChange
+	ExpressionLevel  float64
+	BiasStrength     float64
+	ORFs             []OpenReadingFrame
 }
 
 // CodonChange represents a codon substitution
@@ -62,15 +62,15 @@ type CodonChange struct {
 
 // ORF represents an ORF in the sequence
 type ORF struct {
-	Start        int
-	End          int
-	Strand       string
-	StartCodon   string
-	StopCodon    string
-	Length       int
-	GCContent    float64
-	CodonCount   map[string]int
-	CAI          float64 // Codon Adaptation Index
+	Start      int
+	End        int
+	Strand     string
+	StartCodon string
+	StopCodon  string
+	Length     int
+	GCContent  float64
+	CodonCount map[string]int
+	CAI        float64 // Codon Adaptation Index
 }
 
 // getStandardGeneticCode returns the standard genetic code
@@ -94,7 +94,7 @@ func getStandardGeneticCode() *GeneticCode {
 			"GAT": "D", "GAC": "D", "GAA": "E", "GAG": "E",
 			"GGT": "G", "GGC": "G", "GGA": "G", "GGG": "G",
 		},
-		AAToCodon: make(map[string][]string),
+		AAToCodon:   make(map[string][]string),
 		StartCodons: []string{"ATG"},
 		StopCodons:  []string{"TAA", "TAG", "TGA"},
 	}
@@ -107,7 +107,10 @@ func getStandardGeneticCode() *GeneticCode {
 	return gc
 }
 
-// loadDefaultCodonUsage loads default codon usage frequencies for the organism
+// loadDefaultCodonUsage loads default codon usage frequencies for the
+// organism. NewCodonUsageModel does not call it, so codonFrequencies (used by
+// ApplyCodonBias and GetOptimalCodons) is empty until this or LoadCodonTable
+// runs.
 func (m *CodonUsageModel) loadDefaultCodonUsage() {
 	switch m.organism {
 	case "human", "homo_sapiens":
@@ -123,9 +126,11 @@ func (m *CodonUsageModel) loadDefaultCodonUsage() {
 	}
 }
 
-// loadHumanCodonUsage loads human codon usage frequencies
+// loadHumanCodonUsage loads human codon usage frequencies.
+// Values are per-thousand-codons from the Kazusa Codon Usage Database
+// (Nakamura et al. 2000, NAR 28:292; organism: Homo sapiens, all GenBank
+// coding sequences, not only highly expressed genes).
 func (m *CodonUsageModel) loadHumanCodonUsage() {
-	// Human codon usage frequencies (per thousand) from high-expression genes
 	humanUsage := map[string]float64{
 		"TTT": 17.6, "TTC": 20.3, "TTA": 7.7, "TTG": 12.9,
 		"TCT": 15.2, "TCC": 17.7, "TCA": 12.2, "TCG": 4.4,
@@ -159,9 +164,10 @@ func (m *CodonUsageModel) loadHumanCodonUsage() {
 	m.buildAminoAcidMapping()
 }
 
-// loadMouseCodonUsage loads mouse codon usage frequencies
+// loadMouseCodonUsage loads approximate mouse codon usage frequencies. The
+// values are the human table with small hand-made adjustments, not a
+// published mouse table.
 func (m *CodonUsageModel) loadMouseCodonUsage() {
-	// Similar to human but with some differences
 	mouseUsage := map[string]float64{
 		"TTT": 17.1, "TTC": 20.8, "TTA": 7.4, "TTG": 12.6,
 		"TCT": 15.5, "TCC": 17.4, "TCA": 12.5, "TCG": 4.6,
@@ -212,7 +218,7 @@ func (m *CodonUsageModel) loadUniversalCodonUsage() {
 // buildAminoAcidMapping builds the amino acid to codon mapping
 func (m *CodonUsageModel) buildAminoAcidMapping() {
 	m.aminoAcidMapping = make(map[string][]string)
-	
+
 	for codon, aa := range m.codonTable.CodonToAA {
 		if aa != "*" { // Skip stop codons
 			m.aminoAcidMapping[aa] = append(m.aminoAcidMapping[aa], codon)
@@ -236,7 +242,11 @@ func (m *CodonUsageModel) SetExpressionLevel(level float64) {
 	}
 }
 
-// ApplyCodonBias applies codon usage bias to a DNA sequence
+// ApplyCodonBias finds ORFs (ATG to stop, at least 150 bp) in all six frames
+// and resamples each internal codon from its synonymous codons with
+// probability proportional to frequency^(1+expressionLevel). Reverse-strand
+// ORF coordinates refer to the reverse complement but are applied to the
+// forward sequence.
 func (m *CodonUsageModel) ApplyCodonBias(sequence []byte) (*CodonBiasResult, error) {
 	if len(sequence) == 0 {
 		return nil, fmt.Errorf("sequence cannot be empty")
@@ -293,14 +303,14 @@ func (m *CodonUsageModel) findOpenReadingFrames(sequence []byte) []OpenReadingFr
 // findORFsInFrame finds ORFs in a specific reading frame
 func (m *CodonUsageModel) findORFsInFrame(sequence []byte, frame int, strand int) []OpenReadingFrame {
 	orfs := make([]OpenReadingFrame, 0)
-	
+
 	if len(sequence) < frame+3 {
 		return orfs
 	}
 
 	for i := frame; i < len(sequence)-2; i += 3 {
 		codon := string(sequence[i : i+3])
-		
+
 		// Check for start codon
 		if m.isStartCodon(codon) {
 			orf := m.extendORF(sequence, i, strand)
@@ -352,7 +362,7 @@ func (m *CodonUsageModel) applyCodonBiasToORF(sequence []byte, orf OpenReadingFr
 
 	for i := orf.Start; i < orf.End-2; i += 3 {
 		codon := string(sequence[i : i+3])
-		
+
 		// Skip start and stop codons
 		if m.isStartCodon(codon) || m.isStopCodon(codon) {
 			continue
@@ -366,11 +376,11 @@ func (m *CodonUsageModel) applyCodonBiasToORF(sequence []byte, orf OpenReadingFr
 
 		// Choose optimal codon based on usage frequency and expression level
 		newCodon := m.chooseOptimalCodon(aa, m.expressionLevel)
-		
+
 		if newCodon != codon {
 			// Apply the change
 			copy(sequence[i:i+3], []byte(newCodon))
-			
+
 			change := CodonChange{
 				Position:      i,
 				OriginalCodon: codon,
@@ -399,7 +409,7 @@ func (m *CodonUsageModel) chooseOptimalCodon(aa string, expressionLevel float64)
 
 	for i, codon := range codons {
 		baseFreq := m.codonFrequencies[codon]
-		
+
 		// Adjust probability based on expression level
 		// Higher expression -> stronger bias toward optimal codons
 		adjustedFreq := math.Pow(baseFreq, 1.0+expressionLevel)
@@ -415,7 +425,7 @@ func (m *CodonUsageModel) chooseOptimalCodon(aa string, expressionLevel float64)
 	// Choose codon based on probabilities
 	r := m.rng.Float64()
 	cumulative := 0.0
-	
+
 	for i, prob := range probabilities {
 		cumulative += prob
 		if r <= cumulative {
@@ -440,9 +450,9 @@ func (m *CodonUsageModel) getChangeType(originalCodon, newCodon string) string {
 	}
 }
 
-// gettRNAAbundance estimates tRNA abundance for a codon
+// gettRNAAbundance returns the codon's usage frequency × 100 as a stand-in
+// for tRNA abundance; no tRNA data is used.
 func (m *CodonUsageModel) gettRNAAbundance(codon string) float64 {
-	// Simplified model: tRNA abundance correlates with codon usage
 	return m.codonFrequencies[codon] * 100.0
 }
 
@@ -564,11 +574,11 @@ func (m *CodonUsageModel) SetSeed(seed int64) {
 // GetModelStats returns statistics about the codon usage model
 func (m *CodonUsageModel) GetModelStats() map[string]interface{} {
 	stats := map[string]interface{}{
-		"organism":          m.organism,
-		"tissue_specific":   m.tissueSpecific,
-		"expression_level":  m.expressionLevel,
-		"total_codons":      len(m.codonFrequencies),
-		"amino_acids":       len(m.aminoAcidMapping),
+		"organism":         m.organism,
+		"tissue_specific":  m.tissueSpecific,
+		"expression_level": m.expressionLevel,
+		"total_codons":     len(m.codonFrequencies),
+		"amino_acids":      len(m.aminoAcidMapping),
 	}
 
 	// Calculate entropy of codon usage
@@ -632,25 +642,25 @@ func (m *CodonUsageModel) ValidateCodonUsage() error {
 // Values are per-thousand-codons from the Kazusa Codon Usage Database
 // (Nakamura et al. 2000, NAR 28:292; organism: Saccharomyces cerevisiae).
 // Yeast has very strong codon bias: e.g. GAA (Glu) is 2.4× more common
-// than GAG; CTG accounts for only ~10‰ of Leu codons (vs. 52‰ in E. coli).
+// than GAG; CTG is only ~10‰ of all codons (vs. 52‰ in E. coli).
 func (m *CodonUsageModel) loadYeastCodonUsage() {
 	yeastUsage := map[string]float64{
 		"TTT": 26.1, "TTC": 18.4, "TTA": 26.2, "TTG": 27.2,
-		"CTT": 11.3, "CTC":  5.4, "CTA": 13.4, "CTG": 10.0,
+		"CTT": 11.3, "CTC": 5.4, "CTA": 13.4, "CTG": 10.0,
 		"ATT": 30.1, "ATC": 17.2, "ATA": 17.7, "ATG": 20.9,
 		"GTT": 21.1, "GTC": 11.8, "GTA": 11.8, "GTG": 10.8,
-		"TCT": 23.5, "TCC": 14.2, "TCA": 18.7, "TCG":  8.6,
-		"CCT": 13.5, "CCC":  6.8, "CCA": 18.3, "CCG":  5.3,
-		"ACT": 20.3, "ACC": 12.7, "ACA": 17.9, "ACG":  7.9,
-		"GCT": 21.2, "GCC": 12.6, "GCA": 16.5, "GCG":  6.2,
-		"TAT": 18.8, "TAC": 14.8, "TAA":  1.1, "TAG":  0.5,
-		"CAT": 13.6, "CAC":  7.8, "CAA": 27.3, "CAG": 12.1,
+		"TCT": 23.5, "TCC": 14.2, "TCA": 18.7, "TCG": 8.6,
+		"CCT": 13.5, "CCC": 6.8, "CCA": 18.3, "CCG": 5.3,
+		"ACT": 20.3, "ACC": 12.7, "ACA": 17.9, "ACG": 7.9,
+		"GCT": 21.2, "GCC": 12.6, "GCA": 16.5, "GCG": 6.2,
+		"TAT": 18.8, "TAC": 14.8, "TAA": 1.1, "TAG": 0.5,
+		"CAT": 13.6, "CAC": 7.8, "CAA": 27.3, "CAG": 12.1,
 		"AAT": 35.9, "AAC": 24.8, "AAA": 41.9, "AAG": 30.8,
 		"GAT": 37.6, "GAC": 20.8, "GAA": 45.5, "GAG": 19.2,
-		"TGT":  8.1, "TGC":  4.8, "TGA":  0.7, "TGG": 10.4,
-		"CGT":  6.4, "CGC":  2.6, "CGA":  3.0, "CGG":  1.7,
-		"AGT": 14.2, "AGC":  9.8, "AGA": 21.4, "AGG":  9.2,
-		"GGT": 23.9, "GGC":  9.8, "GGA": 10.9, "GGG":  5.5,
+		"TGT": 8.1, "TGC": 4.8, "TGA": 0.7, "TGG": 10.4,
+		"CGT": 6.4, "CGC": 2.6, "CGA": 3.0, "CGG": 1.7,
+		"AGT": 14.2, "AGC": 9.8, "AGA": 21.4, "AGG": 9.2,
+		"GGT": 23.9, "GGC": 9.8, "GGA": 10.9, "GGG": 5.5,
 	}
 
 	total := 0.0
@@ -672,21 +682,21 @@ func (m *CodonUsageModel) loadYeastCodonUsage() {
 func (m *CodonUsageModel) loadEcoliCodonUsage() {
 	ecoliUsage := map[string]float64{
 		"TTT": 21.9, "TTC": 16.8, "TTA": 13.7, "TTG": 13.1,
-		"CTT": 11.1, "CTC": 10.9, "CTA":  3.9, "CTG": 52.4,
-		"ATT": 28.7, "ATC": 25.0, "ATA":  7.1, "ATG": 27.9,
+		"CTT": 11.1, "CTC": 10.9, "CTA": 3.9, "CTG": 52.4,
+		"ATT": 28.7, "ATC": 25.0, "ATA": 7.1, "ATG": 27.9,
 		"GTT": 18.1, "GTC": 15.3, "GTA": 10.8, "GTG": 26.1,
-		"TCT":  8.5, "TCC":  8.6, "TCA":  7.1, "TCG":  8.8,
-		"CCT":  7.1, "CCC":  5.5, "CCA":  8.4, "CCG": 23.3,
-		"ACT":  8.8, "ACC": 23.4, "ACA":  6.7, "ACG": 13.6,
+		"TCT": 8.5, "TCC": 8.6, "TCA": 7.1, "TCG": 8.8,
+		"CCT": 7.1, "CCC": 5.5, "CCA": 8.4, "CCG": 23.3,
+		"ACT": 8.8, "ACC": 23.4, "ACA": 6.7, "ACG": 13.6,
 		"GCT": 16.2, "GCC": 25.5, "GCA": 20.4, "GCG": 33.5,
-		"TAT": 16.2, "TAC": 12.3, "TAA":  2.0, "TAG":  0.3,
-		"CAT": 13.3, "CAC":  9.7, "CAA": 15.1, "CAG": 28.7,
+		"TAT": 16.2, "TAC": 12.3, "TAA": 2.0, "TAG": 0.3,
+		"CAT": 13.3, "CAC": 9.7, "CAA": 15.1, "CAG": 28.7,
 		"AAT": 17.7, "AAC": 22.0, "AAA": 33.5, "AAG": 10.3,
 		"GAT": 32.1, "GAC": 19.0, "GAA": 39.1, "GAG": 17.8,
-		"TGT":  5.1, "TGC":  6.4, "TGA":  1.0, "TGG": 15.2,
-		"CGT": 20.8, "CGC": 22.0, "CGA":  3.6, "CGG":  5.4,
-		"AGT":  8.5, "AGC": 16.1, "AGA":  2.1, "AGG":  1.2,
-		"GGT": 24.3, "GGC": 29.9, "GGA":  8.0, "GGG": 11.1,
+		"TGT": 5.1, "TGC": 6.4, "TGA": 1.0, "TGG": 15.2,
+		"CGT": 20.8, "CGC": 22.0, "CGA": 3.6, "CGG": 5.4,
+		"AGT": 8.5, "AGC": 16.1, "AGA": 2.1, "AGG": 1.2,
+		"GGT": 24.3, "GGC": 29.9, "GGA": 8.0, "GGG": 11.1,
 	}
 
 	total := 0.0
@@ -702,11 +712,11 @@ func (m *CodonUsageModel) loadEcoliCodonUsage() {
 // GetOptimalCodons returns the most optimal codons for each amino acid
 func (m *CodonUsageModel) GetOptimalCodons() map[string]string {
 	optimal := make(map[string]string)
-	
+
 	for aa, codons := range m.aminoAcidMapping {
 		maxFreq := 0.0
 		optimalCodon := ""
-		
+
 		for _, codon := range codons {
 			freq := m.codonFrequencies[codon]
 			if freq > maxFreq {
@@ -714,9 +724,9 @@ func (m *CodonUsageModel) GetOptimalCodons() map[string]string {
 				optimalCodon = codon
 			}
 		}
-		
+
 		optimal[aa] = optimalCodon
 	}
-	
+
 	return optimal
 }

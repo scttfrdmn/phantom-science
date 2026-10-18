@@ -12,23 +12,25 @@ func NewMutationalSignatureModel(processes []MutationalProcess) (*MutationalSign
 		trinucleotideFreq: make(map[string]float64),
 		processActivity:   make(map[string]float64),
 	}
-	
+
 	// Initialize known mutational signatures
 	if err := model.initializeMutationalSignatures(); err != nil {
 		return nil, fmt.Errorf("failed to initialize mutational signatures: %w", err)
 	}
-	
+
 	// Set activity levels for specified processes
 	model.setProcessActivity(processes)
-	
+
 	return model, nil
 }
 
-// initializeMutationalSignatures sets up known mutational signatures
+// initializeMutationalSignatures sets up five profiles named after COSMIC v2
+// signatures 1, 2, 4, 7 and 15. The trinucleotide weights are hand-written
+// approximations, not the published COSMIC values (for example, signature 1
+// here is not dominated by C>T at NpCpG).
 func (msm *MutationalSignatureModel) initializeMutationalSignatures() error {
-	// Initialize COSMIC mutational signatures
-	
-	// Signature 1: Age-related (clock-like) 
+
+	// Signature 1: Age-related (clock-like)
 	sig1 := &MutationalSignature{
 		Name:        "Signature_1",
 		Process:     ClockLikeMutation,
@@ -54,7 +56,7 @@ func (msm *MutationalSignatureModel) initializeMutationalSignatures() error {
 		},
 	}
 	msm.signatures["Signature_1"] = sig1
-	
+
 	// Signature 2: APOBEC cytidine deaminase activity
 	sig2 := &MutationalSignature{
 		Name:        "Signature_2",
@@ -81,7 +83,7 @@ func (msm *MutationalSignatureModel) initializeMutationalSignatures() error {
 		},
 	}
 	msm.signatures["Signature_2"] = sig2
-	
+
 	// Signature 4: Tobacco smoking
 	sig4 := &MutationalSignature{
 		Name:        "Signature_4",
@@ -108,7 +110,7 @@ func (msm *MutationalSignatureModel) initializeMutationalSignatures() error {
 		},
 	}
 	msm.signatures["Signature_4"] = sig4
-	
+
 	// Signature 7: UV exposure
 	sig7 := &MutationalSignature{
 		Name:        "Signature_7",
@@ -135,7 +137,7 @@ func (msm *MutationalSignatureModel) initializeMutationalSignatures() error {
 		},
 	}
 	msm.signatures["Signature_7"] = sig7
-	
+
 	// Signature 15: DNA mismatch repair deficiency
 	sig15 := &MutationalSignature{
 		Name:        "Signature_15",
@@ -162,7 +164,7 @@ func (msm *MutationalSignatureModel) initializeMutationalSignatures() error {
 		},
 	}
 	msm.signatures["Signature_15"] = sig15
-	
+
 	return nil
 }
 
@@ -170,16 +172,16 @@ func (msm *MutationalSignatureModel) initializeMutationalSignatures() error {
 func (msm *MutationalSignatureModel) setProcessActivity(processes []MutationalProcess) {
 	// Default activity levels
 	defaultActivity := map[MutationalProcess]float64{
-		ClockLikeMutation:     0.3,  // Always present at moderate level
+		ClockLikeMutation:      0.3, // Always present at moderate level
 		SpontaneousDeamination: 0.2, // Background level
-		UVExposure:            0.0,  // Only in skin cancers
-		TobaccoSmoking:        0.0,  // Only with exposure
-		DNARepairDeficiency:   0.0,  // Only when deficient
-		APOBECActivity:        0.1,  // Low background
-		ChemicalMutagenesis:   0.0,  // Only with exposure
-		AgeRelatedMutation:    0.4,  // Increases with age
+		UVExposure:             0.0, // Only in skin cancers
+		TobaccoSmoking:         0.0, // Only with exposure
+		DNARepairDeficiency:    0.0, // Only when deficient
+		APOBECActivity:         0.1, // Low background
+		ChemicalMutagenesis:    0.0, // Only with exposure
+		AgeRelatedMutation:     0.4, // Increases with age
 	}
-	
+
 	// Set activities for all processes
 	for process, activity := range defaultActivity {
 		msm.processActivity[process.String()] = activity
@@ -191,43 +193,48 @@ func (msm *MutationalSignatureModel) setProcessActivity(processes []MutationalPr
 	}
 }
 
-// AnalyzeSequence analyzes mutational signatures in a DNA sequence
+// AnalyzeSequence scores a sequence's trinucleotide composition against the
+// signature profiles. The profiles are keyed by substitution ("ACA>ATA") and
+// the observed frequencies by trinucleotide ("ACA"), so the cosine
+// similarities, signature contributions and dominant signatures are always
+// zero; the score comes from the composition, hotspot and bias terms only.
+// No mutations are called, since a single sequence has none to call.
 func (msm *MutationalSignatureModel) AnalyzeSequence(sequence []byte) (float64, *MutationalSignatureDetails, error) {
 	if len(sequence) < 50 {
 		return 0.0, nil, fmt.Errorf("sequence too short for mutational signature analysis")
 	}
-	
+
 	// Extract trinucleotide context frequencies
 	trinucleotideFreq := msm.extractTrinucleotideFrequencies(sequence)
-	
+
 	// Calculate signature contributions
 	signatureContributions := msm.calculateSignatureContributions(trinucleotideFreq)
-	
+
 	// Identify dominant signatures
 	dominantSignatures := msm.identifyDominantSignatures(signatureContributions)
-	
+
 	// Calculate mutational load
 	mutationalLoad := msm.calculateMutationalLoad(sequence)
-	
+
 	// Assess signature consistency
 	signatureConsistency := msm.assessSignatureConsistency(signatureContributions)
-	
+
 	// Calculate trinucleotide bias
 	trinucleotideBias := msm.calculateTrinucleotideBias(trinucleotideFreq)
-	
+
 	details := &MutationalSignatureDetails{
 		TrinucleotideFrequencies: trinucleotideFreq,
 		SignatureContributions:   signatureContributions,
 		DominantSignatures:       dominantSignatures,
-		MutationalLoad:          mutationalLoad,
-		SignatureConsistency:    signatureConsistency,
-		TrinucleotideBias:       trinucleotideBias,
-		SequenceLength:          int64(len(sequence)),
+		MutationalLoad:           mutationalLoad,
+		SignatureConsistency:     signatureConsistency,
+		TrinucleotideBias:        trinucleotideBias,
+		SequenceLength:           int64(len(sequence)),
 	}
-	
+
 	// Calculate overall mutational signature realism
 	realismScore := msm.calculateMutationalRealism(details)
-	
+
 	return realismScore, details, nil
 }
 
@@ -235,43 +242,43 @@ func (msm *MutationalSignatureModel) AnalyzeSequence(sequence []byte) (float64, 
 func (msm *MutationalSignatureModel) extractTrinucleotideFrequencies(sequence []byte) map[string]float64 {
 	trinucleotideCount := make(map[string]int)
 	totalTrinucleotides := 0
-	
+
 	// Extract all trinucleotides
 	for i := 0; i <= len(sequence)-3; i++ {
 		trinucleotide := string(sequence[i : i+3])
 		trinucleotide = toUpper(trinucleotide)
-		
+
 		// Only count valid trinucleotides
 		if isValidTrinucleotide(trinucleotide) {
 			trinucleotideCount[trinucleotide]++
 			totalTrinucleotides++
 		}
 	}
-	
+
 	// Convert counts to frequencies
 	frequencies := make(map[string]float64)
 	for trinucleotide, count := range trinucleotideCount {
 		frequencies[trinucleotide] = float64(count) / float64(totalTrinucleotides)
 	}
-	
+
 	return frequencies
 }
 
 // calculateSignatureContributions calculates the contribution of each signature
 func (msm *MutationalSignatureModel) calculateSignatureContributions(observedFreq map[string]float64) map[string]float64 {
 	contributions := make(map[string]float64)
-	
+
 	for sigName, signature := range msm.signatures {
 		// Calculate similarity between observed and signature profile
 		similarity := msm.calculateProfileSimilarity(observedFreq, signature.TrinucleotideProfile)
-		
+
 		// Weight by process activity
 		processActivity := msm.processActivity[signature.Process.String()]
 		weightedContribution := similarity * processActivity
-		
+
 		contributions[sigName] = weightedContribution
 	}
-	
+
 	return contributions
 }
 
@@ -281,7 +288,7 @@ func (msm *MutationalSignatureModel) calculateProfileSimilarity(profile1, profil
 	dotProduct := 0.0
 	norm1 := 0.0
 	norm2 := 0.0
-	
+
 	// Get all trinucleotides present in either profile
 	allTrinucleotides := make(map[string]bool)
 	for trinuc := range profile1 {
@@ -290,20 +297,20 @@ func (msm *MutationalSignatureModel) calculateProfileSimilarity(profile1, profil
 	for trinuc := range profile2 {
 		allTrinucleotides[trinuc] = true
 	}
-	
+
 	for trinuc := range allTrinucleotides {
 		freq1 := profile1[trinuc]
 		freq2 := profile2[trinuc]
-		
+
 		dotProduct += freq1 * freq2
 		norm1 += freq1 * freq1
 		norm2 += freq2 * freq2
 	}
-	
+
 	if norm1 == 0 || norm2 == 0 {
 		return 0.0
 	}
-	
+
 	return dotProduct / (math.Sqrt(norm1) * math.Sqrt(norm2))
 }
 
@@ -313,12 +320,12 @@ func (msm *MutationalSignatureModel) identifyDominantSignatures(contributions ma
 		signature    string
 		contribution float64
 	}
-	
+
 	var sortedContribs []sigContrib
 	for sig, contrib := range contributions {
 		sortedContribs = append(sortedContribs, sigContrib{sig, contrib})
 	}
-	
+
 	// Sort by contribution (descending)
 	for i := 0; i < len(sortedContribs)-1; i++ {
 		for j := i + 1; j < len(sortedContribs); j++ {
@@ -327,44 +334,45 @@ func (msm *MutationalSignatureModel) identifyDominantSignatures(contributions ma
 			}
 		}
 	}
-	
+
 	// Return top signatures with contribution > threshold
 	var dominant []string
 	threshold := 0.1
-	
+
 	for _, sc := range sortedContribs {
 		if sc.contribution > threshold {
 			dominant = append(dominant, sc.signature)
 		}
 	}
-	
+
 	return dominant
 }
 
-// calculateMutationalLoad estimates the overall mutational burden
+// calculateMutationalLoad returns the density of CpG, TT and CC
+// dinucleotides (candidate hotspots), not an observed mutation burden.
 func (msm *MutationalSignatureModel) calculateMutationalLoad(sequence []byte) float64 {
 	if len(sequence) <= 1 {
 		return 0.0
 	}
-	
+
 	// Simple proxy: count potential mutation hotspots
 	hotspots := 0
-	
+
 	for i := 0; i <= len(sequence)-2; i++ {
 		dinucleotide := string(sequence[i : i+2])
 		dinucleotide = toUpper(dinucleotide)
-		
+
 		// CpG dinucleotides are mutation hotspots
 		if dinucleotide == "CG" {
 			hotspots++
 		}
-		
+
 		// TT and CC (potential UV damage sites)
 		if dinucleotide == "TT" || dinucleotide == "CC" {
 			hotspots++
 		}
 	}
-	
+
 	// Normalize by sequence length
 	return float64(hotspots) / float64(len(sequence)-1)
 }
@@ -451,20 +459,20 @@ func (msm *MutationalSignatureModel) calculateMutationalRealism(details *Mutatio
 	weights := map[string]float64{
 		"signature_consistency": 0.3,
 		"dominant_signatures":   0.25,
-		"mutational_load":      0.2,
-		"trinucleotide_bias":   0.15,
-		"profile_completeness": 0.1,
+		"mutational_load":       0.2,
+		"trinucleotide_bias":    0.15,
+		"profile_completeness":  0.1,
 	}
-	
+
 	// Calculate score for dominant signatures
 	dominantScore := 0.0
 	if len(details.DominantSignatures) > 0 {
 		dominantScore = math.Min(float64(len(details.DominantSignatures))/3.0, 1.0)
 	}
-	
+
 	// Calculate profile completeness
 	profileCompleteness := float64(len(details.TrinucleotideFrequencies)) / 64.0
-	
+
 	// Combine scores
 	realismScore := 0.0
 	realismScore += details.SignatureConsistency * weights["signature_consistency"]
@@ -472,7 +480,7 @@ func (msm *MutationalSignatureModel) calculateMutationalRealism(details *Mutatio
 	realismScore += math.Min(details.MutationalLoad*5.0, 1.0) * weights["mutational_load"]
 	realismScore += details.TrinucleotideBias * weights["trinucleotide_bias"]
 	realismScore += profileCompleteness * weights["profile_completeness"]
-	
+
 	return realismScore
 }
 
@@ -481,10 +489,10 @@ type MutationalSignatureDetails struct {
 	TrinucleotideFrequencies map[string]float64
 	SignatureContributions   map[string]float64
 	DominantSignatures       []string
-	MutationalLoad          float64
-	SignatureConsistency    float64
-	TrinucleotideBias       float64
-	SequenceLength          int64
+	MutationalLoad           float64
+	SignatureConsistency     float64
+	TrinucleotideBias        float64
+	SequenceLength           int64
 }
 
 // isValidTrinucleotide checks if a trinucleotide contains only valid DNA bases
@@ -492,15 +500,15 @@ func isValidTrinucleotide(trinuc string) bool {
 	if len(trinuc) != 3 {
 		return false
 	}
-	
+
 	validBases := map[byte]bool{'A': true, 'T': true, 'G': true, 'C': true}
-	
+
 	for i := 0; i < 3; i++ {
 		if !validBases[trinuc[i]] {
 			return false
 		}
 	}
-	
+
 	return true
 }
 
@@ -508,18 +516,18 @@ func isValidTrinucleotide(trinuc string) bool {
 func (mp MutationalProcess) String() string {
 	processNames := map[MutationalProcess]string{
 		SpontaneousDeamination: "Spontaneous Deamination",
-		UVExposure:            "UV Exposure",
-		TobaccoSmoking:        "Tobacco Smoking",
-		DNARepairDeficiency:   "DNA Repair Deficiency",
-		ClockLikeMutation:     "Clock-like Mutation",
-		APOBECActivity:        "APOBEC Activity",
-		ChemicalMutagenesis:   "Chemical Mutagenesis",
-		AgeRelatedMutation:    "Age-related Mutation",
+		UVExposure:             "UV Exposure",
+		TobaccoSmoking:         "Tobacco Smoking",
+		DNARepairDeficiency:    "DNA Repair Deficiency",
+		ClockLikeMutation:      "Clock-like Mutation",
+		APOBECActivity:         "APOBEC Activity",
+		ChemicalMutagenesis:    "Chemical Mutagenesis",
+		AgeRelatedMutation:     "Age-related Mutation",
 	}
-	
+
 	if name, exists := processNames[mp]; exists {
 		return name
 	}
-	
+
 	return "Unknown"
 }

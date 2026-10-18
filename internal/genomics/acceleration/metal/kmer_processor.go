@@ -21,11 +21,11 @@ import "C"
 
 // MetalKmerProcessor provides GPU-accelerated k-mer processing using Apple Metal
 type MetalKmerProcessor struct {
-	device         *C.MetalDevice
-	maxThreads     int
-	maxBufferSize  int64
-	deviceName     string
-	isInitialized  bool
+	device        *C.MetalDevice
+	maxThreads    int
+	maxBufferSize int64
+	deviceName    string
+	isInitialized bool
 }
 
 // NewMetalKmerProcessor creates a new Metal-accelerated k-mer processor
@@ -153,7 +153,7 @@ func (mp *MetalKmerProcessor) prepareSequenceData(sequences [][]byte) (*GPUSeque
 
 	// Check buffer size limits
 	if int64(totalSize) > mp.maxBufferSize {
-		return nil, fmt.Errorf("sequence data size (%d bytes) exceeds GPU buffer limit (%d bytes)", 
+		return nil, fmt.Errorf("sequence data size (%d bytes) exceeds GPU buffer limit (%d bytes)",
 			totalSize, mp.maxBufferSize)
 	}
 
@@ -173,7 +173,7 @@ func (mp *MetalKmerProcessor) prepareSequenceData(sequences [][]byte) (*GPUSeque
 	// Copy sequences to continuous memory buffer
 	offset := 0
 	lengthArray := (*[1 << 20]C.int)(unsafe.Pointer(cLengths))[:len(sequences):len(sequences)]
-	
+
 	for i, seq := range sequences {
 		// Convert sequence to uppercase and copy
 		upperSeq := make([]byte, len(seq))
@@ -185,7 +185,7 @@ func (mp *MetalKmerProcessor) prepareSequenceData(sequences [][]byte) (*GPUSeque
 				upperSeq[j] = 'T'
 			case 'g', 'G':
 				upperSeq[j] = 'G'
-			case 'c', 'C':  
+			case 'c', 'C':
 				upperSeq[j] = 'C'
 			case 'n', 'N':
 				upperSeq[j] = 'N'
@@ -195,12 +195,12 @@ func (mp *MetalKmerProcessor) prepareSequenceData(sequences [][]byte) (*GPUSeque
 		}
 
 		// Copy to C buffer
-		C.memcpy(unsafe.Pointer(uintptr(cSequences)+uintptr(offset)), 
+		C.memcpy(unsafe.Pointer(uintptr(cSequences)+uintptr(offset)),
 			unsafe.Pointer(&upperSeq[0]), C.size_t(len(seq)))
-		
+
 		// Add null terminator
 		*(*C.char)(unsafe.Pointer(uintptr(cSequences) + uintptr(offset) + uintptr(len(seq)))) = 0
-		
+
 		lengthArray[i] = C.int(len(seq))
 		offset += len(seq) + 1
 	}
@@ -228,11 +228,11 @@ func (gsd *GPUSequenceData) cleanup() {
 // convertGPUResults converts GPU integer results to FrequencyTable
 func (mp *MetalKmerProcessor) convertGPUResults(results []C.int, k int, totalKmers int) *kmer.FrequencyTable {
 	frequencies := make(map[string]int)
-	
+
 	// Generate all possible k-mers and map GPU results
 	bases := []byte{'A', 'T', 'G', 'C'}
 	kmerIndex := 0
-	
+
 	var generateKmers func(current []byte, remaining int)
 	generateKmers = func(current []byte, remaining int) {
 		if remaining == 0 {
@@ -242,7 +242,7 @@ func (mp *MetalKmerProcessor) convertGPUResults(results []C.int, k int, totalKme
 			kmerIndex++
 			return
 		}
-		
+
 		for _, base := range bases {
 			newCurrent := make([]byte, len(current)+1)
 			copy(newCurrent, current)
@@ -250,7 +250,7 @@ func (mp *MetalKmerProcessor) convertGPUResults(results []C.int, k int, totalKme
 			generateKmers(newCurrent, remaining-1)
 		}
 	}
-	
+
 	generateKmers([]byte{}, k)
 
 	// Calculate total count
@@ -278,20 +278,20 @@ func (mp *MetalKmerProcessor) ExtractKmerFrequenciesGPUBatch(sequences [][]byte,
 	}
 
 	var allTables []*kmer.FrequencyTable
-	
+
 	// Process sequences in batches
 	for i := 0; i < len(sequences); i += batchSize {
 		end := i + batchSize
 		if end > len(sequences) {
 			end = len(sequences)
 		}
-		
+
 		batch := sequences[i:end]
 		table, err := mp.ExtractKmerFrequenciesGPU(batch, k)
 		if err != nil {
 			return nil, fmt.Errorf("failed to process batch %d-%d: %w", i, end-1, err)
 		}
-		
+
 		allTables = append(allTables, table)
 	}
 
@@ -317,12 +317,12 @@ func (mp *MetalKmerProcessor) calculateOptimalBatchSize(sequences [][]byte, k in
 	avgLength := totalLength / len(sequences)
 
 	// Calculate memory per sequence (sequence + results)
-	memoryPerSequence := avgLength + (1 << (2 * k)) * 4 // 4 bytes per int result
-	
+	memoryPerSequence := avgLength + (1<<(2*k))*4 // 4 bytes per int result
+
 	// Use 80% of available GPU memory for batching
 	availableMemory := int(float64(mp.maxBufferSize) * 0.8)
 	batchSize := availableMemory / memoryPerSequence
-	
+
 	// Ensure reasonable bounds
 	if batchSize < 100 {
 		batchSize = 100
@@ -355,7 +355,7 @@ func (mp *MetalKmerProcessor) GetPerformanceStats() PerformanceStats {
 		MaxThreadsPerGroup:   mp.maxThreads,
 		MaxBufferSize:        mp.maxBufferSize,
 		EstimatedSpeedup:     EstimateSpeedup(mp.maxThreads),
-		OptimalKRange:        [2]int{4, 12}, // Optimal k-mer sizes for GPU processing
+		OptimalKRange:        [2]int{4, 12}, // Fixed hint, not measured
 		RecommendedBatchSize: 5000,
 	}
 }
@@ -370,22 +370,26 @@ type PerformanceStats struct {
 	RecommendedBatchSize int
 }
 
-// EstimateSpeedup estimates the performance improvement over CPU processing
+// EstimateSpeedup returns a fixed, unmeasured guess at the speedup over CPU
+// processing, chosen only from the device's maximum threads per threadgroup.
+// The values are not backed by a benchmark; use BenchmarkGPUPerformance for
+// a measured speedup.
 func EstimateSpeedup(maxThreads int) float64 {
-	// Conservative estimate based on parallel processing capability
-	// Apple Silicon GPUs typically have 256-1024+ cores
+	// Hard-coded tiers by threads per threadgroup; not measured.
 	if maxThreads >= 1024 {
-		return 8.0 // High-end M2/M3 chips
+		return 8.0
 	} else if maxThreads >= 512 {
-		return 6.0 // Mid-range M2 chips
+		return 6.0
 	} else if maxThreads >= 256 {
-		return 4.0 // M1 chips
+		return 4.0
 	} else {
-		return 2.0 // Older or limited Metal devices
+		return 2.0
 	}
 }
 
-// BenchmarkGPUPerformance runs a performance benchmark of GPU k-mer processing
+// BenchmarkGPUPerformance times GPU and CPU k-mer counting on the same
+// sequences and reports the measured speedup and whether the counts match.
+// With no sequences it uses GenerateTestSequences(1000, 1000).
 func (mp *MetalKmerProcessor) BenchmarkGPUPerformance(testSequences [][]byte, k int) (*BenchmarkResults, error) {
 	if !mp.isInitialized {
 		return nil, fmt.Errorf("Metal device not initialized")
@@ -400,7 +404,7 @@ func (mp *MetalKmerProcessor) BenchmarkGPUPerformance(testSequences [][]byte, k 
 	startTime := time.Now()
 	gpuResult, err := mp.ExtractKmerFrequenciesGPU(testSequences, k)
 	gpuDuration := time.Since(startTime)
-	
+
 	if err != nil {
 		return nil, fmt.Errorf("GPU benchmark failed: %w", err)
 	}
@@ -410,7 +414,7 @@ func (mp *MetalKmerProcessor) BenchmarkGPUPerformance(testSequences [][]byte, k 
 	startTime = time.Now()
 	cpuResult, err := extractor.ExtractFromMultipleSequences(testSequences)
 	cpuDuration := time.Since(startTime)
-	
+
 	if err != nil {
 		return nil, fmt.Errorf("CPU benchmark failed: %w", err)
 	}
@@ -419,16 +423,16 @@ func (mp *MetalKmerProcessor) BenchmarkGPUPerformance(testSequences [][]byte, k 
 	speedup := float64(cpuDuration.Nanoseconds()) / float64(gpuDuration.Nanoseconds())
 
 	return &BenchmarkResults{
-		DeviceName:     mp.deviceName,
-		TestSequences:  len(testSequences),
-		KmerSize:       k,
-		GPUDuration:    gpuDuration,
-		CPUDuration:    cpuDuration,
-		Speedup:        speedup,
-		GPUKmers:       gpuResult.TotalCount,
-		CPUKmers:       cpuResult.TotalCount,
-		ResultsMatch:   compareTables(gpuResult, cpuResult),
-		Throughput:     calculateThroughput(testSequences, gpuDuration),
+		DeviceName:    mp.deviceName,
+		TestSequences: len(testSequences),
+		KmerSize:      k,
+		GPUDuration:   gpuDuration,
+		CPUDuration:   cpuDuration,
+		Speedup:       speedup,
+		GPUKmers:      gpuResult.TotalCount,
+		CPUKmers:      cpuResult.TotalCount,
+		ResultsMatch:  compareTables(gpuResult, cpuResult),
+		Throughput:    calculateThroughput(testSequences, gpuDuration),
 	}, nil
 }
 
@@ -446,14 +450,12 @@ type BenchmarkResults struct {
 	Throughput    float64 // MB/s
 }
 
-// Additional helper functions would be implemented...
-
+// GenerateTestSequences returns count sequences of the given length, each the
+// repeating pattern ATGC. They are benchmark input only, not realistic DNA.
 func GenerateTestSequences(count, length int) [][]byte {
-	// Implementation would generate random DNA sequences for testing
-	// This is a placeholder - full implementation would create realistic sequences
 	sequences := make([][]byte, count)
 	bases := []byte{'A', 'T', 'G', 'C'}
-	
+
 	for i := 0; i < count; i++ {
 		seq := make([]byte, length)
 		for j := 0; j < length; j++ {
@@ -461,7 +463,7 @@ func GenerateTestSequences(count, length int) [][]byte {
 		}
 		sequences[i] = seq
 	}
-	
+
 	return sequences
 }
 
@@ -469,14 +471,14 @@ func compareTables(gpu, cpu *kmer.FrequencyTable) bool {
 	if gpu.TotalCount != cpu.TotalCount {
 		return false
 	}
-	
+
 	// Compare frequency maps
 	for kmer, count := range gpu.Frequencies {
 		if cpu.Frequencies[kmer] != count {
 			return false
 		}
 	}
-	
+
 	return true
 }
 
@@ -485,7 +487,7 @@ func calculateThroughput(sequences [][]byte, duration time.Duration) float64 {
 	for _, seq := range sequences {
 		totalBytes += len(seq)
 	}
-	
+
 	seconds := float64(duration.Nanoseconds()) / 1e9
 	return float64(totalBytes) / (1024 * 1024) / seconds // MB/s
 }

@@ -1,3 +1,8 @@
+// Package acceleration selects a k-mer counting backend: Apple Metal
+// (macOS with CGO), NVIDIA CUDA (CGO and the cuda build tag) or the CPU
+// extractor in authenticity/kmer. GPUManager falls back to the CPU when no
+// GPU backend initializes or a GPU call fails, and BenchmarkPerformance times
+// each available backend against the CPU on caller-supplied sequences.
 package acceleration
 
 import (
@@ -46,20 +51,20 @@ func (gb GPUBackend) String() string {
 
 // GPUCapabilities contains information about available GPU acceleration
 type GPUCapabilities struct {
-	MetalAvailable   bool
-	CudaAvailable    bool
-	PreferredBackend GPUBackend
+	MetalAvailable    bool
+	CudaAvailable     bool
+	PreferredBackend  GPUBackend
 	AvailableBackends []GPUBackend
-	DeviceInfo       []DeviceInfo
+	DeviceInfo        []DeviceInfo
 }
 
 // DeviceInfo contains information about a GPU device
 type DeviceInfo struct {
-	Backend       GPUBackend
-	Name          string
-	Type          string
-	Capabilities  map[string]interface{}
-	IsPreferred   bool
+	Backend      GPUBackend
+	Name         string
+	Type         string
+	Capabilities map[string]interface{}
+	IsPreferred  bool
 }
 
 // NewGPUManager creates a new GPU manager with automatic backend detection
@@ -127,7 +132,7 @@ func (gm *GPUManager) initializeGPUProcessors() error {
 			return fmt.Errorf("failed to initialize Metal processor: %w", err)
 		}
 		gm.metalProcessor = processor
-		
+
 	case GPUBackendCUDA:
 		if !cuda.IsAvailable() {
 			return fmt.Errorf("CUDA GPU acceleration not available")
@@ -137,11 +142,11 @@ func (gm *GPUManager) initializeGPUProcessors() error {
 			return fmt.Errorf("failed to initialize CUDA processor: %w", err)
 		}
 		gm.cudaProcessor = processor
-		
+
 	case GPUBackendNone:
 		// CPU-only mode, no GPU initialization needed
 		return nil
-		
+
 	default:
 		return fmt.Errorf("unsupported GPU backend: %v", gm.preferredGPU)
 	}
@@ -152,11 +157,11 @@ func (gm *GPUManager) initializeGPUProcessors() error {
 // GetCapabilities returns information about available GPU acceleration
 func (gm *GPUManager) GetCapabilities() GPUCapabilities {
 	capabilities := GPUCapabilities{
-		MetalAvailable:   metal.IsAvailable(),
-		CudaAvailable:    cuda.IsAvailable(),
-		PreferredBackend: gm.preferredGPU,
+		MetalAvailable:    metal.IsAvailable(),
+		CudaAvailable:     cuda.IsAvailable(),
+		PreferredBackend:  gm.preferredGPU,
 		AvailableBackends: []GPUBackend{},
-		DeviceInfo:       []DeviceInfo{},
+		DeviceInfo:        []DeviceInfo{},
 	}
 
 	// Add available backends
@@ -229,7 +234,7 @@ func (gm *GPUManager) ExtractKmerFrequencies(sequences [][]byte, k int) (*kmer.F
 			}
 			fmt.Printf("Metal GPU processing failed: %v, falling back to CPU\n", err)
 		}
-		
+
 	case GPUBackendCUDA:
 		if gm.cudaProcessor != nil {
 			result, err := gm.cudaProcessor.ExtractKmerFrequenciesGPU(sequences, k)
@@ -261,7 +266,7 @@ func (gm *GPUManager) ExtractKmerFrequenciesBatch(sequences [][]byte, k int, bat
 			}
 			fmt.Printf("Metal GPU batch processing failed: %v, falling back to CPU\n", err)
 		}
-		
+
 	case GPUBackendCUDA:
 		if gm.cudaProcessor != nil {
 			result, err := gm.cudaProcessor.ExtractKmerFrequenciesGPUBatch(sequences, k, batchSize)
@@ -302,7 +307,9 @@ func (gm *GPUManager) ExtractKmerFrequenciesBatch(sequences [][]byte, k int, bat
 	return kmer.MergeFrequencyTables(allTables...)
 }
 
-// BenchmarkPerformance runs comprehensive performance benchmarks across all available backends
+// BenchmarkPerformance times k-mer counting on each available backend
+// (CPU always, Metal and CUDA when initialized) and reports measured
+// throughput and speedup over the CPU.
 func (gm *GPUManager) BenchmarkPerformance(testSequences [][]byte, k int) (*PerformanceBenchmark, error) {
 	if !gm.isInitialized {
 		return nil, fmt.Errorf("GPU manager not initialized")
@@ -310,8 +317,8 @@ func (gm *GPUManager) BenchmarkPerformance(testSequences [][]byte, k int) (*Perf
 
 	benchmark := &PerformanceBenchmark{
 		TestSequences: len(testSequences),
-		KmerSize:     k,
-		Results:      make(map[GPUBackend]*BackendResult),
+		KmerSize:      k,
+		Results:       make(map[GPUBackend]*BackendResult),
 	}
 
 	// Benchmark CPU (always available)
@@ -351,11 +358,11 @@ func (gm *GPUManager) benchmarkCPU(sequences [][]byte, k int) (*BackendResult, e
 	}
 
 	return &BackendResult{
-		Backend:     GPUBackendNone,
-		Duration:    duration,
-		TotalKmers:  result.TotalCount,
-		Throughput:  gm.calculateThroughput(sequences, duration),
-		Success:     true,
+		Backend:    GPUBackendNone,
+		Duration:   duration,
+		TotalKmers: result.TotalCount,
+		Throughput: gm.calculateThroughput(sequences, duration),
+		Success:    true,
 	}, nil
 }
 
@@ -367,13 +374,13 @@ func (gm *GPUManager) benchmarkMetal(sequences [][]byte, k int) (*BackendResult,
 	}
 
 	return &BackendResult{
-		Backend:     GPUBackendMetal,
-		Duration:    metalResult.GPUDuration,
-		TotalKmers:  metalResult.GPUKmers,
-		Throughput:  metalResult.Throughput,
-		Success:     metalResult.ResultsMatch,
+		Backend:      GPUBackendMetal,
+		Duration:     metalResult.GPUDuration,
+		TotalKmers:   metalResult.GPUKmers,
+		Throughput:   metalResult.Throughput,
+		Success:      metalResult.ResultsMatch,
 		SpeedupVsCPU: metalResult.Speedup,
-		DeviceName:  metalResult.DeviceName,
+		DeviceName:   metalResult.DeviceName,
 	}, nil
 }
 
@@ -434,7 +441,7 @@ func (gm *GPUManager) calculateRelativePerformance(benchmark *PerformanceBenchma
 	benchmark.BestThroughput = bestThroughput
 }
 
-// PerformanceBenchmark contains comprehensive performance benchmark results
+// PerformanceBenchmark contains the per-backend results of BenchmarkPerformance.
 type PerformanceBenchmark struct {
 	TestSequences  int
 	KmerSize       int

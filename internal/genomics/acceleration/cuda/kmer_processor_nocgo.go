@@ -9,7 +9,8 @@ import (
 	"github.com/scttfrdmn/phantom-science/internal/genomics/authenticity/kmer"
 )
 
-// CudaKmerProcessor provides GPU-accelerated k-mer processing using NVIDIA CUDA
+// CudaKmerProcessor is a stub in builds without CGO; its constructor always
+// returns an error.
 type CudaKmerProcessor struct{}
 
 // DeviceInfo contains information about the CUDA GPU device
@@ -94,7 +95,8 @@ func EstimateSpeedup(computeCapability, smCount int) float64 {
 	return 0.0
 }
 
-// GenerateTestSequences generates test DNA sequences
+// GenerateTestSequences returns count sequences of the given length cycling
+// through ATGC (benchmark input only).
 func GenerateTestSequences(count, length int) [][]byte {
 	sequences := make([][]byte, count)
 	bases := []byte{'A', 'T', 'G', 'C'}

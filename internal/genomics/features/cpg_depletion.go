@@ -8,15 +8,19 @@ import (
 	"time"
 )
 
-// CpGDepletionModel models CpG island depletion patterns due to methylation
+// CpGDepletionModel applies a heuristic CpG→TpG depletion to sequences
+// outside detected CpG islands and scores CpG observed/expected ratios.
+// Islands use the Gardiner-Garden & Frommer (1987) criteria (200 bp window,
+// GC ≥ 0.5, CpG o/e ≥ 0.6). The depletion probabilities are fixed parameters,
+// not a population-genetic mutation model.
 type CpGDepletionModel struct {
-	depletionRate     float64           // Rate of CpG -> TpG transitions
-	islandLocations   []GenomicInterval // Known CpG island locations
-	methylationRate   float64           // Methylation rate in non-island regions
-	transitionProb    float64           // Probability of C->T transition when methylated
-	gcContentThreshold float64          // GC content threshold for CpG islands
-	lengthThreshold   int               // Minimum length for CpG islands
-	rng               *rand.Rand        // Random number generator
+	depletionRate      float64           // Rate of CpG -> TpG transitions
+	islandLocations    []GenomicInterval // Stored by LoadCpGIslands; not used by ApplyDepletion
+	methylationRate    float64           // Methylation rate in non-island regions
+	transitionProb     float64           // Not used by any method (reported only)
+	gcContentThreshold float64           // GC content threshold for CpG islands
+	lengthThreshold    int               // Not used; the island window is fixed at 200 bp
+	rng                *rand.Rand        // Random number generator
 }
 
 // GenomicInterval represents a genomic interval [start, end)
@@ -61,15 +65,16 @@ type TransitionEvent struct {
 	TransitionType   string // "deamination", "replication_error"
 }
 
-// NewCpGDepletionModel creates a new CpG depletion model
+// NewCpGDepletionModel creates a CpG depletion model. Its random source is
+// seeded from the clock; call SetSeed for reproducible output.
 func NewCpGDepletionModel() *CpGDepletionModel {
 	return &CpGDepletionModel{
-		depletionRate:      0.8,  // 80% depletion rate over evolutionary time
-		methylationRate:    0.7,  // 70% of CpG sites are methylated
-		transitionProb:     0.02, // 2% transition probability per generation
-		gcContentThreshold: 0.5,  // 50% GC content threshold
-		lengthThreshold:    200,  // 200bp minimum length
-		rng:               rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), 0)), // #nosec G404
+		depletionRate:      0.8,                                                     // per-call probability factor for a methylated non-island CpG
+		methylationRate:    0.7,                                                     // fraction of non-island CpG sites treated as methylated
+		transitionProb:     0.02,                                                    // unused
+		gcContentThreshold: 0.5,                                                     // 50% GC content threshold
+		lengthThreshold:    200,                                                     // 200bp minimum length
+		rng:                rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), 0)), // #nosec G404
 	}
 }
 
@@ -87,7 +92,8 @@ func (m *CpGDepletionModel) SetMethylationRate(rate float64) {
 	}
 }
 
-// LoadCpGIslands loads known CpG island locations
+// LoadCpGIslands stores known CpG island locations. ApplyDepletion ignores
+// them and detects islands from the sequence instead.
 func (m *CpGDepletionModel) LoadCpGIslands(islands []CpGIsland) {
 	m.islandLocations = make([]GenomicInterval, len(islands))
 	for i, island := range islands {
@@ -95,7 +101,9 @@ func (m *CpGDepletionModel) LoadCpGIslands(islands []CpGIsland) {
 	}
 }
 
-// ApplyDepletion applies CpG depletion to a DNA sequence
+// ApplyDepletion turns CpG sites into TpG: outside detected islands with
+// probability methylationRate × depletionRate × a context factor, inside
+// islands with probability 0.05. Only upper-case CG is considered.
 func (m *CpGDepletionModel) ApplyDepletion(sequence []byte) (*DepletionResult, error) {
 	if len(sequence) == 0 {
 		return nil, fmt.Errorf("sequence cannot be empty")
@@ -123,13 +131,13 @@ func (m *CpGDepletionModel) ApplyDepletion(sequence []byte) (*DepletionResult, e
 		if sequence[i] == 'C' && sequence[i+1] == 'G' {
 			// Check if this CpG site is in an island
 			inIsland := m.isInCpGIsland(i, islands)
-			
+
 			if !inIsland {
-				// Apply depletion based on methylation and transition probability
+				// Apply depletion based on methylation rate and sequence context
 				if m.shouldDeplete(i, sequence) {
 					// C -> T transition (deamination of methylated cytosine)
 					result.DepletedSequence[i] = 'T'
-					
+
 					// Record transition event
 					event := TransitionEvent{
 						Position:         i,
@@ -144,9 +152,9 @@ func (m *CpGDepletionModel) ApplyDepletion(sequence []byte) (*DepletionResult, e
 			} else {
 				// CpG islands are protected from methylation
 				// But can still have some depletion at a much lower rate
-				if m.rng.Float64() < 0.05 { // 5% depletion rate in islands
+				if m.rng.Float64() < 0.05 { // fixed 5% per call inside islands
 					result.DepletedSequence[i] = 'T'
-					
+
 					event := TransitionEvent{
 						Position:         i,
 						OriginalBase:     'C',
@@ -163,7 +171,7 @@ func (m *CpGDepletionModel) ApplyDepletion(sequence []byte) (*DepletionResult, e
 
 	// Count remaining CpG sites
 	result.CpGSitesRemaining = m.countCpGSites(result.DepletedSequence)
-	
+
 	// Calculate actual depletion rate
 	if result.CpGSitesOriginal > 0 {
 		result.DepletionRate = float64(result.CpGSitesOriginal-result.CpGSitesRemaining) / float64(result.CpGSitesOriginal)
@@ -180,18 +188,18 @@ func (m *CpGDepletionModel) identifyCpGIslands(sequence []byte) []CpGIsland {
 
 	for i := 0; i <= len(sequence)-windowSize; i += step {
 		window := sequence[i : i+windowSize]
-		
+
 		// Calculate GC content
 		gcContent := m.calculateGCContent(window)
-		
+
 		// Calculate CpG ratio
 		cpgRatio := m.calculateCpGRatio(window)
-		
+
 		// Check if this window qualifies as a CpG island
 		if gcContent >= m.gcContentThreshold && cpgRatio >= 0.6 {
 			// Extend the island
 			island := m.extendCpGIsland(sequence, i, windowSize)
-			
+
 			// Check if this island overlaps with existing islands
 			if !m.overlapsWithExistingIsland(island, islands) {
 				islands = append(islands, island)
@@ -211,7 +219,7 @@ func (m *CpGDepletionModel) extendCpGIsland(sequence []byte, start, initialLengt
 		if testStart < 0 {
 			testStart = 0
 		}
-		
+
 		testWindow := sequence[testStart : leftBoundary+initialLength]
 		if m.calculateGCContent(testWindow) < m.gcContentThreshold*0.8 {
 			break
@@ -226,7 +234,7 @@ func (m *CpGDepletionModel) extendCpGIsland(sequence []byte, start, initialLengt
 		if testEnd > len(sequence) {
 			testEnd = len(sequence)
 		}
-		
+
 		testWindow := sequence[leftBoundary:testEnd]
 		if m.calculateGCContent(testWindow) < m.gcContentThreshold*0.8 {
 			break
@@ -260,7 +268,7 @@ func (m *CpGDepletionModel) extendCpGIsland(sequence []byte, start, initialLengt
 	if len(islandSequence) > 0 {
 		island.ExpectedCpG = float64(gCount) * float64(cCount) / float64(len(islandSequence))
 	}
-	
+
 	// Calculate CpG ratio
 	if island.ExpectedCpG > 0 {
 		island.CpGRatio = float64(island.ObservedCpG) / island.ExpectedCpG
@@ -299,21 +307,23 @@ func (m *CpGDepletionModel) shouldDeplete(position int, sequence []byte) bool {
 
 	// Check local sequence context for methylation probability
 	contextMethylation := m.getContextMethylationProbability(position, sequence)
-	
+
 	// Apply depletion based on context and evolutionary time
 	depleteProb := m.depletionRate * contextMethylation
-	
+
 	return m.rng.Float64() < depleteProb
 }
 
-// getContextMethylationProbability calculates methylation probability based on sequence context
+// getContextMethylationProbability returns a context factor for a CpG site.
+// The factor is capped at 1.0, so the CCGG and GCGC boosts have no effect;
+// only CGCG (0.8) changes the result.
 func (m *CpGDepletionModel) getContextMethylationProbability(position int, sequence []byte) float64 {
 	baseProbability := 1.0
-	
+
 	// Check for specific sequence contexts that affect methylation
 	if position >= 2 && position < len(sequence)-2 {
 		context := string(sequence[position-2 : position+3])
-		
+
 		// Some contexts are more likely to be methylated
 		switch {
 		case strings.Contains(context, "CCGG"):
@@ -324,12 +334,12 @@ func (m *CpGDepletionModel) getContextMethylationProbability(position int, seque
 			baseProbability *= 0.8 // Lower methylation in CGCG repeats
 		}
 	}
-	
+
 	// Cap at 1.0
 	if baseProbability > 1.0 {
 		baseProbability = 1.0
 	}
-	
+
 	return baseProbability
 }
 
@@ -426,12 +436,12 @@ func (m *CpGDepletionModel) ValidateDepletion(result *DepletionResult) error {
 // GetDepletionStats returns statistics about the depletion process
 func (m *CpGDepletionModel) GetDepletionStats(result *DepletionResult) map[string]interface{} {
 	stats := map[string]interface{}{
-		"original_cpg_sites":   result.CpGSitesOriginal,
-		"remaining_cpg_sites":  result.CpGSitesRemaining,
-		"depletion_rate":       result.DepletionRate,
-		"transition_events":    len(result.TransitionEvents),
-		"cpg_islands_found":    len(result.IslandRegions),
-		"sequence_length":      len(result.OriginalSequence),
+		"original_cpg_sites":  result.CpGSitesOriginal,
+		"remaining_cpg_sites": result.CpGSitesRemaining,
+		"depletion_rate":      result.DepletionRate,
+		"transition_events":   len(result.TransitionEvents),
+		"cpg_islands_found":   len(result.IslandRegions),
+		"sequence_length":     len(result.OriginalSequence),
 	}
 
 	// Calculate island statistics
@@ -455,7 +465,7 @@ func (m *CpGDepletionModel) GetDepletionStats(result *DepletionResult) map[strin
 	// Calculate transition statistics
 	transitionsInIslands := 0
 	transitionsOutsideIslands := 0
-	
+
 	for _, event := range result.TransitionEvents {
 		if event.InCpGIsland {
 			transitionsInIslands++
@@ -470,13 +480,15 @@ func (m *CpGDepletionModel) GetDepletionStats(result *DepletionResult) map[strin
 	return stats
 }
 
-// SimulateEvolutionaryDepletion simulates depletion over evolutionary time
+// SimulateEvolutionaryDepletion calls ApplyDepletion generations times,
+// feeding each output into the next call. It has no time scale or mutation
+// rate; each call is one round of the same fixed probabilities.
 func (m *CpGDepletionModel) SimulateEvolutionaryDepletion(sequence []byte, generations int) (*DepletionResult, error) {
 	currentSequence := make([]byte, len(sequence))
 	copy(currentSequence, sequence)
 
 	allTransitionEvents := make([]TransitionEvent, 0)
-	
+
 	// Apply depletion over multiple generations
 	for gen := 0; gen < generations; gen++ {
 		result, err := m.ApplyDepletion(currentSequence)
@@ -486,7 +498,7 @@ func (m *CpGDepletionModel) SimulateEvolutionaryDepletion(sequence []byte, gener
 
 		// Update sequence for next generation
 		currentSequence = result.DepletedSequence
-		
+
 		// Accumulate transition events
 		allTransitionEvents = append(allTransitionEvents, result.TransitionEvents...)
 	}
@@ -527,8 +539,8 @@ func (m *CpGDepletionModel) GetModelParameters() map[string]interface{} {
 
 // CpGDepletionDetails contains detailed CpG depletion analysis results
 type CpGDepletionDetails struct {
-	CpGRatio         float64 // observed / expected CpG; > 1.0 means CpG-enriched
-	DepletionScore   float64 // clamped to [0, 1]: 1.0 = fully depleted, 0.0 = at or above expected
+	CpGRatio          float64 // observed / expected CpG; > 1.0 means CpG-enriched
+	DepletionScore    float64 // clamped to [0, 1]: 1.0 = fully depleted, 0.0 = at or above expected
 	RawDepletionScore float64 // unclamped 1.0 - CpGRatio; negative for CpG-enriched sequences
 }
 

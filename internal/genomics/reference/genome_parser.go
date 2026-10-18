@@ -11,12 +11,12 @@ import (
 
 // ReferenceGenomeParser handles parsing and indexing of reference genome FASTA files
 type ReferenceGenomeParser struct {
-	fastaPath     string
-	indexPath     string
-	chromSizes    map[string]int
-	chromOffsets  map[string]int64
-	memoryMapped  bool
-	mu            sync.RWMutex
+	fastaPath    string
+	indexPath    string
+	chromSizes   map[string]int
+	chromOffsets map[string]int64
+	memoryMapped bool
+	mu           sync.RWMutex
 }
 
 // Chromosome represents a single chromosome with its sequence and metadata
@@ -81,7 +81,9 @@ func (p *ReferenceGenomeParser) LoadIndex() error {
 	return scanner.Err()
 }
 
-// LoadChromosome loads a specific chromosome from the reference genome
+// LoadChromosome reads one chromosome into memory by scanning the FASTA from
+// the start; the .fai offsets are recorded by LoadIndex but not used to seek,
+// and nothing is memory-mapped. The chromosome must be listed in the index.
 func (p *ReferenceGenomeParser) LoadChromosome(chrName string) (*Chromosome, error) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
@@ -268,7 +270,7 @@ func (p *ReferenceGenomeParser) CreateIndex() error {
 
 	for scanner.Scan() {
 		line := scanner.Text()
-		
+
 		if strings.HasPrefix(line, ">") {
 			// Write previous chromosome to index
 			if currentChr != "" {
@@ -286,7 +288,7 @@ func (p *ReferenceGenomeParser) CreateIndex() error {
 			currentLength = 0
 			lineLength = 0
 			bytesPerLine = 0
-			sequenceStartOffset = currentOffset + int64(len(line) + 1) // Next line after header
+			sequenceStartOffset = currentOffset + int64(len(line)+1) // Next line after header
 		} else {
 			// Process sequence line
 			currentLength += len(line)
@@ -295,7 +297,7 @@ func (p *ReferenceGenomeParser) CreateIndex() error {
 				bytesPerLine = len(line) + 1 // +1 for newline
 			}
 		}
-		
+
 		currentOffset += int64(len(line) + 1) // +1 for newline
 	}
 

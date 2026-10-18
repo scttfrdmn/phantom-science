@@ -15,136 +15,141 @@ import (
 	"github.com/scttfrdmn/phantom-science/internal/security"
 )
 
-// PublicationWorkflowManager manages the complete publication workflow
+// PublicationWorkflowManager steps a workflow record through the publication
+// stages (manuscript generation, compliance check, peer review, submission
+// preparation, submission, tracking) and writes metadata and reports to disk.
+// Every stage is a stub: the manuscript, figures, tables and reviews are fixed
+// placeholder content, the compliance check always passes, and nothing is sent
+// to a journal (see the component implementations below).
 type PublicationWorkflowManager struct {
-	config             PublicationConfig
-	manuscriptEngine   *ManuscriptGenerationEngine
-	reviewManager      *PeerReviewManager
-	submissionTracker  *SubmissionTracker
-	complianceChecker  *ComplianceChecker
-	
+	config            PublicationConfig
+	manuscriptEngine  *ManuscriptGenerationEngine
+	reviewManager     *PeerReviewManager
+	submissionTracker *SubmissionTracker
+	complianceChecker *ComplianceChecker
+
 	// Workflow state
-	activeWorkflows    map[string]*PublicationWorkflow
-	templateLibrary    *TemplateLibrary
-	
+	activeWorkflows map[string]*PublicationWorkflow
+	templateLibrary *TemplateLibrary
+
 	// Analytics and reporting
 	publicationMetrics *PublicationMetrics
 }
 
 // PublicationConfig contains configuration for publication workflow
 type PublicationConfig struct {
-	WorkingDirectory   string
-	TemplateDirectory  string
-	OutputDirectory    string
-	
+	WorkingDirectory  string
+	TemplateDirectory string
+	OutputDirectory   string
+
 	// Manuscript generation settings
 	ManuscriptSettings ManuscriptGenerationSettings
-	
+
 	// Journal integration
-	JournalAPIs        map[string]JournalAPIConfig
-	
+	JournalAPIs map[string]JournalAPIConfig
+
 	// Review workflow
-	ReviewSettings     ReviewWorkflowSettings
-	
+	ReviewSettings ReviewWorkflowSettings
+
 	// Compliance requirements
 	ComplianceSettings ComplianceSettings
-	
+
 	// Submission tracking
 	SubmissionSettings SubmissionTrackingSettings
-	
+
 	// Analytics
-	AnalyticsEnabled   bool
-	MetricsCollection  bool
+	AnalyticsEnabled  bool
+	MetricsCollection bool
 }
 
 // ManuscriptGenerationSettings contains settings for manuscript generation
 type ManuscriptGenerationSettings struct {
-	AutoGenerate          bool
-	TemplateSelection     string // "automatic", "manual", "custom"
-	CitationStyle         string // "apa", "ieee", "nature", "science"
-	ReferenceDatabase     string // "pubmed", "crossref", "combined"
-	
+	AutoGenerate      bool
+	TemplateSelection string // "automatic", "manual", "custom"
+	CitationStyle     string // "apa", "ieee", "nature", "science"
+	ReferenceDatabase string // "pubmed", "crossref", "combined"
+
 	// Content generation
 	AbstractWordLimit     int
 	IntroductionWordLimit int
 	MethodsWordLimit      int
 	ResultsWordLimit      int
 	DiscussionWordLimit   int
-	
+
 	// Figure and table generation
-	AutoGenerateFigures   bool
-	FigureFormat          string // "png", "pdf", "svg"
-	TableFormat           string // "latex", "html", "csv"
-	
+	AutoGenerateFigures bool
+	FigureFormat        string // "png", "pdf", "svg"
+	TableFormat         string // "latex", "html", "csv"
+
 	// Language and style
-	Language              string
-	WritingStyle          string // "academic", "clinical", "technical"
-	TargetAudience        string // "researchers", "clinicians", "general"
+	Language       string
+	WritingStyle   string // "academic", "clinical", "technical"
+	TargetAudience string // "researchers", "clinicians", "general"
 }
 
 // JournalAPIConfig contains configuration for journal-specific APIs
 type JournalAPIConfig struct {
-	Name           string
-	APIEndpoint    string
-	APIKey         string `json:"-" yaml:"-"` // #nosec G117
-	SubmissionAPI  string
-	TrackingAPI    string
-	
+	Name          string
+	APIEndpoint   string
+	APIKey        string `json:"-" yaml:"-"` // #nosec G117
+	SubmissionAPI string
+	TrackingAPI   string
+
 	// Journal-specific requirements
-	Requirements   JournalRequirements
-	
+	Requirements JournalRequirements
+
 	// Submission preferences
-	PreferredFormat string
-	MaxFileSize     int64
+	PreferredFormat  string
+	MaxFileSize      int64
 	SupportedFormats []string
 }
 
 // JournalRequirements contains journal-specific submission requirements
 type JournalRequirements struct {
-	AbstractWordLimit      int
-	MainTextWordLimit      int
-	MaxFigures            int
-	MaxTables             int
-	MaxReferences         int
-	MaxSupplementary      int
-	
+	AbstractWordLimit int
+	MainTextWordLimit int
+	MaxFigures        int
+	MaxTables         int
+	MaxReferences     int
+	MaxSupplementary  int
+
 	// Ethical requirements
 	EthicsApprovalRequired bool
 	ConflictDeclaration    bool
 	DataAvailabilityStmt   bool
 	FundingAcknowledgment  bool
-	
+
 	// Technical requirements
-	BlindReview           bool
-	AnonymizedManuscript  bool
-	CoverLetterRequired   bool
-	KeywordsRequired      int
+	BlindReview          bool
+	AnonymizedManuscript bool
+	CoverLetterRequired  bool
+	KeywordsRequired     int
 }
 
 // ReviewWorkflowSettings contains settings for peer review workflow
 type ReviewWorkflowSettings struct {
-	EnableReviewWorkflow    bool
-	SuggestedReviewers     int
-	OpposedReviewers       int
-	PreferredReviewers     []PreferredReviewer
-	
+	EnableReviewWorkflow bool
+	SuggestedReviewers   int
+	OpposedReviewers     int
+	PreferredReviewers   []PreferredReviewer
+
 	// Review timeline
-	ReviewDeadline         time.Duration
-	ReminderSchedule       []time.Duration
-	
+	ReviewDeadline   time.Duration
+	ReminderSchedule []time.Duration
+
 	// Review quality
-	ReviewCriteria         []ReviewCriterion
-	QualityThreshold       float64
+	ReviewCriteria   []ReviewCriterion
+	QualityThreshold float64
 }
 
 // PreferredReviewer contains information about preferred reviewers
 type PreferredReviewer struct {
-	Name           string
-	Email          string
-	Institution    string
-	ExpertiseArea  []string
-	PreviousWork   []string
-	Availability   string
+	Name          string
+	Email         string
+	Institution   string
+	ExpertiseArea []string
+	PreviousWork  []string
+	Availability  string
 }
 
 // ReviewCriterion defines criteria for review quality assessment
@@ -155,48 +160,50 @@ type ReviewCriterion struct {
 	MinScore    float64
 }
 
-// ComplianceSettings contains compliance checking settings
+// ComplianceSettings holds compliance-check options. None of them is
+// enforced: ComplianceChecker.CheckCompliance ignores them, and no GDPR,
+// HIPAA, IRB, plagiarism, integrity or reproducibility check is implemented.
 type ComplianceSettings struct {
 	EnableComplianceCheck bool
 	RequiredCompliance    []ComplianceStandard
-	
+
 	// Institutional requirements
 	IRBApprovalRequired   bool
 	DataPrivacyCompliance bool
-	
+
 	// Regional compliance
-	GDPRCompliance        bool
-	HIPAACompliance       bool
-	
+	GDPRCompliance  bool
+	HIPAACompliance bool
+
 	// Scientific integrity
-	PlagiarismCheck       bool
-	DataIntegrityCheck    bool
-	ReproducibilityCheck  bool
+	PlagiarismCheck      bool
+	DataIntegrityCheck   bool
+	ReproducibilityCheck bool
 }
 
 // ComplianceStandard defines a compliance standard
 type ComplianceStandard struct {
-	Name         string
-	Description  string
-	Required     bool
-	CheckMethod  string
-	Validator    func(manuscript *Manuscript) (bool, []string, error)
+	Name        string
+	Description string
+	Required    bool
+	CheckMethod string
+	Validator   func(manuscript *Manuscript) (bool, []string, error)
 }
 
 // SubmissionTrackingSettings contains submission tracking settings
 type SubmissionTrackingSettings struct {
-	EnableTracking        bool
-	TrackingInterval      time.Duration
-	StatusNotifications   bool
-	
+	EnableTracking      bool
+	TrackingInterval    time.Duration
+	StatusNotifications bool
+
 	// Automated responses
-	AutoResponse          bool
-	ResponseTemplates     map[string]string
-	
+	AutoResponse      bool
+	ResponseTemplates map[string]string
+
 	// Escalation
-	EscalationEnabled     bool
-	EscalationThreshold   time.Duration
-	EscalationContacts    []string
+	EscalationEnabled   bool
+	EscalationThreshold time.Duration
+	EscalationContacts  []string
 }
 
 // NewPublicationWorkflowManager creates a new publication workflow manager
@@ -205,28 +212,28 @@ func NewPublicationWorkflowManager(config PublicationConfig) (*PublicationWorkfl
 	if err := config.Validate(); err != nil {
 		return nil, errors.WrapError(err, errors.ConfigurationError, "publication_workflow", "new_manager", "invalid configuration")
 	}
-	
+
 	// Create working directories
 	if err := createDirectories(config); err != nil {
 		return nil, errors.WrapError(err, errors.InitializationError, "publication_workflow", "new_manager", "failed to create directories")
 	}
-	
+
 	manager := &PublicationWorkflowManager{
-		config:            config,
-		manuscriptEngine:  NewManuscriptGenerationEngine(config.ManuscriptSettings),
-		reviewManager:     NewPeerReviewManager(config.ReviewSettings),
-		submissionTracker: NewSubmissionTracker(config.SubmissionSettings),
-		complianceChecker: NewComplianceChecker(config.ComplianceSettings),
-		activeWorkflows:   make(map[string]*PublicationWorkflow),
-		templateLibrary:   NewTemplateLibrary(config.TemplateDirectory),
+		config:             config,
+		manuscriptEngine:   NewManuscriptGenerationEngine(config.ManuscriptSettings),
+		reviewManager:      NewPeerReviewManager(config.ReviewSettings),
+		submissionTracker:  NewSubmissionTracker(config.SubmissionSettings),
+		complianceChecker:  NewComplianceChecker(config.ComplianceSettings),
+		activeWorkflows:    make(map[string]*PublicationWorkflow),
+		templateLibrary:    NewTemplateLibrary(config.TemplateDirectory),
 		publicationMetrics: NewPublicationMetrics(),
 	}
-	
+
 	// Initialize components
 	if err := manager.initialize(); err != nil {
 		return nil, errors.WrapError(err, errors.InitializationError, "publication_workflow", "new_manager", "failed to initialize components")
 	}
-	
+
 	return manager, nil
 }
 
@@ -235,15 +242,15 @@ func (config *PublicationConfig) Validate() error {
 	if config.WorkingDirectory == "" {
 		return fmt.Errorf("working directory is required")
 	}
-	
+
 	if config.OutputDirectory == "" {
 		return fmt.Errorf("output directory is required")
 	}
-	
+
 	if len(config.JournalAPIs) == 0 {
 		return fmt.Errorf("at least one journal API configuration is required")
 	}
-	
+
 	return nil
 }
 
@@ -284,25 +291,24 @@ func (pwm *PublicationWorkflowManager) initialize() error {
 	if err := pwm.templateLibrary.LoadTemplates(); err != nil {
 		return fmt.Errorf("failed to load templates: %w", err)
 	}
-	
+
 	// Initialize journal APIs
 	for journalName, apiConfig := range pwm.config.JournalAPIs {
 		if err := pwm.initializeJournalAPI(journalName, apiConfig); err != nil {
 			return fmt.Errorf("failed to initialize journal API for %s: %w", journalName, err)
 		}
 	}
-	
+
 	return nil
 }
 
 // initializeJournalAPI initializes a specific journal API
 func (pwm *PublicationWorkflowManager) initializeJournalAPI(journalName string, config JournalAPIConfig) error {
-	// Test API connectivity
+	// Connectivity is not tested; the endpoint is only recorded.
 	if config.APIEndpoint != "" {
-		// In production, would test actual API connectivity
-		fmt.Printf("Initialized API connection for journal: %s\n", journalName)
+		fmt.Printf("Journal API endpoint configured for %s (connectivity not tested)\n", journalName)
 	}
-	
+
 	return nil
 }
 
@@ -314,38 +320,38 @@ func (pwm *PublicationWorkflowManager) StartPublicationWorkflow(ctx context.Cont
 		return nil, fmt.Errorf("failed to generate workflow ID: %w", err)
 	}
 	workflowID := fmt.Sprintf("pub_%d_%s", time.Now().UnixNano(), hex.EncodeToString(randBytes[:]))
-	
+
 	// Create workflow instance
 	workflow := &PublicationWorkflow{
-		ID:                workflowID,
-		ValidationReport:  validationReport,
-		TargetJournals:    targetJournals,
-		StartTime:         time.Now(),
-		CurrentStage:      StageInitialization,
-		Status:            StatusActive,
-		Progress:          make(map[string]float64),
-		Artifacts:         make(map[string]*Artifact),
-		Submissions:       make(map[string]*JournalSubmission),
-		StageHistory:      make([]*StageTransition, 0),
+		ID:               workflowID,
+		ValidationReport: validationReport,
+		TargetJournals:   targetJournals,
+		StartTime:        time.Now(),
+		CurrentStage:     StageInitialization,
+		Status:           StatusActive,
+		Progress:         make(map[string]float64),
+		Artifacts:        make(map[string]*Artifact),
+		Submissions:      make(map[string]*JournalSubmission),
+		StageHistory:     make([]*StageTransition, 0),
 	}
-	
+
 	// Initialize workflow progress tracking
 	workflow.Progress["overall"] = 0.0
 	workflow.Progress["manuscript_generation"] = 0.0
 	workflow.Progress["compliance_check"] = 0.0
 	workflow.Progress["review_workflow"] = 0.0
 	workflow.Progress["submission"] = 0.0
-	
+
 	// Store active workflow
 	pwm.activeWorkflows[workflowID] = workflow
-	
+
 	// Start workflow execution
 	go pwm.executeWorkflow(ctx, workflow)
-	
+
 	// Update metrics
 	pwm.publicationMetrics.ActiveWorkflows++
 	pwm.publicationMetrics.TotalWorkflowsStarted++
-	
+
 	return workflow, nil
 }
 
@@ -358,7 +364,7 @@ func (pwm *PublicationWorkflowManager) executeWorkflow(ctx context.Context, work
 			pwm.publicationMetrics.FailedWorkflows++
 		}
 	}()
-	
+
 	stages := []WorkflowStage{
 		StageInitialization,
 		StageManuscriptGeneration,
@@ -368,7 +374,7 @@ func (pwm *PublicationWorkflowManager) executeWorkflow(ctx context.Context, work
 		StageJournalSubmission,
 		StageSubmissionTracking,
 	}
-	
+
 	for _, stage := range stages {
 		// Check for cancellation
 		select {
@@ -377,7 +383,7 @@ func (pwm *PublicationWorkflowManager) executeWorkflow(ctx context.Context, work
 			return
 		default:
 		}
-		
+
 		// Execute stage
 		if err := pwm.executeWorkflowStage(ctx, workflow, stage); err != nil {
 			workflow.Status = StatusFailed
@@ -386,20 +392,20 @@ func (pwm *PublicationWorkflowManager) executeWorkflow(ctx context.Context, work
 			pwm.publicationMetrics.FailedWorkflows++
 			return
 		}
-		
+
 		// Record successful stage completion
 		pwm.recordStageTransition(workflow, stage, "completed", "")
-		
+
 		// Update overall progress
 		stageProgress := float64(int(stage)+1) / float64(len(stages))
 		workflow.Progress["overall"] = stageProgress
 	}
-	
+
 	// Mark workflow as completed
 	workflow.Status = StatusCompleted
 	workflow.CompletionTime = time.Now()
 	pwm.publicationMetrics.CompletedWorkflows++
-	
+
 	// Generate final report
 	pwm.generateWorkflowReport(workflow)
 }
@@ -407,7 +413,7 @@ func (pwm *PublicationWorkflowManager) executeWorkflow(ctx context.Context, work
 // executeWorkflowStage executes a specific workflow stage
 func (pwm *PublicationWorkflowManager) executeWorkflowStage(ctx context.Context, workflow *PublicationWorkflow, stage WorkflowStage) error {
 	workflow.CurrentStage = stage
-	
+
 	switch stage {
 	case StageInitialization:
 		return pwm.executeInitializationStage(ctx, workflow)
@@ -434,26 +440,26 @@ func (pwm *PublicationWorkflowManager) executeInitializationStage(ctx context.Co
 	if workflow.ValidationReport == nil {
 		return fmt.Errorf("validation report is required")
 	}
-	
+
 	if len(workflow.TargetJournals) == 0 {
 		return fmt.Errorf("at least one target journal is required")
 	}
-	
+
 	// Validate target journals
 	for _, journal := range workflow.TargetJournals {
 		if _, exists := pwm.config.JournalAPIs[journal]; !exists {
 			return fmt.Errorf("journal API not configured: %s", journal)
 		}
 	}
-	
+
 	// Create workflow directories
 	workflowDir := filepath.Join(pwm.config.WorkingDirectory, workflow.ID)
 	if err := security.SecureMkdirAll(workflowDir, pwm.config.WorkingDirectory); err != nil {
 		return fmt.Errorf("failed to create workflow directory: %w", err)
 	}
-	
+
 	workflow.WorkingDirectory = workflowDir
-	
+
 	// Initialize workflow metadata
 	metadata := &WorkflowMetadata{
 		WorkflowID:       workflow.ID,
@@ -462,12 +468,12 @@ func (pwm *PublicationWorkflowManager) executeInitializationStage(ctx context.Co
 		TargetJournals:   workflow.TargetJournals,
 		Configuration:    pwm.config,
 	}
-	
+
 	metadataFile := filepath.Join(workflowDir, "metadata.json")
 	if err := pwm.saveMetadata(metadata, metadataFile); err != nil {
 		return fmt.Errorf("failed to save workflow metadata: %w", err)
 	}
-	
+
 	return nil
 }
 
@@ -478,37 +484,37 @@ func (pwm *PublicationWorkflowManager) executeManuscriptGenerationStage(ctx cont
 	if err != nil {
 		return fmt.Errorf("failed to select manuscript template: %w", err)
 	}
-	
+
 	// Generate manuscript
 	manuscript, err := pwm.manuscriptEngine.GenerateManuscript(ctx, workflow.ValidationReport, template)
 	if err != nil {
 		return fmt.Errorf("failed to generate manuscript: %w", err)
 	}
-	
+
 	// Save manuscript
 	manuscriptFile := filepath.Join(workflow.WorkingDirectory, "main_manuscript.tex")
 	if err := pwm.saveManuscript(manuscript, manuscriptFile); err != nil {
 		return fmt.Errorf("failed to save manuscript: %w", err)
 	}
-	
+
 	// Generate figures and tables
 	figures, err := pwm.manuscriptEngine.GenerateFigures(ctx, workflow.ValidationReport)
 	if err != nil {
 		return fmt.Errorf("failed to generate figures: %w", err)
 	}
-	
+
 	tables, err := pwm.manuscriptEngine.GenerateTables(ctx, workflow.ValidationReport)
 	if err != nil {
 		return fmt.Errorf("failed to generate tables: %w", err)
 	}
-	
+
 	// Save artifacts
 	workflow.Artifacts["manuscript"] = &Artifact{
 		Type:     "manuscript",
 		FilePath: manuscriptFile,
 		Metadata: map[string]interface{}{"word_count": manuscript.WordCount},
 	}
-	
+
 	for i, figure := range figures {
 		figureFile := filepath.Join(workflow.WorkingDirectory, fmt.Sprintf("figure_%d.png", i+1))
 		workflow.Artifacts[fmt.Sprintf("figure_%d", i+1)] = &Artifact{
@@ -517,7 +523,7 @@ func (pwm *PublicationWorkflowManager) executeManuscriptGenerationStage(ctx cont
 			Metadata: map[string]interface{}{"title": figure.Title},
 		}
 	}
-	
+
 	for i, table := range tables {
 		tableFile := filepath.Join(workflow.WorkingDirectory, fmt.Sprintf("table_%d.tex", i+1))
 		workflow.Artifacts[fmt.Sprintf("table_%d", i+1)] = &Artifact{
@@ -526,34 +532,34 @@ func (pwm *PublicationWorkflowManager) executeManuscriptGenerationStage(ctx cont
 			Metadata: map[string]interface{}{"title": table.Title},
 		}
 	}
-	
+
 	workflow.Progress["manuscript_generation"] = 1.0
-	
+
 	return nil
 }
 
 // executeComplianceCheckStage executes the compliance check stage
 func (pwm *PublicationWorkflowManager) executeComplianceCheckStage(ctx context.Context, workflow *PublicationWorkflow) error {
 	manuscript := &Manuscript{
-		Content:   workflow.Artifacts["manuscript"].FilePath,
-		Figures:   extractFigures(workflow.Artifacts),
-		Tables:    extractTables(workflow.Artifacts),
-		Metadata:  workflow.ValidationReport,
+		Content:  workflow.Artifacts["manuscript"].FilePath,
+		Figures:  extractFigures(workflow.Artifacts),
+		Tables:   extractTables(workflow.Artifacts),
+		Metadata: workflow.ValidationReport,
 	}
-	
+
 	// Run compliance checks
 	complianceResults, err := pwm.complianceChecker.CheckCompliance(ctx, manuscript)
 	if err != nil {
 		return fmt.Errorf("failed to run compliance checks: %w", err)
 	}
-	
+
 	// Check if critical compliance issues exist
 	for _, result := range complianceResults {
 		if result.Severity == "critical" && !result.Passed {
 			return fmt.Errorf("critical compliance issue: %s", result.Message)
 		}
 	}
-	
+
 	// Save compliance report
 	complianceFile := filepath.Join(workflow.WorkingDirectory, "compliance_report.json")
 	complianceData, err := json.MarshalIndent(complianceResults, "", "  ")
@@ -563,15 +569,15 @@ func (pwm *PublicationWorkflowManager) executeComplianceCheckStage(ctx context.C
 	if err := os.WriteFile(complianceFile, complianceData, 0600); err != nil {
 		return fmt.Errorf("failed to save compliance report: %w", err)
 	}
-	
+
 	workflow.Artifacts["compliance_report"] = &Artifact{
 		Type:     "compliance_report",
 		FilePath: complianceFile,
 		Metadata: map[string]interface{}{"total_checks": len(complianceResults)},
 	}
-	
+
 	workflow.Progress["compliance_check"] = 1.0
-	
+
 	return nil
 }
 
@@ -581,30 +587,30 @@ func (pwm *PublicationWorkflowManager) executePeerReviewStage(ctx context.Contex
 		workflow.Progress["review_workflow"] = 1.0
 		return nil
 	}
-	
+
 	manuscript := &Manuscript{
 		Content:  workflow.Artifacts["manuscript"].FilePath,
 		Figures:  extractFigures(workflow.Artifacts),
 		Tables:   extractTables(workflow.Artifacts),
 		Metadata: workflow.ValidationReport,
 	}
-	
+
 	// Start peer review process
 	reviewProcess, err := pwm.reviewManager.StartReviewProcess(ctx, manuscript, workflow.TargetJournals)
 	if err != nil {
 		return fmt.Errorf("failed to start review process: %w", err)
 	}
-	
+
 	// Wait for review completion or timeout
 	reviewTimeout := pwm.config.ReviewSettings.ReviewDeadline
 	reviewCtx, cancel := context.WithTimeout(ctx, reviewTimeout)
 	defer cancel()
-	
+
 	reviewResults, err := pwm.reviewManager.WaitForReviews(reviewCtx, reviewProcess.ID)
 	if err != nil {
 		return fmt.Errorf("review process failed: %w", err)
 	}
-	
+
 	// Save review results
 	reviewFile := filepath.Join(workflow.WorkingDirectory, "review_results.json")
 	reviewData, err := json.MarshalIndent(reviewResults, "", "  ")
@@ -614,15 +620,15 @@ func (pwm *PublicationWorkflowManager) executePeerReviewStage(ctx context.Contex
 	if err := os.WriteFile(reviewFile, reviewData, 0600); err != nil {
 		return fmt.Errorf("failed to save review results: %w", err)
 	}
-	
+
 	workflow.Artifacts["review_results"] = &Artifact{
 		Type:     "review_results",
 		FilePath: reviewFile,
 		Metadata: map[string]interface{}{"reviewer_count": len(reviewResults.Reviews)},
 	}
-	
+
 	workflow.Progress["review_workflow"] = 1.0
-	
+
 	return nil
 }
 
@@ -631,19 +637,19 @@ func (pwm *PublicationWorkflowManager) executeSubmissionPreparationStage(ctx con
 	// Prepare submissions for each target journal
 	for _, journalName := range workflow.TargetJournals {
 		journalConfig := pwm.config.JournalAPIs[journalName]
-		
+
 		// Format manuscript for journal
 		formattedManuscript, err := pwm.formatManuscriptForJournal(workflow, journalConfig)
 		if err != nil {
 			return fmt.Errorf("failed to format manuscript for %s: %w", journalName, err)
 		}
-		
+
 		// Create submission package
 		submissionPackage, err := pwm.createSubmissionPackage(workflow, journalConfig, formattedManuscript)
 		if err != nil {
 			return fmt.Errorf("failed to create submission package for %s: %w", journalName, err)
 		}
-		
+
 		// Store submission package
 		workflow.Artifacts[fmt.Sprintf("submission_%s", journalName)] = &Artifact{
 			Type:     "submission_package",
@@ -655,9 +661,9 @@ func (pwm *PublicationWorkflowManager) executeSubmissionPreparationStage(ctx con
 			},
 		}
 	}
-	
+
 	workflow.Progress["submission_preparation"] = 1.0
-	
+
 	return nil
 }
 
@@ -667,31 +673,30 @@ func (pwm *PublicationWorkflowManager) executeJournalSubmissionStage(ctx context
 	for _, journalName := range workflow.TargetJournals {
 		journalConfig := pwm.config.JournalAPIs[journalName]
 		submissionArtifact := workflow.Artifacts[fmt.Sprintf("submission_%s", journalName)]
-		
+
 		// Submit to journal
 		submission, err := pwm.submitToJournal(ctx, journalConfig, submissionArtifact)
 		if err != nil {
 			return fmt.Errorf("failed to submit to %s: %w", journalName, err)
 		}
-		
+
 		// Store submission information
 		workflow.Submissions[journalName] = submission
-		
+
 		// Start tracking submission
 		go pwm.submissionTracker.TrackSubmission(ctx, submission)
 	}
-	
+
 	workflow.Progress["submission"] = 1.0
-	
+
 	return nil
 }
 
 // executeSubmissionTrackingStage executes the submission tracking stage
 func (pwm *PublicationWorkflowManager) executeSubmissionTrackingStage(ctx context.Context, workflow *PublicationWorkflow) error {
-	// This stage runs continuously until submissions are resolved
-	// For now, just mark as complete
+	// Stub: no submission is tracked; the stage is marked complete.
 	workflow.Progress["submission_tracking"] = 1.0
-	
+
 	return nil
 }
 
@@ -704,7 +709,7 @@ func (pwm *PublicationWorkflowManager) recordStageTransition(workflow *Publicati
 		Message:   message,
 		Timestamp: time.Now(),
 	}
-	
+
 	workflow.StageHistory = append(workflow.StageHistory, transition)
 }
 
@@ -713,7 +718,7 @@ func (pwm *PublicationWorkflowManager) saveMetadata(metadata *WorkflowMetadata, 
 	if err != nil {
 		return err
 	}
-	
+
 	return os.WriteFile(filePath, data, 0600)
 }
 
@@ -722,7 +727,7 @@ func (pwm *PublicationWorkflowManager) saveManuscript(manuscript *GeneratedManus
 }
 
 func (pwm *PublicationWorkflowManager) formatManuscriptForJournal(workflow *PublicationWorkflow, journalConfig JournalAPIConfig) (*FormattedManuscript, error) {
-	// Format manuscript according to journal requirements
+	// Stub: journal requirements are not applied; the content is a placeholder.
 	return &FormattedManuscript{
 		Content:   "Formatted manuscript content",
 		Format:    journalConfig.PreferredFormat,
@@ -735,7 +740,7 @@ func (pwm *PublicationWorkflowManager) createSubmissionPackage(workflow *Publica
 	if err := security.SecureMkdirAll(packageDir, workflow.WorkingDirectory); err != nil {
 		return nil, err
 	}
-	
+
 	return &SubmissionPackage{
 		PackagePath: packageDir,
 		FileCount:   5,
@@ -743,28 +748,30 @@ func (pwm *PublicationWorkflowManager) createSubmissionPackage(workflow *Publica
 	}, nil
 }
 
+// submitToJournal is a stub: nothing is sent. It returns a record with status
+// "submitted" and a made-up tracking URL.
 func (pwm *PublicationWorkflowManager) submitToJournal(ctx context.Context, journalConfig JournalAPIConfig, submissionArtifact *Artifact) (*JournalSubmission, error) {
 	submission := &JournalSubmission{
-		SubmissionID:  fmt.Sprintf("sub_%s_%d", journalConfig.Name, time.Now().Unix()),
-		Journal:       journalConfig.Name,
-		Status:        "submitted",
-		SubmittedAt:   time.Now(),
-		TrackingURL:   fmt.Sprintf("https://%s.com/track", strings.ToLower(journalConfig.Name)),
+		SubmissionID: fmt.Sprintf("sub_%s_%d", journalConfig.Name, time.Now().Unix()),
+		Journal:      journalConfig.Name,
+		Status:       "submitted",
+		SubmittedAt:  time.Now(),
+		TrackingURL:  fmt.Sprintf("https://%s.com/track", strings.ToLower(journalConfig.Name)),
 	}
-	
+
 	return submission, nil
 }
 
 func (pwm *PublicationWorkflowManager) generateWorkflowReport(workflow *PublicationWorkflow) {
 	report := &WorkflowReport{
-		WorkflowID:     workflow.ID,
-		Duration:       workflow.CompletionTime.Sub(workflow.StartTime),
-		Status:         workflow.Status,
-		Artifacts:      len(workflow.Artifacts),
-		Submissions:    len(workflow.Submissions),
-		GeneratedAt:    time.Now(),
+		WorkflowID:  workflow.ID,
+		Duration:    workflow.CompletionTime.Sub(workflow.StartTime),
+		Status:      workflow.Status,
+		Artifacts:   len(workflow.Artifacts),
+		Submissions: len(workflow.Submissions),
+		GeneratedAt: time.Now(),
 	}
-	
+
 	reportFile := filepath.Join(workflow.WorkingDirectory, "workflow_report.json")
 	reportData, err := json.MarshalIndent(report, "", "  ")
 	if err != nil {
@@ -804,24 +811,24 @@ func (pwm *PublicationWorkflowManager) GetWorkflowStatus(workflowID string) (*Wo
 	}
 
 	status := &WorkflowStatusInfo{
-		WorkflowID:    workflowID,
-		CurrentStage:  workflow.CurrentStage,
-		Status:        workflow.Status,
-		Progress:      workflow.Progress,
-		StartTime:     workflow.StartTime,
-		LastUpdate:    time.Now(),
-		Artifacts:     len(workflow.Artifacts),
-		Submissions:   len(workflow.Submissions),
+		WorkflowID:   workflowID,
+		CurrentStage: workflow.CurrentStage,
+		Status:       workflow.Status,
+		Progress:     workflow.Progress,
+		StartTime:    workflow.StartTime,
+		LastUpdate:   time.Now(),
+		Artifacts:    len(workflow.Artifacts),
+		Submissions:  len(workflow.Submissions),
 	}
-	
+
 	if workflow.Status == StatusCompleted {
 		status.CompletionTime = &workflow.CompletionTime
 	}
-	
+
 	if workflow.Error != "" {
 		status.Error = &workflow.Error
 	}
-	
+
 	return status, nil
 }
 
@@ -833,19 +840,19 @@ func (pwm *PublicationWorkflowManager) GetPublicationMetrics() *PublicationMetri
 // Type definitions
 
 type PublicationWorkflow struct {
-	ID                string
-	ValidationReport  *OverallValidationReport
-	TargetJournals    []string
-	StartTime         time.Time
-	CompletionTime    time.Time
-	CurrentStage      WorkflowStage
-	Status            WorkflowStatus
-	Progress          map[string]float64
-	WorkingDirectory  string
-	Artifacts         map[string]*Artifact
-	Submissions       map[string]*JournalSubmission
-	StageHistory      []*StageTransition
-	Error             string
+	ID               string
+	ValidationReport *OverallValidationReport
+	TargetJournals   []string
+	StartTime        time.Time
+	CompletionTime   time.Time
+	CurrentStage     WorkflowStage
+	Status           WorkflowStatus
+	Progress         map[string]float64
+	WorkingDirectory string
+	Artifacts        map[string]*Artifact
+	Submissions      map[string]*JournalSubmission
+	StageHistory     []*StageTransition
+	Error            string
 }
 
 type WorkflowStage int
@@ -864,7 +871,7 @@ type WorkflowStatus int
 
 const (
 	StatusActive WorkflowStatus = iota
-	StatusCompleted 
+	StatusCompleted
 	StatusFailed
 	StatusCancelled
 )
@@ -912,15 +919,15 @@ type Artifact struct {
 }
 
 type JournalSubmission struct {
-	SubmissionID    string
-	Journal         string
-	Status          string
-	SubmittedAt     time.Time
-	LastUpdate      time.Time
-	TrackingURL     string
-	ReviewDeadline  *time.Time
-	Decision        string
-	ReviewComments  []string
+	SubmissionID   string
+	Journal        string
+	Status         string
+	SubmittedAt    time.Time
+	LastUpdate     time.Time
+	TrackingURL    string
+	ReviewDeadline *time.Time
+	Decision       string
+	ReviewComments []string
 }
 
 type StageTransition struct {
@@ -975,17 +982,17 @@ type WorkflowStatusInfo struct {
 
 type PublicationMetrics struct {
 	TotalWorkflowsStarted int
-	ActiveWorkflows      int
-	CompletedWorkflows   int
-	FailedWorkflows      int
-	
+	ActiveWorkflows       int
+	CompletedWorkflows    int
+	FailedWorkflows       int
+
 	// Performance metrics
 	AverageWorkflowDuration time.Duration
 	SuccessRate             float64
-	
+
 	// Journal metrics
-	SubmissionsByJournal    map[string]int
-	AcceptancesByJournal    map[string]int
+	SubmissionsByJournal map[string]int
+	AcceptancesByJournal map[string]int
 }
 
 func NewPublicationMetrics() *PublicationMetrics {
@@ -1002,7 +1009,8 @@ type Manuscript struct {
 	Metadata interface{}
 }
 
-// Component implementations (simplified for space)
+// Component implementations. All are stubs that return fixed placeholder
+// values without doing the work their names describe.
 
 type ManuscriptGenerationEngine struct {
 	settings ManuscriptGenerationSettings
@@ -1089,7 +1097,7 @@ func NewSubmissionTracker(settings SubmissionTrackingSettings) *SubmissionTracke
 }
 
 func (st *SubmissionTracker) TrackSubmission(ctx context.Context, submission *JournalSubmission) {
-	// Placeholder implementation
+	// Stub: nothing is tracked.
 }
 
 type ComplianceChecker struct {
@@ -1102,7 +1110,7 @@ func NewComplianceChecker(settings ComplianceSettings) *ComplianceChecker {
 
 func (cc *ComplianceChecker) CheckCompliance(ctx context.Context, manuscript *Manuscript) ([]*ComplianceResult, error) {
 	return []*ComplianceResult{
-		{Standard: "ethics_approval", Passed: true, Severity: "medium", Message: "Ethics approval documented"},
+		{Standard: "ethics_approval", Passed: true, Severity: "medium", Message: "Not checked: compliance checking is not implemented"},
 	}, nil
 }
 
@@ -1126,7 +1134,7 @@ func NewTemplateLibrary(templateDir string) *TemplateLibrary {
 }
 
 func (tl *TemplateLibrary) LoadTemplates() error {
-	// Placeholder implementation
+	// Stub: no templates are loaded; SelectTemplate returns a fixed one.
 	return nil
 }
 

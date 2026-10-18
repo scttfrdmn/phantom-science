@@ -7,14 +7,14 @@ import (
 	"github.com/scttfrdmn/phantom-science/internal/errors"
 )
 
-// PackedFrequencyExtractor extracts k-mer frequencies using memory-efficient packed arrays
+// PackedFrequencyExtractor counts k-mer frequencies into a PackedFrequencyTable.
 type PackedFrequencyExtractor struct {
-	K                  int
-	IgnoreN            bool
-	CaseSensitive      bool
-	CircularSequence   bool
-	MinFrequency       int
-	UsePackedStorage   bool // Enable packed array storage
+	K                int
+	IgnoreN          bool
+	CaseSensitive    bool
+	CircularSequence bool
+	MinFrequency     int
+	UsePackedStorage bool // Enable packed array storage
 }
 
 // NewPackedFrequencyExtractor creates a new k-mer frequency extractor using packed arrays
@@ -330,14 +330,14 @@ func (pfe *PackedFrequencyExtractor) ExtractFromSequenceBatch(sequences [][]byte
 
 // PackedFrequencyExtractorConfig provides configuration options for packed extraction
 type PackedFrequencyExtractorConfig struct {
-	K                       int
-	IgnoreN                 bool
-	CaseSensitive          bool
-	CircularSequence       bool
-	MinFrequency           int
-	UsePackedStorage       bool
-	StreamingBufferSize    int
-	BatchSize              int
+	K                        int
+	IgnoreN                  bool
+	CaseSensitive            bool
+	CircularSequence         bool
+	MinFrequency             int
+	UsePackedStorage         bool
+	StreamingBufferSize      int
+	BatchSize                int
 	EnableMemoryOptimization bool
 }
 
@@ -383,39 +383,39 @@ func (pfe *PackedFrequencyExtractor) GetMemoryEstimate(numSequences, avgSequence
 	mapMemory := int64(estimatedUniqueKmers * 48) // ~48 bytes per map entry
 
 	return MemoryEstimate{
-		MaxKmers:              maxKmers,
-		EstimatedUniqueKmers:  estimatedUniqueKmers,
-		PackedMemoryUsage:     packedMemory,
-		MapMemoryUsage:        mapMemory,
-		MemorySavings:         mapMemory - packedMemory,
-		CompressionRatio:      float64(mapMemory) / float64(packedMemory),
+		MaxKmers:             maxKmers,
+		EstimatedUniqueKmers: estimatedUniqueKmers,
+		PackedMemoryUsage:    packedMemory,
+		MapMemoryUsage:       mapMemory,
+		MemorySavings:        mapMemory - packedMemory,
+		CompressionRatio:     float64(mapMemory) / float64(packedMemory),
 	}
 }
 
 // MemoryEstimate contains memory usage estimates for packed k-mer extraction
 type MemoryEstimate struct {
-	MaxKmers              int
-	EstimatedUniqueKmers  int
-	PackedMemoryUsage     int64
-	MapMemoryUsage        int64
-	MemorySavings         int64
-	CompressionRatio      float64
+	MaxKmers             int
+	EstimatedUniqueKmers int
+	PackedMemoryUsage    int64
+	MapMemoryUsage       int64
+	MemorySavings        int64
+	CompressionRatio     float64
 }
 
 // GetOptimalBatchSize calculates optimal batch size based on available memory
 func (pfe *PackedFrequencyExtractor) GetOptimalBatchSize(availableMemoryMB int, avgSequenceLength int) int {
 	estimate := pfe.GetMemoryEstimate(1, avgSequenceLength)
 	memoryPerSequence := estimate.PackedMemoryUsage
-	
+
 	availableBytes := int64(availableMemoryMB) * 1024 * 1024
 	batchSize := int(availableBytes / memoryPerSequence)
-	
+
 	// Ensure reasonable bounds
 	if batchSize < 100 {
 		batchSize = 100
 	} else if batchSize > 10000 {
 		batchSize = 10000
 	}
-	
+
 	return batchSize
 }

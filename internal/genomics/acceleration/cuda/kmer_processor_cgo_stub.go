@@ -122,7 +122,8 @@ func EstimateSpeedup(computeCapability, smCount int) float64 {
 	return 0.0
 }
 
-// GenerateTestSequences generates test DNA sequences for benchmarking.
+// GenerateTestSequences returns count sequences of the given length cycling
+// through ATGC (benchmark input only).
 func GenerateTestSequences(count, length int) [][]byte {
 	sequences := make([][]byte, count)
 	bases := []byte{'A', 'T', 'G', 'C'}

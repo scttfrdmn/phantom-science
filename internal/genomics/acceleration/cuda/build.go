@@ -1,6 +1,9 @@
+// Package cuda counts k-mers on NVIDIA GPUs through a CUDA kernel
+// (kmer_kernels.cu) called via a C++ bridge. The GPU implementation builds
+// only with CGO, the cuda build tag and the CUDA Toolkit; other builds
+// compile to stubs whose constructors return an error. This file holds
+// helpers that check the CUDA environment and compile the kernels with nvcc.
 package cuda
-
-// This file provides build instructions and compilation helpers for CUDA GPU acceleration
 
 import (
 	"fmt"
@@ -11,7 +14,7 @@ import (
 	"strings"
 )
 
-// BuildCudaKernels compiles CUDA kernels to optimized PTX or CUBIN
+// BuildCudaKernels compiles kmer_kernels.cu in the working directory with nvcc.
 func BuildCudaKernels() error {
 	// Get the current package directory
 	currentDir, err := os.Getwd()
@@ -31,18 +34,18 @@ func BuildCudaKernels() error {
 	fmt.Printf("Compiling CUDA kernels: %s\n", cudaSourcePath)
 
 	args := []string{
-		"--ptx",              // Generate PTX intermediate code
-		"-O3",                // Optimize for performance
-		"-use_fast_math",     // Use fast math operations
-		"-arch=sm_50",        // Target compute capability 5.0+ (Maxwell and later)
-		"-gencode", "arch=compute_50,code=sm_50",   // Maxwell
-		"-gencode", "arch=compute_60,code=sm_60",   // Pascal
-		"-gencode", "arch=compute_70,code=sm_70",   // Volta
-		"-gencode", "arch=compute_75,code=sm_75",   // Turing
-		"-gencode", "arch=compute_80,code=sm_80",   // Ampere
-		"-gencode", "arch=compute_86,code=sm_86",   // Ampere (RTX 30xx)
-		"-gencode", "arch=compute_89,code=sm_89",   // Ada Lovelace
-		"-gencode", "arch=compute_90,code=sm_90",   // Hopper
+		"--ptx",                                  // Generate PTX intermediate code
+		"-O3",                                    // Optimize for performance
+		"-use_fast_math",                         // Use fast math operations
+		"-arch=sm_50",                            // Target compute capability 5.0+ (Maxwell and later)
+		"-gencode", "arch=compute_50,code=sm_50", // Maxwell
+		"-gencode", "arch=compute_60,code=sm_60", // Pascal
+		"-gencode", "arch=compute_70,code=sm_70", // Volta
+		"-gencode", "arch=compute_75,code=sm_75", // Turing
+		"-gencode", "arch=compute_80,code=sm_80", // Ampere
+		"-gencode", "arch=compute_86,code=sm_86", // Ampere (RTX 30xx)
+		"-gencode", "arch=compute_89,code=sm_89", // Ada Lovelace
+		"-gencode", "arch=compute_90,code=sm_90", // Hopper
 		"-o", ptxOutputPath,
 		cudaSourcePath,
 	}

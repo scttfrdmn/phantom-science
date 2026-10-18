@@ -21,13 +21,13 @@ import "C"
 
 // CudaKmerProcessor provides GPU-accelerated k-mer processing using NVIDIA CUDA
 type CudaKmerProcessor struct {
-	device                *C.CUDADevice
-	maxThreadsPerBlock    int
-	globalMemorySize      int64
-	deviceName            string
-	computeCapability     int
-	multiprocessorCount   int
-	isInitialized         bool
+	device              *C.CUDADevice
+	maxThreadsPerBlock  int
+	globalMemorySize    int64
+	deviceName          string
+	computeCapability   int
+	multiprocessorCount int
+	isInitialized       bool
 }
 
 // NewCudaKmerProcessor creates a new CUDA-accelerated k-mer processor
@@ -44,13 +44,13 @@ func NewCudaKmerProcessor() (*CudaKmerProcessor, error) {
 	}
 
 	processor := &CudaKmerProcessor{
-		device:                device,
-		maxThreadsPerBlock:    int(C.getCudaMaxThreadsPerBlock(device)),
-		globalMemorySize:      int64(C.getCudaGlobalMemorySize(device)),
-		deviceName:            C.GoString(C.getCudaDeviceName(device)),
-		computeCapability:     int(C.getCudaComputeCapability(device)),
-		multiprocessorCount:   int(C.getCudaMultiprocessorCount(device)),
-		isInitialized:         true,
+		device:              device,
+		maxThreadsPerBlock:  int(C.getCudaMaxThreadsPerBlock(device)),
+		globalMemorySize:    int64(C.getCudaGlobalMemorySize(device)),
+		deviceName:          C.GoString(C.getCudaDeviceName(device)),
+		computeCapability:   int(C.getCudaComputeCapability(device)),
+		multiprocessorCount: int(C.getCudaMultiprocessorCount(device)),
+		isInitialized:       true,
 	}
 
 	// Set finalizer to clean up CUDA resources
@@ -318,7 +318,7 @@ func (cp *CudaKmerProcessor) calculateOptimalBatchSize(sequences [][]byte, k int
 	avgLength := totalLength / len(sequences)
 
 	// Calculate memory per sequence (sequence + results)
-	memoryPerSequence := avgLength + (1 << (2 * k)) * 4 // 4 bytes per int result
+	memoryPerSequence := avgLength + (1<<(2*k))*4 // 4 bytes per int result
 
 	// Use 70% of available GPU memory for batching (more conservative than Metal)
 	availableMemory := int(float64(cp.globalMemorySize) * 0.7)
@@ -358,7 +358,7 @@ func (cp *CudaKmerProcessor) GetPerformanceStats() PerformanceStats {
 		MultiprocessorCount:  cp.multiprocessorCount,
 		ComputeCapability:    cp.computeCapability,
 		EstimatedSpeedup:     EstimateSpeedup(cp.computeCapability, cp.multiprocessorCount),
-		OptimalKRange:        [2]int{6, 14}, // Optimal k-mer sizes for CUDA processing
+		OptimalKRange:        [2]int{6, 14}, // Fixed hint, not measured
 		RecommendedBatchSize: 10000,
 	}
 }
@@ -375,9 +375,11 @@ type PerformanceStats struct {
 	RecommendedBatchSize int
 }
 
-// EstimateSpeedup estimates the performance improvement over CPU processing
+// EstimateSpeedup returns a fixed, unmeasured guess at the speedup over CPU
+// processing from the compute capability and SM count. The values are not
+// backed by a benchmark; use BenchmarkGPUPerformance for a measured speedup.
 func EstimateSpeedup(computeCapability, smCount int) float64 {
-	// Conservative estimate based on compute capability and SM count
+	// Hard-coded tiers by architecture and SM count; not measured.
 	baseSpeedup := 1.0
 
 	// Compute capability factor
@@ -416,7 +418,8 @@ func EstimateSpeedup(computeCapability, smCount int) float64 {
 	return baseSpeedup * smFactor
 }
 
-// BenchmarkGPUPerformance runs a performance benchmark of GPU k-mer processing
+// BenchmarkGPUPerformance times GPU and CPU k-mer counting on the same
+// sequences and reports the measured speedup and whether the counts match.
 func (cp *CudaKmerProcessor) BenchmarkGPUPerformance(testSequences [][]byte, k int) (*BenchmarkResults, error) {
 	if !cp.isInitialized {
 		return nil, fmt.Errorf("CUDA device not initialized")
@@ -450,16 +453,16 @@ func (cp *CudaKmerProcessor) BenchmarkGPUPerformance(testSequences [][]byte, k i
 	speedup := float64(cpuDuration.Nanoseconds()) / float64(gpuDuration.Nanoseconds())
 
 	return &BenchmarkResults{
-		DeviceName:     cp.deviceName,
-		TestSequences:  len(testSequences),
-		KmerSize:       k,
-		GPUDuration:    gpuDuration,
-		CPUDuration:    cpuDuration,
-		Speedup:        speedup,
-		GPUKmers:       gpuResult.TotalCount,
-		CPUKmers:       cpuResult.TotalCount,
-		ResultsMatch:   compareTables(gpuResult, cpuResult),
-		Throughput:     calculateThroughput(testSequences, gpuDuration),
+		DeviceName:    cp.deviceName,
+		TestSequences: len(testSequences),
+		KmerSize:      k,
+		GPUDuration:   gpuDuration,
+		CPUDuration:   cpuDuration,
+		Speedup:       speedup,
+		GPUKmers:      gpuResult.TotalCount,
+		CPUKmers:      cpuResult.TotalCount,
+		ResultsMatch:  compareTables(gpuResult, cpuResult),
+		Throughput:    calculateThroughput(testSequences, gpuDuration),
 	}, nil
 }
 
@@ -477,7 +480,8 @@ type BenchmarkResults struct {
 	Throughput    float64 // MB/s
 }
 
-// Helper functions for benchmarking
+// GenerateTestSequences returns count sequences of the given length cycling
+// through ATGC. They are benchmark input only, not realistic DNA.
 func GenerateTestSequences(count, length int) [][]byte {
 	sequences := make([][]byte, count)
 	bases := []byte{'A', 'T', 'G', 'C'}

@@ -1,3 +1,12 @@
+// Package vcf streams VCF files (plain or gzip) through a worker pool and
+// computes a k-mer diversity score for each variant's reference context.
+//
+// StreamProcessor parses records and, when a reference FASTA is configured,
+// attaches the surrounding sequence. Structured header lines (INFO, FORMAT,
+// FILTER) are only partly parsed (see parseStructuredHeader).
+// AuthenticityProcessor's "authenticity score" is a heuristic based on
+// k-mer diversity; it is not a classifier and does not compare data against
+// real genomes.
 package vcf
 
 import (
@@ -17,15 +26,15 @@ import (
 
 // StreamProcessor provides memory-efficient streaming processing of VCF files
 type StreamProcessor struct {
-	bufferSize       int
-	maxCacheSize     int64
+	bufferSize        int
+	maxCacheSize      int64
 	enableCompression bool
-	packedArrays     bool
-	gpuAcceleration  bool
-	numWorkers       int
+	packedArrays      bool
+	gpuAcceleration   bool
+	numWorkers        int
 
 	// Reference genome for genomic context loading (nil if not configured)
-	refManager       *reference.ReferenceManager
+	refManager *reference.ReferenceManager
 
 	// Internal state
 	variantCache     map[string]*VariantRegion
@@ -35,8 +44,8 @@ type StreamProcessor struct {
 	// Statistics
 	processedVariants int64
 	processedBytes    int64
-	cacheHits        int64
-	cacheMisses      int64
+	cacheHits         int64
+	cacheMisses       int64
 }
 
 // VariantRegion contains cached variant information for a genomic region
@@ -53,31 +62,31 @@ type VariantRegion struct {
 
 // Variant represents a single variant from a VCF file
 type Variant struct {
-	Chromosome  string
-	Position    int64
-	ID          string
-	Reference   string
-	Alternate   []string
-	Quality     float64
-	Filter      string
-	Info        map[string]string
-	Format      []string
-	Samples     []map[string]string
-	Context     []byte  // Surrounding genomic context
+	Chromosome string
+	Position   int64
+	ID         string
+	Reference  string
+	Alternate  []string
+	Quality    float64
+	Filter     string
+	Info       map[string]string
+	Format     []string
+	Samples    []map[string]string
+	Context    []byte // Surrounding genomic context
 }
 
 // StreamConfig provides configuration for VCF streaming
 type StreamConfig struct {
-	BufferSize          int
-	MaxCacheSize        int64   // Maximum cache size in bytes
-	EnableCompression   bool    // Enable internal compression
-	PackedArrays        bool    // Use packed arrays for k-mer storage
-	GPUAcceleration     bool    // Enable GPU processing
-	NumWorkers          int     // Number of worker goroutines
-	ContextWindowSize   int     // Size of genomic context window
-	KmerSize            int     // K-mer size for context analysis
-	CacheRegionSize     int64   // Size of genomic regions to cache
-	ReferencePath       string  // Path to reference FASTA for genomic context loading
+	BufferSize        int
+	MaxCacheSize      int64  // Maximum cache size in bytes
+	EnableCompression bool   // Stored but not used yet
+	PackedArrays      bool   // Stored but not used yet
+	GPUAcceleration   bool   // Stored but not used yet (GPU is AuthenticityConfig.UseGPU)
+	NumWorkers        int    // Number of worker goroutines
+	ContextWindowSize int    // Size of genomic context window
+	KmerSize          int    // K-mer size for context analysis
+	CacheRegionSize   int64  // Size of genomic regions to cache (defaulted but not used yet)
+	ReferencePath     string // Path to reference FASTA for genomic context loading
 }
 
 // NewStreamProcessor creates a new VCF stream processor
@@ -130,7 +139,7 @@ func NewStreamProcessor(config StreamConfig) (*StreamProcessor, error) {
 func (sp *StreamProcessor) ProcessVCFStream(reader io.Reader, processor VariantProcessor) error {
 	// Create buffered reader
 	bufReader := bufio.NewReaderSize(reader, sp.bufferSize)
-	
+
 	// Check if input is gzipped
 	var finalReader io.Reader = bufReader
 	if sp.isGzipped(bufReader) {
@@ -213,7 +222,7 @@ func (sp *StreamProcessor) parseVCFHeader(reader io.Reader) (*VCFHeader, error) 
 // streamVariants processes variants in streaming fashion
 func (sp *StreamProcessor) streamVariants(reader io.Reader, header *VCFHeader, processor VariantProcessor) error {
 	scanner := bufio.NewScanner(reader)
-	
+
 	// Create worker pool for parallel processing
 	variantChan := make(chan *Variant, sp.numWorkers*2)
 	errorChan := make(chan error, sp.numWorkers)
@@ -228,7 +237,7 @@ func (sp *StreamProcessor) streamVariants(reader io.Reader, header *VCFHeader, p
 	// Parse and distribute variants
 	go func() {
 		defer close(variantChan)
-		
+
 		for scanner.Scan() {
 			line := scanner.Text()
 			sp.processedBytes += int64(len(line) + 1)
@@ -399,7 +408,7 @@ func (sp *StreamProcessor) parseVariantLine(line string, header *VCFHeader) (*Va
 		for i, sampleData := range fields[9:] {
 			sampleValues := strings.Split(sampleData, ":")
 			sampleMap := make(map[string]string)
-			
+
 			for j, value := range sampleValues {
 				if j < len(formatFields) {
 					sampleMap[formatFields[j]] = value
@@ -537,7 +546,7 @@ func (sp *StreamProcessor) evictOldestRegions() {
 		if sp.currentCacheSize <= sp.maxCacheSize/2 { // Evict to 50% of limit
 			break
 		}
-		
+
 		delete(sp.variantCache, entry.key)
 		sp.currentCacheSize -= entry.region.Size
 	}
@@ -560,12 +569,12 @@ func (sp *StreamProcessor) GetStatistics() ProcessingStatistics {
 	return ProcessingStatistics{
 		ProcessedVariants: sp.processedVariants,
 		ProcessedBytes:    sp.processedBytes,
-		CacheHits:        sp.cacheHits,
-		CacheMisses:      sp.cacheMisses,
-		CacheHitRatio:    cacheHitRatio,
-		CachedRegions:    int64(len(sp.variantCache)),
-		CacheSize:        sp.currentCacheSize,
-		CacheUtilization: cacheUtil,
+		CacheHits:         sp.cacheHits,
+		CacheMisses:       sp.cacheMisses,
+		CacheHitRatio:     cacheHitRatio,
+		CachedRegions:     int64(len(sp.variantCache)),
+		CacheSize:         sp.currentCacheSize,
+		CacheUtilization:  cacheUtil,
 	}
 }
 
@@ -573,12 +582,12 @@ func (sp *StreamProcessor) GetStatistics() ProcessingStatistics {
 type ProcessingStatistics struct {
 	ProcessedVariants int64
 	ProcessedBytes    int64
-	CacheHits        int64
-	CacheMisses      int64
-	CacheHitRatio    float64
-	CachedRegions    int64
-	CacheSize        int64
-	CacheUtilization float64
+	CacheHits         int64
+	CacheMisses       int64
+	CacheHitRatio     float64
+	CachedRegions     int64
+	CacheSize         int64
+	CacheUtilization  float64
 }
 
 // VariantProcessor interface for processing individual variants
@@ -646,16 +655,16 @@ func (sp *StreamProcessor) parseFilterHeader(value string) (*HeaderFilter, error
 }
 
 func (sp *StreamProcessor) parseStructuredHeader(value string, target interface{}) (interface{}, error) {
-	// Simple structured header parser (would be more robust in production)
+	// Stub: checks the <...> wrapper only. The fields are not parsed: ID is
+	// always "placeholder", Type "String", and Description holds the raw
+	// contents between the brackets.
 	if !strings.HasPrefix(value, "<") || !strings.HasSuffix(value, ">") {
 		return nil, fmt.Errorf("invalid structured header format: %s", value)
 	}
 
 	// Remove angle brackets
 	content := value[1 : len(value)-1]
-	
-	// For now, return a basic parsed structure
-	// In production, this would use proper VCF header parsing
+
 	switch target.(type) {
 	case *HeaderInfo:
 		return &HeaderInfo{ID: "placeholder", Type: "String", Description: content}, nil

@@ -1,8 +1,9 @@
 #include <metal_stdlib>
 using namespace metal;
 
-// Metal kernel for parallel k-mer extraction and counting
-// Optimized for Apple Silicon with efficient memory access patterns
+// Metal kernels for parallel k-mer extraction and counting (one thread per
+// sequence, atomic increments into a dense count table). No benchmark in the
+// repository measures their performance.
 
 // Base encoding: A=0, T=1, G=2, C=3
 constant uint8_t BASE_ENCODING[256] = {
@@ -192,7 +193,8 @@ kernel void extract_kmers_small_k(
     }
 }
 
-// High-performance kernel for very large datasets using coalesced memory access
+// Kernel for large datasets (selected above 100 MB of sequence) that strides
+// threads across positions instead of sequences
 kernel void extract_kmers_coalesced(
     constant char* sequences [[buffer(0)]],
     constant SequenceInfo* seq_info [[buffer(1)]],

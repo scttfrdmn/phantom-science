@@ -1,3 +1,12 @@
+// Package populations builds toy genotype panels for a fixed registry of
+// African populations (five 1000 Genomes populations and AWI-Gen), each with
+// allele frequencies for a handful of rsIDs (APOE, ACTN3, LCT, CYP2C19).
+//
+// It does not query any literature or H3Africa resource: the "literature
+// search" returns synthetic placeholder entries, and the model's allele
+// frequency accuracy compares the registry with a copy of itself. Samples
+// carry genotypes for the registry rsIDs only. No generation or CLI code path
+// uses this package.
 package populations
 
 import (
@@ -10,10 +19,12 @@ import (
 	"time"
 )
 
-// africanFST contains pairwise Weir-Cockerham F_ST estimates between each
-// African 1000 Genomes sub-population and the four non-African super-populations.
-// Source: Auton et al. (2015) Nature 526:68-74, Supplementary Table 1.
-// Populations not listed fall back to the continental-average values (last row).
+// africanFST contains approximate pairwise F_ST values between each African
+// population and the four non-African 1000 Genomes super-populations. They
+// are attributed to Auton et al. (2015) Nature 526:68-74, but the numbers have
+// not been checked against that paper, and the AWI row (AWI-Gen is an
+// H3Africa cohort, not a 1000 Genomes population) cannot come from it.
+// Populations not listed fall back to YRI (see africanFSTForPop).
 var africanFST = map[string]map[string]float64{
 	// Continental African populations
 	"YRI": {"EUR": 0.153, "EAS": 0.190, "AMR": 0.123, "SAS": 0.160},
@@ -37,17 +48,20 @@ func africanFSTForPop(populationID string) map[string]float64 {
 	return africanFST["YRI"]
 }
 
-// AfricanPopulationEnhancer integrates published literature for African population genetics
+// AfricanPopulationEnhancer builds AfricanPopulationModels from
+// H3AfricaPopulationRegistry and synthetic literature entries, and generates
+// toy samples from them. Its random source is seeded from the clock.
 type AfricanPopulationEnhancer struct {
-	literatureDB    *LiteratureDatabase
-	h3africaDB      *H3AfricaDatabase
+	literatureDB     *LiteratureDatabase
+	h3africaDB       *H3AfricaDatabase
 	populationModels map[string]*AfricanPopulationModel
-	client          *http.Client
-	cache           map[string]*LiteratureEntry
-	rng             *rand.Rand
+	client           *http.Client
+	cache            map[string]*LiteratureEntry
+	rng              *rand.Rand
 }
 
-// H3AfricaDatabase contains curated H3Africa consortium data
+// H3AfricaDatabase holds the built-in population registry. Despite the name
+// it is not loaded from H3Africa; StudyRegistry and VariantCatalog are empty.
 type H3AfricaDatabase struct {
 	PopulationPanels map[string]*H3AfricaPopulation `json:"population_panels"`
 	StudyRegistry    []*H3AfricaStudy               `json:"study_registry"`
@@ -55,87 +69,87 @@ type H3AfricaDatabase struct {
 	LastUpdated      time.Time                      `json:"last_updated"`
 }
 
-// H3AfricaPopulation represents an African population from H3Africa studies
+// H3AfricaPopulation describes one population in the built-in registry.
 type H3AfricaPopulation struct {
-	PopulationID     string                 `json:"population_id"`
-	PopulationName   string                 `json:"population_name"`
-	Country          string                 `json:"country"`
-	Region           string                 `json:"region"`
-	LanguageFamily   string                 `json:"language_family"`
-	EthnicGroup      string                 `json:"ethnic_group"`
-	SampleSize       int                    `json:"sample_size"`
-	StudyPeriod      []int                  `json:"study_period"`
-	AlleleFrequencies map[string]float64    `json:"allele_frequencies"`
-	LinkagePatterns  map[string]*LDBlock    `json:"linkage_patterns"`
-	DemographicParams *DemographicHistory   `json:"demographic_params"`
-	PharmacogenomicVariants []*PGxVariant  `json:"pharmacogenomic_variants"`
-	StructuralVariants []*StructuralVariant `json:"structural_variants"`
-	GeographicCoords []float64              `json:"geographic_coords"`
-	Citations        []string               `json:"citations"`
+	PopulationID            string               `json:"population_id"`
+	PopulationName          string               `json:"population_name"`
+	Country                 string               `json:"country"`
+	Region                  string               `json:"region"`
+	LanguageFamily          string               `json:"language_family"`
+	EthnicGroup             string               `json:"ethnic_group"`
+	SampleSize              int                  `json:"sample_size"`
+	StudyPeriod             []int                `json:"study_period"`
+	AlleleFrequencies       map[string]float64   `json:"allele_frequencies"`
+	LinkagePatterns         map[string]*LDBlock  `json:"linkage_patterns"`
+	DemographicParams       *DemographicHistory  `json:"demographic_params"`
+	PharmacogenomicVariants []*PGxVariant        `json:"pharmacogenomic_variants"`
+	StructuralVariants      []*StructuralVariant `json:"structural_variants"`
+	GeographicCoords        []float64            `json:"geographic_coords"`
+	Citations               []string             `json:"citations"`
 }
 
 // H3AfricaStudy represents a study from the H3Africa consortium
 type H3AfricaStudy struct {
-	StudyID          string    `json:"study_id"`
-	StudyName        string    `json:"study_name"`
-	PrincipalInvestigator string `json:"principal_investigator"`
-	Institution      string    `json:"institution"`
-	Country          string    `json:"country"`
-	StudyType        string    `json:"study_type"`
-	Populations      []string  `json:"populations"`
-	SampleSize       int       `json:"sample_size"`
-	SequencingPlatform string  `json:"sequencing_platform"`
-	DataType         string    `json:"data_type"`
-	PublicationDate  time.Time `json:"publication_date"`
-	DOI              string    `json:"doi"`
-	DataAvailability string    `json:"data_availability"`
-	EthicsApproval   string    `json:"ethics_approval"`
+	StudyID               string    `json:"study_id"`
+	StudyName             string    `json:"study_name"`
+	PrincipalInvestigator string    `json:"principal_investigator"`
+	Institution           string    `json:"institution"`
+	Country               string    `json:"country"`
+	StudyType             string    `json:"study_type"`
+	Populations           []string  `json:"populations"`
+	SampleSize            int       `json:"sample_size"`
+	SequencingPlatform    string    `json:"sequencing_platform"`
+	DataType              string    `json:"data_type"`
+	PublicationDate       time.Time `json:"publication_date"`
+	DOI                   string    `json:"doi"`
+	DataAvailability      string    `json:"data_availability"`
+	EthicsApproval        string    `json:"ethics_approval"`
 }
 
 // AfricanVariant represents a population-specific variant
 type AfricanVariant struct {
-	VariantID       string                 `json:"variant_id"`
-	Chromosome      string                 `json:"chromosome"`
-	Position        int64                  `json:"position"`
-	ReferenceAllele string                 `json:"reference_allele"`
-	AlternateAllele string                 `json:"alternate_allele"`
-	PopulationFreqs map[string]float64     `json:"population_frequencies"`
-	FunctionalClass string                 `json:"functional_class"`
-	GeneSymbol      string                 `json:"gene_symbol"`
-	Consequence     string                 `json:"consequence"`
-	ClinicalRelevance string               `json:"clinical_relevance"`
-	DiscoveryStudy  string                 `json:"discovery_study"`
-	ValidationStatus string                `json:"validation_status"`
-	Annotations     map[string]interface{} `json:"annotations"`
+	VariantID         string                 `json:"variant_id"`
+	Chromosome        string                 `json:"chromosome"`
+	Position          int64                  `json:"position"`
+	ReferenceAllele   string                 `json:"reference_allele"`
+	AlternateAllele   string                 `json:"alternate_allele"`
+	PopulationFreqs   map[string]float64     `json:"population_frequencies"`
+	FunctionalClass   string                 `json:"functional_class"`
+	GeneSymbol        string                 `json:"gene_symbol"`
+	Consequence       string                 `json:"consequence"`
+	ClinicalRelevance string                 `json:"clinical_relevance"`
+	DiscoveryStudy    string                 `json:"discovery_study"`
+	ValidationStatus  string                 `json:"validation_status"`
+	Annotations       map[string]interface{} `json:"annotations"`
 }
 
 // LDBlock represents linkage disequilibrium patterns
 type LDBlock struct {
-	BlockID     string             `json:"block_id"`
-	Chromosome  string             `json:"chromosome"`
-	StartPos    int64              `json:"start_position"`
-	EndPos      int64              `json:"end_position"`
-	Variants    []string           `json:"variants"`
-	HaplotypeFreqs map[string]float64 `json:"haplotype_frequencies"`
-	RecombinationRate float64        `json:"recombination_rate"`
-	Population  string             `json:"population"`
+	BlockID           string             `json:"block_id"`
+	Chromosome        string             `json:"chromosome"`
+	StartPos          int64              `json:"start_position"`
+	EndPos            int64              `json:"end_position"`
+	Variants          []string           `json:"variants"`
+	HaplotypeFreqs    map[string]float64 `json:"haplotype_frequencies"`
+	RecombinationRate float64            `json:"recombination_rate"`
+	Population        string             `json:"population"`
 }
 
 // DemographicHistory represents population demographic parameters
 type DemographicHistory struct {
-	EffectivePopulationSize []PopulationEpoch `json:"effective_population_size"`
-	MigrationEvents        []*MigrationEvent  `json:"migration_events"`
-	BottleneckEvents       []*BottleneckEvent `json:"bottleneck_events"`
-	PopulationSplits       []*PopulationSplit `json:"population_splits"`
-	CoalescentParameters   *CoalescentParams  `json:"coalescent_parameters"`
+	EffectivePopulationSize []PopulationEpoch  `json:"effective_population_size"`
+	MigrationEvents         []*MigrationEvent  `json:"migration_events"`
+	BottleneckEvents        []*BottleneckEvent `json:"bottleneck_events"`
+	PopulationSplits        []*PopulationSplit `json:"population_splits"`
+	CoalescentParameters    *CoalescentParams  `json:"coalescent_parameters"`
 }
 
 // PopulationEpoch represents population size at different time periods
 type PopulationEpoch struct {
-	TimeAgo          int     `json:"time_ago_generations"`
-	PopulationSize   int     `json:"population_size"`
-	GrowthRate       float64 `json:"growth_rate"`
-	ConfidenceInterval []int `json:"confidence_interval"`
+	TimeAgo            int     `json:"time_ago_generations"`
+	PopulationSize     int     `json:"population_size"`
+	GrowthRate         float64 `json:"growth_rate"`
+	ConfidenceInterval []int   `json:"confidence_interval"`
 }
 
 // MigrationEvent represents population migration
@@ -150,88 +164,88 @@ type MigrationEvent struct {
 
 // BottleneckEvent represents population bottlenecks
 type BottleneckEvent struct {
-	PopulationName   string  `json:"population_name"`
-	BottleneckTime   int     `json:"bottleneck_time_generations"`
-	OriginalSize     int     `json:"original_size"`
-	BottleneckSize   int     `json:"bottleneck_size"`
-	RecoveryTime     int     `json:"recovery_time"`
-	Severity         float64 `json:"severity"`
+	PopulationName string  `json:"population_name"`
+	BottleneckTime int     `json:"bottleneck_time_generations"`
+	OriginalSize   int     `json:"original_size"`
+	BottleneckSize int     `json:"bottleneck_size"`
+	RecoveryTime   int     `json:"recovery_time"`
+	Severity       float64 `json:"severity"`
 }
 
 // PopulationSplit represents population divergence events
 type PopulationSplit struct {
-	AncestralPopulation string `json:"ancestral_population"`
+	AncestralPopulation string   `json:"ancestral_population"`
 	DerivedPopulations  []string `json:"derived_populations"`
-	SplitTime          int    `json:"split_time_generations"`
-	DivergenceIndex    float64 `json:"divergence_index"`
+	SplitTime           int      `json:"split_time_generations"`
+	DivergenceIndex     float64  `json:"divergence_index"`
 }
 
 // CoalescentParams represents coalescent model parameters
 type CoalescentParams struct {
-	ThetaWatterson   float64 `json:"theta_watterson"`
-	ThetaPi          float64 `json:"theta_pi"`
-	TajimasD         float64 `json:"tajimas_d"`
-	FuAndLiD         float64 `json:"fu_and_li_d"`
+	ThetaWatterson      float64 `json:"theta_watterson"`
+	ThetaPi             float64 `json:"theta_pi"`
+	TajimasD            float64 `json:"tajimas_d"`
+	FuAndLiD            float64 `json:"fu_and_li_d"`
 	NucleotideDiversity float64 `json:"nucleotide_diversity"`
-	SegregationSites int     `json:"segregation_sites"`
+	SegregationSites    int     `json:"segregation_sites"`
 }
 
 // PGxVariant represents pharmacogenomic variants
 type PGxVariant struct {
-	VariantID       string             `json:"variant_id"`
-	GeneSymbol      string             `json:"gene_symbol"`
-	DrugName        string             `json:"drug_name"`
-	Phenotype       string             `json:"phenotype"`
-	PopulationFreq  map[string]float64 `json:"population_frequency"`
-	ClinicalImpact  string             `json:"clinical_impact"`
-	StudyEvidence   []string           `json:"study_evidence"`
+	VariantID      string             `json:"variant_id"`
+	GeneSymbol     string             `json:"gene_symbol"`
+	DrugName       string             `json:"drug_name"`
+	Phenotype      string             `json:"phenotype"`
+	PopulationFreq map[string]float64 `json:"population_frequency"`
+	ClinicalImpact string             `json:"clinical_impact"`
+	StudyEvidence  []string           `json:"study_evidence"`
 }
 
 // StructuralVariant represents large structural variants
 type StructuralVariant struct {
-	SVID            string             `json:"sv_id"`
-	Type            string             `json:"type"` // DEL, DUP, INV, TRA
-	Chromosome      string             `json:"chromosome"`
-	StartPos        int64              `json:"start_position"`
-	EndPos          int64              `json:"end_position"`
-	Size            int                `json:"size"`
-	PopulationFreq  map[string]float64 `json:"population_frequency"`
-	GeneOverlap     []string           `json:"gene_overlap"`
-	FunctionalImpact string            `json:"functional_impact"`
+	SVID             string             `json:"sv_id"`
+	Type             string             `json:"type"` // DEL, DUP, INV, TRA
+	Chromosome       string             `json:"chromosome"`
+	StartPos         int64              `json:"start_position"`
+	EndPos           int64              `json:"end_position"`
+	Size             int                `json:"size"`
+	PopulationFreq   map[string]float64 `json:"population_frequency"`
+	GeneOverlap      []string           `json:"gene_overlap"`
+	FunctionalImpact string             `json:"functional_impact"`
 }
 
 // AfricanPopulationModel contains enhanced modeling parameters for African populations
 type AfricanPopulationModel struct {
-	Population          *H3AfricaPopulation  `json:"population"`
-	SyntheticParameters *SyntheticGenParams  `json:"synthetic_parameters"`
+	Population          *H3AfricaPopulation   `json:"population"`
+	SyntheticParameters *SyntheticGenParams   `json:"synthetic_parameters"`
 	ValidationMetrics   *PopValidationMetrics `json:"validation_metrics"`
-	GenerationHistory   []*GenerationEvent   `json:"generation_history"`
-	QualityAssessment   *QualityMetrics      `json:"quality_assessment"`
+	GenerationHistory   []*GenerationEvent    `json:"generation_history"`
+	QualityAssessment   *QualityMetrics       `json:"quality_assessment"`
 }
 
 // SyntheticGenParams contains parameters for synthetic data generation
 type SyntheticGenParams struct {
-	VariantDensity      float64                `json:"variant_density"`
-	TransitionTsv       float64                `json:"transition_transversion_ratio"`
-	IndelRatio          float64                `json:"indel_ratio"`
-	StructuralVarRate   float64                `json:"structural_variant_rate"`
-	RecombinationMap    map[string][]float64   `json:"recombination_map"`
-	MutationRates       map[string]float64     `json:"mutation_rates"`
-	SelectionCoeff      map[string]float64     `json:"selection_coefficients"`
-	PopulationStructure *PopulationStructure   `json:"population_structure"`
+	VariantDensity      float64              `json:"variant_density"`
+	TransitionTsv       float64              `json:"transition_transversion_ratio"`
+	IndelRatio          float64              `json:"indel_ratio"`
+	StructuralVarRate   float64              `json:"structural_variant_rate"`
+	RecombinationMap    map[string][]float64 `json:"recombination_map"`
+	MutationRates       map[string]float64   `json:"mutation_rates"`
+	SelectionCoeff      map[string]float64   `json:"selection_coefficients"`
+	PopulationStructure *PopulationStructure `json:"population_structure"`
 	// AlleleFreqs holds the allele frequencies (keyed by variant ID) that the
 	// model encodes as its generation target, copied from the source population
 	// data. Used in validation to compare model parameters against the reference.
-	AlleleFreqs         map[string]float64     `json:"allele_frequencies"`
+	AlleleFreqs map[string]float64 `json:"allele_frequencies"`
 }
 
 // PopulationStructure defines population genetic structure
 type PopulationStructure struct {
-	Fst                 map[string]float64     `json:"fst_values"`
-	AdmixtureProportions map[string]float64    `json:"admixture_proportions"`
-	IsolationByDistance bool                   `json:"isolation_by_distance"`
-	SubpopulationSizes  map[string]int         `json:"subpopulation_sizes"`
-	MigrationMatrix     [][]float64            `json:"migration_matrix"`
+	Fst                  map[string]float64 `json:"fst_values"`
+	AdmixtureProportions map[string]float64 `json:"admixture_proportions"`
+	IsolationByDistance  bool               `json:"isolation_by_distance"`
+	SubpopulationSizes   map[string]int     `json:"subpopulation_sizes"`
+	MigrationMatrix      [][]float64        `json:"migration_matrix"`
 }
 
 // PopValidationMetrics contains validation metrics for population models
@@ -247,60 +261,64 @@ type PopValidationMetrics struct {
 
 // GenerationEvent tracks synthetic data generation events
 type GenerationEvent struct {
-	Timestamp       time.Time            `json:"timestamp"`
-	EventType       string               `json:"event_type"`
+	Timestamp       time.Time              `json:"timestamp"`
+	EventType       string                 `json:"event_type"`
 	Parameters      map[string]interface{} `json:"parameters"`
-	ResultMetrics   map[string]float64   `json:"result_metrics"`
-	DataGenerated   int                  `json:"data_generated"`
-	ValidationScore float64              `json:"validation_score"`
+	ResultMetrics   map[string]float64     `json:"result_metrics"`
+	DataGenerated   int                    `json:"data_generated"`
+	ValidationScore float64                `json:"validation_score"`
 }
 
 // QualityMetrics provides quality assessment of synthetic data
 type QualityMetrics struct {
-	BiologicalRealism   float64 `json:"biological_realism"`
-	StatisticalFidelity float64 `json:"statistical_fidelity"`
+	BiologicalRealism     float64 `json:"biological_realism"`
+	StatisticalFidelity   float64 `json:"statistical_fidelity"`
 	PopulationSpecificity float64 `json:"population_specificity"`
-	ClinicalRelevance   float64 `json:"clinical_relevance"`
-	OverallQuality      float64 `json:"overall_quality"`
+	ClinicalRelevance     float64 `json:"clinical_relevance"`
+	OverallQuality        float64 `json:"overall_quality"`
 }
 
 // LiteratureDatabase manages genomics literature integration
 type LiteratureDatabase struct {
 	Entries        map[string]*LiteratureEntry `json:"entries"`
-	SearchIndex    map[string][]string          `json:"search_index"`
-	PopulationTags map[string][]string          `json:"population_tags"`
-	LastUpdated    time.Time                    `json:"last_updated"`
+	SearchIndex    map[string][]string         `json:"search_index"`
+	PopulationTags map[string][]string         `json:"population_tags"`
+	LastUpdated    time.Time                   `json:"last_updated"`
 }
 
 // LiteratureEntry represents a genomics literature entry
 type LiteratureEntry struct {
-	PubMedID       string                 `json:"pubmed_id"`
-	DOI            string                 `json:"doi"`
-	Title          string                 `json:"title"`
-	Authors        []string               `json:"authors"`
-	Journal        string                 `json:"journal"`
-	PublicationDate time.Time             `json:"publication_date"`
-	Abstract       string                 `json:"abstract"`
-	PopulationsFocused []string           `json:"populations_focused"`
-	StudyType      string                 `json:"study_type"`
-	SampleSize     int                    `json:"sample_size"`
-	ExtractedData  *ExtractedGenomicsData `json:"extracted_data"`
-	QualityScore   float64                `json:"quality_score"`
-	CurationStatus string                 `json:"curation_status"`
+	PubMedID           string                 `json:"pubmed_id"`
+	DOI                string                 `json:"doi"`
+	Title              string                 `json:"title"`
+	Authors            []string               `json:"authors"`
+	Journal            string                 `json:"journal"`
+	PublicationDate    time.Time              `json:"publication_date"`
+	Abstract           string                 `json:"abstract"`
+	PopulationsFocused []string               `json:"populations_focused"`
+	StudyType          string                 `json:"study_type"`
+	SampleSize         int                    `json:"sample_size"`
+	ExtractedData      *ExtractedGenomicsData `json:"extracted_data"`
+	QualityScore       float64                `json:"quality_score"`
+	CurationStatus     string                 `json:"curation_status"`
 }
 
 // ExtractedGenomicsData contains automatically extracted genomics parameters
 type ExtractedGenomicsData struct {
-	AlleleFrequencies   map[string]map[string]float64 `json:"allele_frequencies"`
-	LinkageData         map[string]*LDBlock           `json:"linkage_data"`
-	DemographicParams   *DemographicHistory           `json:"demographic_params"`
-	PopulationComparisons map[string]float64          `json:"population_comparisons"`
-	StatisticalSummaries map[string]float64           `json:"statistical_summaries"`
-	ClinicalAssociations []string                     `json:"clinical_associations"`
-	Confidence          float64                       `json:"confidence"`
+	AlleleFrequencies     map[string]map[string]float64 `json:"allele_frequencies"`
+	LinkageData           map[string]*LDBlock           `json:"linkage_data"`
+	DemographicParams     *DemographicHistory           `json:"demographic_params"`
+	PopulationComparisons map[string]float64            `json:"population_comparisons"`
+	StatisticalSummaries  map[string]float64            `json:"statistical_summaries"`
+	ClinicalAssociations  []string                      `json:"clinical_associations"`
+	Confidence            float64                       `json:"confidence"`
 }
 
-// H3Africa population definitions based on published literature
+// H3AfricaPopulationRegistry is the built-in population table: five 1000
+// Genomes African populations (YRI, LWK, GWD, MSL, ESN) and the AWI-Gen
+// cohort. Sample sizes and coordinates are descriptive; the allele
+// frequencies are approximate and have not been checked against the cited
+// sources.
 var H3AfricaPopulationRegistry = map[string]*H3AfricaPopulation{
 	"YRI": {
 		PopulationID:   "YRI",
@@ -319,7 +337,7 @@ var H3AfricaPopulationRegistry = map[string]*H3AfricaPopulation{
 		},
 		GeographicCoords: []float64{7.3775, 3.9470}, // Ibadan coordinates
 		Citations: []string{
-			"10.1038/nature15393", // 1000 Genomes
+			"10.1038/nature15393",       // 1000 Genomes
 			"10.1038/s41586-020-2859-7", // H3Africa AWI-Gen
 		},
 	},
@@ -362,10 +380,10 @@ var H3AfricaPopulationRegistry = map[string]*H3AfricaPopulation{
 		GeographicCoords: []float64{13.4432, -15.3101}, // Banjul coordinates
 		PharmacogenomicVariants: []*PGxVariant{
 			{
-				VariantID:  "rs4244285",
-				GeneSymbol: "CYP2C19",
-				DrugName:   "Clopidogrel",
-				Phenotype:  "Poor Metabolizer",
+				VariantID:      "rs4244285",
+				GeneSymbol:     "CYP2C19",
+				DrugName:       "Clopidogrel",
+				Phenotype:      "Poor Metabolizer",
 				PopulationFreq: map[string]float64{"GWD": 0.155},
 				ClinicalImpact: "Reduced efficacy",
 			},
@@ -421,7 +439,7 @@ var H3AfricaPopulationRegistry = map[string]*H3AfricaPopulation{
 			"rs4988235": 0.012,
 		},
 		Citations: []string{
-			"10.1038/s41586-020-2859-7", // Main AWI-Gen publication
+			"10.1038/s41586-020-2859-7",  // Main AWI-Gen publication
 			"10.1038/s41467-021-22207-5", // AWI-Gen genomic analysis
 		},
 	},
@@ -431,17 +449,17 @@ var H3AfricaPopulationRegistry = map[string]*H3AfricaPopulation{
 func NewAfricanPopulationEnhancer() *AfricanPopulationEnhancer {
 	enhancer := &AfricanPopulationEnhancer{
 		populationModels: make(map[string]*AfricanPopulationModel),
-		client:          &http.Client{Timeout: 30 * time.Second},
-		cache:           make(map[string]*LiteratureEntry),
-		rng:             rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), 0)), // #nosec G404
+		client:           &http.Client{Timeout: 30 * time.Second},
+		cache:            make(map[string]*LiteratureEntry),
+		rng:              rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), 0)), // #nosec G404
 	}
-	
+
 	// Initialize H3Africa database
 	enhancer.h3africaDB = &H3AfricaDatabase{
 		PopulationPanels: H3AfricaPopulationRegistry,
 		LastUpdated:      time.Now(),
 	}
-	
+
 	// Initialize literature database
 	enhancer.literatureDB = &LiteratureDatabase{
 		Entries:        make(map[string]*LiteratureEntry),
@@ -449,14 +467,16 @@ func NewAfricanPopulationEnhancer() *AfricanPopulationEnhancer {
 		PopulationTags: make(map[string][]string),
 		LastUpdated:    time.Now(),
 	}
-	
+
 	return enhancer
 }
 
-// EnhanceAfricanPopulations integrates published literature to improve African population models
+// EnhanceAfricanPopulations builds a model for each listed registry
+// population from the registry entry and synthetic literature entries (no
+// literature is retrieved). It fails if a population is not in the registry.
 func (ape *AfricanPopulationEnhancer) EnhanceAfricanPopulations(ctx context.Context, targetPopulations []string) (map[string]*AfricanPopulationModel, error) {
 	enhancedModels := make(map[string]*AfricanPopulationModel)
-	
+
 	for _, popID := range targetPopulations {
 		if basePop, exists := ape.h3africaDB.PopulationPanels[popID]; exists {
 			// Create enhanced model for this population
@@ -464,37 +484,38 @@ func (ape *AfricanPopulationEnhancer) EnhanceAfricanPopulations(ctx context.Cont
 			if err != nil {
 				return nil, fmt.Errorf("failed to enhance model for population %s: %w", popID, err)
 			}
-			
+
 			enhancedModels[popID] = model
 			ape.populationModels[popID] = model
 		} else {
 			return nil, fmt.Errorf("population %s not found in H3Africa registry", popID)
 		}
 	}
-	
+
 	return enhancedModels, nil
 }
 
-// createEnhancedModel creates an enhanced population model using literature integration
+// createEnhancedModel builds a population model from the registry entry and
+// the synthetic literature entries.
 func (ape *AfricanPopulationEnhancer) createEnhancedModel(ctx context.Context, basePop *H3AfricaPopulation) (*AfricanPopulationModel, error) {
 	// Search for relevant literature
 	literatureEntries, err := ape.searchRelevantLiterature(ctx, basePop.PopulationID, basePop.Country)
 	if err != nil {
 		return nil, fmt.Errorf("failed to search literature: %w", err)
 	}
-	
+
 	// Extract genomics parameters from literature
 	extractedParams, err := ape.extractGenomicsParameters(literatureEntries, basePop)
 	if err != nil {
 		return nil, fmt.Errorf("failed to extract parameters: %w", err)
 	}
-	
+
 	// Create synthetic generation parameters
 	syntheticParams := ape.createSyntheticParameters(basePop, extractedParams)
-	
+
 	// Validate enhanced model
 	validationMetrics := ape.validateEnhancedModel(basePop, syntheticParams)
-	
+
 	// Create enhanced model
 	model := &AfricanPopulationModel{
 		Population:          basePop,
@@ -503,13 +524,13 @@ func (ape *AfricanPopulationEnhancer) createEnhancedModel(ctx context.Context, b
 		GenerationHistory:   []*GenerationEvent{},
 		QualityAssessment:   ape.assessModelQuality(syntheticParams, validationMetrics),
 	}
-	
+
 	return model, nil
 }
 
-// searchRelevantLiterature searches for genomics literature relevant to African populations
+// searchRelevantLiterature is a stub: it makes no network request and
+// returns one synthetic entry per search term.
 func (ape *AfricanPopulationEnhancer) searchRelevantLiterature(ctx context.Context, populationID, country string) ([]*LiteratureEntry, error) {
-	// Simulate literature search - in reality would query PubMed, bioRxiv, etc.
 	searchTerms := []string{
 		fmt.Sprintf("%s population genetics", populationID),
 		fmt.Sprintf("%s genomics", country),
@@ -517,36 +538,37 @@ func (ape *AfricanPopulationEnhancer) searchRelevantLiterature(ctx context.Conte
 		"H3Africa consortium",
 		fmt.Sprintf("%s pharmacogenomics", country),
 	}
-	
+
 	var entries []*LiteratureEntry
-	
-	// For demonstration, create synthetic literature entries based on known studies
+
+	// Synthetic entries with fixed values (not taken from any study)
 	for _, term := range searchTerms {
 		entry := ape.createSyntheticLiteratureEntry(term, populationID, country)
 		entries = append(entries, entry)
 	}
-	
+
 	return entries, nil
 }
 
-// createSyntheticLiteratureEntry creates a synthetic literature entry for demonstration
+// createSyntheticLiteratureEntry creates a placeholder literature entry. The
+// IDs, title, authors and journal are synthetic, and the extracted values are
+// the same fixed numbers for every population apart from F_ST.
 func (ape *AfricanPopulationEnhancer) createSyntheticLiteratureEntry(searchTerm, populationID, country string) *LiteratureEntry {
 	entry := &LiteratureEntry{
-		PubMedID:       fmt.Sprintf("PMID_%s_%d", populationID, time.Now().Unix()%10000),
-		DOI:            fmt.Sprintf("10.1038/example.%s.%d", populationID, time.Now().Unix()%1000),
-		Title:          fmt.Sprintf("Population genetics analysis of %s populations in %s", populationID, country),
-		Authors:        []string{"Author A", "Author B", "H3Africa Consortium"},
-		Journal:        "Nature Genetics",
-		PublicationDate: time.Now().AddDate(-1, 0, 0),
+		PubMedID:           fmt.Sprintf("PMID_%s_%d", populationID, time.Now().Unix()%10000),
+		DOI:                fmt.Sprintf("synthetic/example.%s.%d", populationID, time.Now().Unix()%1000),
+		Title:              fmt.Sprintf("Population genetics analysis of %s populations in %s", populationID, country),
+		Authors:            []string{"Author A", "Author B"},
+		Journal:            "synthetic placeholder",
+		PublicationDate:    time.Now().AddDate(-1, 0, 0),
 		PopulationsFocused: []string{populationID},
-		StudyType:      "Population genetics",
-		SampleSize:     1000,
-		QualityScore:   0.85,
-		CurationStatus: "curated",
+		StudyType:          "Population genetics",
+		SampleSize:         1000,
+		QualityScore:       0.85,
+		CurationStatus:     "synthetic",
 	}
-	
-	// Add extracted genomics data using population-specific FST values from
-	// Auton et al. (2015) 1000 Genomes Phase 3 pairwise estimates.
+
+	// Extracted data: F_ST from africanFST, other values fixed
 	fst := africanFSTForPop(populationID)
 	entry.ExtractedData = &ExtractedGenomicsData{
 		AlleleFrequencies: make(map[string]map[string]float64),
@@ -557,42 +579,45 @@ func (ape *AfricanPopulationEnhancer) createSyntheticLiteratureEntry(searchTerm,
 		},
 		StatisticalSummaries: map[string]float64{
 			"nucleotide_diversity": 0.00125,
-			"tajimas_d":           0.32,
-			"theta_watterson":     0.00108,
+			"tajimas_d":            0.32,
+			"theta_watterson":      0.00108,
 		},
 		Confidence: 0.90,
 	}
-	
-	// Add population-specific allele frequencies
+
+	// Fixed allele frequencies, the same for every population
 	entry.ExtractedData.AlleleFrequencies[populationID] = map[string]float64{
-		"rs429358":     0.20,  // APOE4
-		"rs7412":       0.12,  // APOE2
-		"rs1815739":    0.001, // ACTN3
-		"rs4988235":    0.005, // LCT
-		"rs4244285":    0.15,  // CYP2C19
-		"rs776746":     0.60,  // CYP3A5
+		"rs429358":  0.20,  // APOE4
+		"rs7412":    0.12,  // APOE2
+		"rs1815739": 0.001, // ACTN3
+		"rs4988235": 0.005, // LCT
+		"rs4244285": 0.15,  // CYP2C19
+		"rs776746":  0.60,  // CYP3A5
 	}
-	
+
 	return entry
 }
 
-// extractGenomicsParameters extracts relevant genomics parameters from literature
+// extractGenomicsParameters combines the entries' allele frequencies and
+// summaries. Repeated values are merged as (existing + value·weight)/2 and
+// then divided by the total weight, which is not a weighted mean. The result
+// is passed to createSyntheticParameters, which ignores it.
 func (ape *AfricanPopulationEnhancer) extractGenomicsParameters(entries []*LiteratureEntry, basePop *H3AfricaPopulation) (*ExtractedGenomicsData, error) {
 	combined := &ExtractedGenomicsData{
-		AlleleFrequencies:    make(map[string]map[string]float64),
-		LinkageData:          make(map[string]*LDBlock),
+		AlleleFrequencies:     make(map[string]map[string]float64),
+		LinkageData:           make(map[string]*LDBlock),
 		PopulationComparisons: make(map[string]float64),
-		StatisticalSummaries: make(map[string]float64),
-		ClinicalAssociations: []string{},
+		StatisticalSummaries:  make(map[string]float64),
+		ClinicalAssociations:  []string{},
 	}
-	
+
 	// Aggregate data from multiple literature sources
 	totalWeight := 0.0
-	
+
 	for _, entry := range entries {
 		weight := entry.QualityScore * float64(entry.SampleSize) / 1000.0
 		totalWeight += weight
-		
+
 		if entry.ExtractedData != nil {
 			// Weighted combination of allele frequencies
 			for pop, variants := range entry.ExtractedData.AlleleFrequencies {
@@ -600,7 +625,7 @@ func (ape *AfricanPopulationEnhancer) extractGenomicsParameters(entries []*Liter
 					if combined.AlleleFrequencies[pop] == nil {
 						combined.AlleleFrequencies[pop] = make(map[string]float64)
 					}
-					
+
 					for variant, freq := range variants {
 						if existing, exists := combined.AlleleFrequencies[pop][variant]; exists {
 							combined.AlleleFrequencies[pop][variant] = (existing + freq*weight) / 2.0
@@ -610,7 +635,7 @@ func (ape *AfricanPopulationEnhancer) extractGenomicsParameters(entries []*Liter
 					}
 				}
 			}
-			
+
 			// Combine statistical summaries
 			for metric, value := range entry.ExtractedData.StatisticalSummaries {
 				if existing, exists := combined.StatisticalSummaries[metric]; exists {
@@ -621,7 +646,7 @@ func (ape *AfricanPopulationEnhancer) extractGenomicsParameters(entries []*Liter
 			}
 		}
 	}
-	
+
 	// Normalize by total weight
 	if totalWeight > 0 {
 		for pop := range combined.AlleleFrequencies {
@@ -629,12 +654,12 @@ func (ape *AfricanPopulationEnhancer) extractGenomicsParameters(entries []*Liter
 				combined.AlleleFrequencies[pop][variant] /= totalWeight
 			}
 		}
-		
+
 		for metric := range combined.StatisticalSummaries {
 			combined.StatisticalSummaries[metric] /= totalWeight
 		}
 	}
-	
+
 	// Confidence = sample-size-weighted average quality score of contributing entries.
 	// Returns 0 when no entries are provided or all have zero sample size.
 	totalSizeWeight := 0.0
@@ -660,7 +685,9 @@ func (ape *AfricanPopulationEnhancer) extractGenomicsParameters(entries []*Liter
 	return combined, nil
 }
 
-// createSyntheticParameters creates parameters for synthetic data generation
+// createSyntheticParameters sets generation parameters. Apart from the
+// allele frequencies (copied from the registry) and F_ST, the values are the
+// same fixed numbers for every population; extracted is not used.
 func (ape *AfricanPopulationEnhancer) createSyntheticParameters(basePop *H3AfricaPopulation, extracted *ExtractedGenomicsData) *SyntheticGenParams {
 	// Copy allele frequencies from the source population so that
 	// validateEnhancedModel can compare the model's encoded target against
@@ -671,28 +698,28 @@ func (ape *AfricanPopulationEnhancer) createSyntheticParameters(basePop *H3Afric
 	}
 
 	params := &SyntheticGenParams{
-		VariantDensity:    0.00125, // From nucleotide diversity
-		TransitionTsv:     2.1,     // Typical for African populations
-		IndelRatio:        0.12,    // Higher indel rate in African populations
-		StructuralVarRate: 0.0008,  // SVs per kb
+		VariantDensity:    0.00125, // fixed; matches the synthetic entries' nucleotide diversity
+		TransitionTsv:     2.1,     // human germline Ts/Tv (~2.0–2.1)
+		IndelRatio:        0.12,    // fixed, not population-specific
+		StructuralVarRate: 0.0008,  // SVs per kb, fixed
 		RecombinationMap:  make(map[string][]float64),
 		MutationRates:     make(map[string]float64),
 		SelectionCoeff:    make(map[string]float64),
 		AlleleFreqs:       alleleFreqs,
 	}
-	
-	// Set population-specific mutation rates
-	params.MutationRates["snp"] = 1.2e-8      // Per base per generation
-	params.MutationRates["indel"] = 1.5e-9    // Higher in African populations
-	params.MutationRates["sv"] = 8.0e-6       // Per kb per generation
-	
-	// Set selection coefficients for known variants
-	params.SelectionCoeff["rs4988235"] = -0.02  // LCT lactase persistence (slightly deleterious in traditional African diet)
-	params.SelectionCoeff["rs334"] = 0.15       // Sickle cell trait (balancing selection)
-	params.SelectionCoeff["rs1815739"] = 0.0    // ACTN3 (neutral in African context)
-	
-	// Create population structure parameters using population-specific FST values
-	// from Auton et al. (2015) 1000 Genomes Phase 3.
+
+	// Mutation rates, the same for every population
+	params.MutationRates["snp"] = 1.2e-8   // Per base per generation
+	params.MutationRates["indel"] = 1.5e-9 // Per base per generation
+	params.MutationRates["sv"] = 8.0e-6    // Per kb per generation
+
+	// Illustrative selection coefficients for three variants (not estimates)
+	params.SelectionCoeff["rs4988235"] = -0.02 // LCT lactase persistence (slightly deleterious in traditional African diet)
+	params.SelectionCoeff["rs334"] = 0.15      // Sickle cell trait (balancing selection)
+	params.SelectionCoeff["rs1815739"] = 0.0   // ACTN3 (neutral in African context)
+
+	// Population structure: F_ST from africanFST; admixture proportions and
+	// subpopulation sizes are fixed placeholders
 	fst := africanFSTForPop(basePop.PopulationID)
 	params.PopulationStructure = &PopulationStructure{
 		Fst: map[string]float64{
@@ -702,26 +729,30 @@ func (ape *AfricanPopulationEnhancer) createSyntheticParameters(basePop *H3Afric
 			"SAS": fst["SAS"],
 		},
 		AdmixtureProportions: map[string]float64{
-			"african":    0.98,
-			"european":   0.01,
+			"african":        0.98,
+			"european":       0.01,
 			"middle_eastern": 0.01,
 		},
 		IsolationByDistance: true,
 		SubpopulationSizes: map[string]int{
-			"rural":  60000,
-			"urban":  40000,
+			"rural": 60000,
+			"urban": 40000,
 		},
 	}
-	
+
 	return params
 }
 
-// validateEnhancedModel validates the enhanced population model against known data
+// validateEnhancedModel computes five coverage-style metrics. Allele
+// frequency accuracy compares params.AlleleFreqs with the registry it was
+// copied from, so it is 1.0 whenever any frequency is non-zero; the other
+// metrics count characterised epochs, LD blocks, SVs and PGx variants and are
+// 0 when the registry has none. Nothing is compared with independent data.
 func (ape *AfricanPopulationEnhancer) validateEnhancedModel(basePop *H3AfricaPopulation, params *SyntheticGenParams) *PopValidationMetrics {
 	metrics := &PopValidationMetrics{
 		ComparisonMetrics: make(map[string]float64),
 	}
-	
+
 	// Validate allele frequency accuracy: compare params.AlleleFreqs (the model's
 	// encoded target frequencies) against basePop.AlleleFrequencies (the reference).
 	// Skip zero-frequency variants to avoid division by zero.
@@ -824,7 +855,8 @@ func (ape *AfricanPopulationEnhancer) validateEnhancedModel(basePop *H3AfricaPop
 	return metrics
 }
 
-// assessModelQuality provides quality assessment of the enhanced model
+// assessModelQuality relabels four validation metrics (e.g. DemographicFit as
+// BiologicalRealism) and averages them.
 func (ape *AfricanPopulationEnhancer) assessModelQuality(params *SyntheticGenParams, validation *PopValidationMetrics) *QualityMetrics {
 	quality := &QualityMetrics{
 		BiologicalRealism:     validation.DemographicFit,
@@ -832,7 +864,7 @@ func (ape *AfricanPopulationEnhancer) assessModelQuality(params *SyntheticGenPar
 		PopulationSpecificity: validation.LinkageAccuracy,
 		ClinicalRelevance:     validation.PharmacogenomicFit,
 	}
-	
+
 	// Calculate overall quality
 	scores := []float64{
 		quality.BiologicalRealism,
@@ -840,31 +872,33 @@ func (ape *AfricanPopulationEnhancer) assessModelQuality(params *SyntheticGenPar
 		quality.PopulationSpecificity,
 		quality.ClinicalRelevance,
 	}
-	
+
 	sum := 0.0
 	for _, score := range scores {
 		sum += score
 	}
 	quality.OverallQuality = sum / float64(len(scores))
-	
+
 	return quality
 }
 
-// GenerateAfricanSyntheticData generates synthetic genomic data for African populations
+// GenerateAfricanSyntheticData generates sampleSize toy samples for a
+// population that EnhanceAfricanPopulations has modelled. The samples are
+// not validated; ValidationStatus is always "unvalidated".
 func (ape *AfricanPopulationEnhancer) GenerateAfricanSyntheticData(ctx context.Context, populationID string, sampleSize int) (*AfricanSyntheticDataset, error) {
 	model, exists := ape.populationModels[populationID]
 	if !exists {
 		return nil, fmt.Errorf("population model not found for %s", populationID)
 	}
-	
+
 	startTime := time.Now()
-	
+
 	// Generate synthetic samples
 	samples, err := ape.generateSyntheticSamples(model, sampleSize)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate synthetic samples: %w", err)
 	}
-	
+
 	// Create result dataset
 	dataset := &AfricanSyntheticDataset{
 		PopulationID:     populationID,
@@ -873,43 +907,43 @@ func (ape *AfricanPopulationEnhancer) GenerateAfricanSyntheticData(ctx context.C
 		GeneratedSamples: samples,
 		GenerationTime:   time.Since(startTime),
 		QualityMetrics:   model.QualityAssessment,
-		ValidationStatus: "validated",
+		ValidationStatus: "unvalidated",
 	}
-	
+
 	// Record generation event
 	event := &GenerationEvent{
-		Timestamp:     time.Now(),
-		EventType:     "synthetic_data_generation",
-		Parameters:    map[string]interface{}{"sample_size": sampleSize},
-		DataGenerated: sampleSize,
+		Timestamp:       time.Now(),
+		EventType:       "synthetic_data_generation",
+		Parameters:      map[string]interface{}{"sample_size": sampleSize},
+		DataGenerated:   sampleSize,
 		ValidationScore: model.QualityAssessment.OverallQuality,
 	}
-	
+
 	model.GenerationHistory = append(model.GenerationHistory, event)
-	
+
 	return dataset, nil
 }
 
 // AfricanSyntheticDataset represents generated synthetic data for African populations
 type AfricanSyntheticDataset struct {
-	PopulationID     string                 `json:"population_id"`
-	PopulationModel  *AfricanPopulationModel `json:"population_model"`
-	SampleSize       int                    `json:"sample_size"`
+	PopulationID     string                    `json:"population_id"`
+	PopulationModel  *AfricanPopulationModel   `json:"population_model"`
+	SampleSize       int                       `json:"sample_size"`
 	GeneratedSamples []*SyntheticAfricanSample `json:"generated_samples"`
-	GenerationTime   time.Duration          `json:"generation_time"`
-	QualityMetrics   *QualityMetrics        `json:"quality_metrics"`
-	ValidationStatus string                 `json:"validation_status"`
+	GenerationTime   time.Duration             `json:"generation_time"`
+	QualityMetrics   *QualityMetrics           `json:"quality_metrics"`
+	ValidationStatus string                    `json:"validation_status"`
 }
 
 // SyntheticAfricanSample represents a synthetic sample from an African population
 type SyntheticAfricanSample struct {
-	SampleID       string                   `json:"sample_id"`
-	PopulationID   string                   `json:"population_id"`
-	GeographicOrigin []float64              `json:"geographic_origin"`
-	Genotype       map[string]*SampleVariant `json:"genotype"`
-	PGxProfile     []*PGxVariant            `json:"pharmacogenomic_profile"`
-	Ancestry       map[string]float64       `json:"ancestry_proportions"`
-	QualityScore   float64                  `json:"quality_score"`
+	SampleID         string                    `json:"sample_id"`
+	PopulationID     string                    `json:"population_id"`
+	GeographicOrigin []float64                 `json:"geographic_origin"`
+	Genotype         map[string]*SampleVariant `json:"genotype"`
+	PGxProfile       []*PGxVariant             `json:"pharmacogenomic_profile"`
+	Ancestry         map[string]float64        `json:"ancestry_proportions"`
+	QualityScore     float64                   `json:"quality_score"`
 }
 
 // SampleVariant represents a variant in a synthetic sample
@@ -924,19 +958,22 @@ type SampleVariant struct {
 	PopulationFreq  float64 `json:"population_frequency"`
 }
 
-// generateSyntheticSamples generates synthetic samples for African populations
+// generateSyntheticSamples includes each registry variant in a sample with
+// probability equal to its allele frequency, then draws its zygosity
+// independently from Hardy-Weinberg proportions, so an included variant can
+// be "0/0".
 func (ape *AfricanPopulationEnhancer) generateSyntheticSamples(model *AfricanPopulationModel, sampleSize int) ([]*SyntheticAfricanSample, error) {
 	var samples []*SyntheticAfricanSample
-	
+
 	for i := 0; i < sampleSize; i++ {
 		sample := &SyntheticAfricanSample{
-			SampleID:     fmt.Sprintf("SYN_%s_%04d", model.Population.PopulationID, i+1),
-			PopulationID: model.Population.PopulationID,
+			SampleID:         fmt.Sprintf("SYN_%s_%04d", model.Population.PopulationID, i+1),
+			PopulationID:     model.Population.PopulationID,
 			GeographicOrigin: model.Population.GeographicCoords,
-			Genotype:     make(map[string]*SampleVariant),
-			Ancestry:     make(map[string]float64),
+			Genotype:         make(map[string]*SampleVariant),
+			Ancestry:         make(map[string]float64),
 		}
-		
+
 		// Generate genotype based on population allele frequencies
 		for variant, freq := range model.Population.AlleleFrequencies {
 			if ape.randomFloat() < freq {
@@ -954,12 +991,12 @@ func (ape *AfricanPopulationEnhancer) generateSyntheticSamples(model *AfricanPop
 				sample.Genotype[variant] = sampleVariant
 			}
 		}
-		
+
 		// Add pharmacogenomic variants
 		if model.Population.PharmacogenomicVariants != nil {
 			sample.PGxProfile = append([]*PGxVariant{}, model.Population.PharmacogenomicVariants...)
 		}
-		
+
 		// Set ancestry proportions
 		if model.SyntheticParameters.PopulationStructure != nil {
 			sample.Ancestry = make(map[string]float64)
@@ -967,17 +1004,19 @@ func (ape *AfricanPopulationEnhancer) generateSyntheticSamples(model *AfricanPop
 				sample.Ancestry[ancestry] = proportion + (ape.randomFloat()-0.5)*0.1 // Add individual variation
 			}
 		}
-		
+
 		sample.QualityScore = model.QualityAssessment.OverallQuality
 		samples = append(samples, sample)
 	}
-	
+
 	return samples, nil
 }
 
 // Helper methods
 
-// variantAlleles maps known rsIDs to [ref, alt] alleles from GRCh38 / dbSNP.
+// variantAlleles maps known rsIDs to [ref, alt] alleles as usually reported.
+// rs4988235 (LCT) and rs776746 (CYP3A5) are given on the gene (minus)
+// strand, not the GRCh38 forward strand.
 var variantAlleles = map[string][2]string{
 	"rs429358":  {"T", "C"}, // APOE ε4  — chr19:44908684
 	"rs7412":    {"C", "T"}, // APOE ε2  — chr19:44908822
@@ -988,7 +1027,7 @@ var variantAlleles = map[string][2]string{
 }
 
 // generateAlleles returns the REF and ALT allele for a variant.
-// Known rsIDs return their real dbSNP/GRCh38 alleles.  Unknown variants use
+// Known rsIDs return the alleles in variantAlleles.  Unknown variants use
 // Ts/Tv-weighted random selection (ratio ≈ 2.1, the observed human germline value).
 func (ape *AfricanPopulationEnhancer) generateAlleles(variantID string) (ref, alt string) {
 	if alleles, ok := variantAlleles[variantID]; ok {
@@ -1052,7 +1091,7 @@ func (ape *AfricanPopulationEnhancer) getVariantChromosome(variantID string) str
 		"rs4244285": "10", // CYP2C19
 		"rs776746":  "7",  // CYP3A5
 	}
-	
+
 	if chr, exists := variantChromosomes[variantID]; exists {
 		return chr
 	}
@@ -1060,16 +1099,17 @@ func (ape *AfricanPopulationEnhancer) getVariantChromosome(variantID string) str
 }
 
 func (ape *AfricanPopulationEnhancer) getVariantPosition(variantID string) int64 {
-	// Simplified mapping
+	// Positions mix assemblies: rs429358, rs7412, rs4988235 and rs776746 are
+	// GRCh37; rs1815739 and rs4244285 are GRCh38
 	variantPositions := map[string]int64{
-		"rs429358":  45411941, // APOE
-		"rs7412":    45412079, // APOE
-		"rs1815739": 66560624, // ACTN3
+		"rs429358":  45411941,  // APOE
+		"rs7412":    45412079,  // APOE
+		"rs1815739": 66560624,  // ACTN3
 		"rs4988235": 136608646, // LCT
 		"rs4244285": 94781859,  // CYP2C19
 		"rs776746":  99270539,  // CYP3A5
 	}
-	
+
 	if pos, exists := variantPositions[variantID]; exists {
 		return pos
 	}
@@ -1077,13 +1117,13 @@ func (ape *AfricanPopulationEnhancer) getVariantPosition(variantID string) int64
 }
 
 func (ape *AfricanPopulationEnhancer) generateZygosity(freq float64) string {
-	// Simplified Hardy-Weinberg based zygosity assignment
+	// Zygosity drawn from Hardy-Weinberg genotype proportions
 	r := ape.randomFloat()
-	
+
 	// Assuming biallelic variants
 	homRef := (1 - freq) * (1 - freq)
 	het := 2 * freq * (1 - freq)
-	
+
 	if r < homRef {
 		return "0/0" // Homozygous reference
 	} else if r < homRef+het {

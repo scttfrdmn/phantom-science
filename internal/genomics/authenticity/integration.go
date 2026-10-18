@@ -13,7 +13,7 @@ import (
 type IntegrationManager struct {
 	authenticityEngine   *Engine
 	fingerprintingEngine fingerprinting.Engine
-	config              types.SequencerConfig
+	config               types.SequencerConfig
 }
 
 // NewIntegrationManager creates a new integration manager
@@ -21,28 +21,31 @@ func NewIntegrationManager(authenticityEngine *Engine, fingerprintingEngine fing
 	return &IntegrationManager{
 		authenticityEngine:   authenticityEngine,
 		fingerprintingEngine: fingerprintingEngine,
-		config:              config,
+		config:               config,
 	}
 }
 
-// GenerateAuthenticFASTQFile generates a FASTQ file with biologically authentic sequences
+// GenerateAuthenticFASTQFile writes ReadsPerBatch reads whose bases come from
+// Engine.GenerateAuthenticSequence (see its limitations) and whose qualities
+// come from generateAuthenticQualityScores. Errors from the fingerprinting
+// engine are ignored, so reads may be written without a quality fingerprint.
 func (im *IntegrationManager) GenerateAuthenticFASTQFile(filename string, batch, read int) error {
 	// Validate file path against the configured output directory
 	if err := security.ValidateFilePath(filename, im.config.OutputDir); err != nil {
 		return errors.WrapError(err, errors.SecurityError, "integration_manager", "generate_authentic_fastq", "invalid file path")
 	}
-	
+
 	file, err := security.SecureFileCreate(filename, im.config.OutputDir)
 	if err != nil {
 		return errors.WrapError(err, errors.ResourceError, "integration_manager", "generate_authentic_fastq", "failed to create secure file")
 	}
 	defer file.Close()
-	
+
 	for readNum := 1; readNum <= im.config.ReadsPerBatch; readNum++ {
 		// Generate read ID with batch and read info
-		baseReadID := fmt.Sprintf("@%s:%d:HXXXXXX:%d:1101:%d:%d %d:N:0:1", 
+		baseReadID := fmt.Sprintf("@%s:%d:HXXXXXX:%d:1101:%d:%d %d:N:0:1",
 			im.config.SampleName, im.config.Lane, batch, readNum*1000, readNum*2000, read)
-		
+
 		// Apply fingerprinting to read ID if enabled
 		readID := baseReadID
 		if im.config.Fingerprinting.Enable && im.fingerprintingEngine != nil {
@@ -53,19 +56,19 @@ func (im *IntegrationManager) GenerateAuthenticFASTQFile(filename string, batch,
 				readID = im.fingerprintingEngine.EmbedDatasetFingerprint(readID, im.config.DatasetID)
 			}
 		}
-		
-		// Generate biologically authentic DNA sequence
+
+		// Generate bases from the reference 4-mer table
 		sequence, err := im.authenticityEngine.GenerateAuthenticSequence(im.config.ReadLength, "1")
 		if err != nil {
 			return errors.WrapError(err, errors.BiologicalModelError, "integration_manager", "generate_authentic_fastq", "failed to generate authentic sequence")
 		}
-		
-		// Generate quality scores with authenticity-aware patterns
+
+		// Generate heuristic quality scores
 		qualities, err := im.generateAuthenticQualityScores(sequence)
 		if err != nil {
 			return errors.WrapError(err, errors.BiologicalModelError, "integration_manager", "generate_authentic_fastq", "failed to generate authentic quality scores")
 		}
-		
+
 		// Apply steganographic fingerprinting to quality scores if enabled
 		if im.config.Fingerprinting.Enable && im.fingerprintingEngine != nil {
 			// Generate fingerprint for this dataset
@@ -77,26 +80,27 @@ func (im *IntegrationManager) GenerateAuthenticFASTQFile(filename string, batch,
 				}
 			}
 		}
-		
+
 		// Write FASTQ record
 		fmt.Fprintf(file, "%s\n%s\n+\n%s\n", readID, string(sequence), string(qualities))
 	}
-	
+
 	return nil
 }
 
-// generateAuthenticQualityScores generates quality scores that reflect biological authenticity
+// generateAuthenticQualityScores returns qualities that decay linearly from
+// BaseQuality, adjusted by applyBiologicalQualityPatterns.
 func (im *IntegrationManager) generateAuthenticQualityScores(sequence []byte) ([]byte, error) {
 	qualityChars := "!\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJ"
 	qualities := make([]byte, len(sequence))
-	
+
 	for i, base := range sequence {
 		// Base quality score with decay
 		qualityValue := im.config.BaseQuality - int(float64(i)*im.config.QualityDecay)
-		
+
 		// Apply biological authenticity patterns
 		qualityValue = im.applyBiologicalQualityPatterns(qualityValue, base, i, sequence)
-		
+
 		// Ensure quality is within valid range
 		if qualityValue < 2 {
 			qualityValue = 2
@@ -104,17 +108,19 @@ func (im *IntegrationManager) generateAuthenticQualityScores(sequence []byte) ([
 		if qualityValue > len(qualityChars)-1 {
 			qualityValue = len(qualityChars) - 1
 		}
-		
+
 		qualities[i] = qualityChars[qualityValue]
 	}
-	
+
 	return qualities, nil
 }
 
-// applyBiologicalQualityPatterns applies biological authenticity patterns to quality scores
+// applyBiologicalQualityPatterns lowers a quality by fixed heuristic amounts
+// for G/C bases in GC-rich windows, homopolymer runs longer than 3 and the 10
+// bases at each read end. The penalties are not fitted to data.
 func (im *IntegrationManager) applyBiologicalQualityPatterns(baseQuality int, base byte, position int, sequence []byte) int {
 	adjustedQuality := baseQuality
-	
+
 	// GC bias: lower quality for GC-rich regions
 	if base == 'G' || base == 'C' {
 		gcBias := im.calculateLocalGCBias(position, sequence)
@@ -124,18 +130,18 @@ func (im *IntegrationManager) applyBiologicalQualityPatterns(baseQuality int, ba
 			adjustedQuality -= 1
 		}
 	}
-	
+
 	// Homopolymer runs: lower quality for long runs
 	homopolymerLength := im.calculateHomopolymerLength(position, sequence)
 	if homopolymerLength > 3 {
 		adjustedQuality -= (homopolymerLength - 3) * 2
 	}
-	
+
 	// Position-specific effects: quality degradation toward ends
 	if position < 10 || position > len(sequence)-10 {
 		adjustedQuality -= 1
 	}
-	
+
 	return adjustedQuality
 }
 
@@ -144,28 +150,28 @@ func (im *IntegrationManager) calculateLocalGCBias(position int, sequence []byte
 	windowSize := 20
 	start := position - windowSize/2
 	end := position + windowSize/2
-	
+
 	if start < 0 {
 		start = 0
 	}
 	if end >= len(sequence) {
 		end = len(sequence) - 1
 	}
-	
+
 	gcCount := 0
 	total := 0
-	
+
 	for i := start; i <= end; i++ {
 		if sequence[i] == 'G' || sequence[i] == 'C' {
 			gcCount++
 		}
 		total++
 	}
-	
+
 	if total == 0 {
 		return 0.0
 	}
-	
+
 	return float64(gcCount) / float64(total)
 }
 
@@ -174,29 +180,30 @@ func (im *IntegrationManager) calculateHomopolymerLength(position int, sequence 
 	if position >= len(sequence) {
 		return 0
 	}
-	
+
 	base := sequence[position]
 	length := 1
-	
+
 	// Count backwards
 	for i := position - 1; i >= 0 && sequence[i] == base; i-- {
 		length++
 	}
-	
+
 	// Count forwards
 	for i := position + 1; i < len(sequence) && sequence[i] == base; i++ {
 		length++
 	}
-	
+
 	return length
 }
 
-// EnhancedGenomicsEngine wraps the existing genomics engine with authenticity features
+// EnhancedGenomicsEngine wraps another engine and, while authenticity is
+// enabled, routes GenerateFASTQFile to IntegrationManager.
 type EnhancedGenomicsEngine struct {
-	originalEngine       genomicsEngine // Would be the original engine
-	authenticityEngine   *Engine
-	integrationManager   *IntegrationManager
-	useAuthenticity      bool
+	originalEngine     genomicsEngine // Would be the original engine
+	authenticityEngine *Engine
+	integrationManager *IntegrationManager
+	useAuthenticity    bool
 }
 
 // genomicsEngine represents the original genomics engine interface
@@ -210,9 +217,9 @@ type genomicsEngine interface {
 func NewEnhancedGenomicsEngine(originalEngine genomicsEngine, authenticityEngine *Engine, config types.SequencerConfig) *EnhancedGenomicsEngine {
 	// Create a dummy fingerprinting engine for integration
 	fingerprintingEngine := fingerprinting.New("phantom-science")
-	
+
 	integrationManager := NewIntegrationManager(authenticityEngine, fingerprintingEngine, config)
-	
+
 	return &EnhancedGenomicsEngine{
 		originalEngine:     originalEngine,
 		authenticityEngine: authenticityEngine,
@@ -221,7 +228,8 @@ func NewEnhancedGenomicsEngine(originalEngine genomicsEngine, authenticityEngine
 	}
 }
 
-// Generate generates genomic data with optional authenticity features
+// Generate initializes the authenticity engine (disabling authenticity if
+// that fails) and then calls the wrapped engine's Generate unchanged.
 func (ege *EnhancedGenomicsEngine) Generate() error {
 	// Initialize authenticity engine if not already done
 	if ege.useAuthenticity && !ege.authenticityEngine.IsInitialized() {
@@ -232,9 +240,8 @@ func (ege *EnhancedGenomicsEngine) Generate() error {
 			ege.useAuthenticity = false
 		}
 	}
-	
-	// Use original engine's Generate method
-	// In a full implementation, this would be modified to use authentic sequence generation
+
+	// Authenticity affects only GenerateFASTQFile, not Generate.
 	return ege.originalEngine.Generate()
 }
 
@@ -243,7 +250,7 @@ func (ege *EnhancedGenomicsEngine) GenerateFASTQFile(filename string, batch, rea
 	if ege.useAuthenticity {
 		return ege.integrationManager.GenerateAuthenticFASTQFile(filename, batch, read)
 	}
-	
+
 	// Fall back to original engine
 	return ege.originalEngine.GenerateFASTQFile(filename, batch, read)
 }
@@ -276,11 +283,11 @@ func (ege *EnhancedGenomicsEngine) GetAuthenticityStatus() map[string]interface{
 			"message":   "Authenticity engine not initialized",
 		}
 	}
-	
+
 	status := ege.authenticityEngine.GetStatus()
 	status["available"] = true
 	status["enabled"] = ege.useAuthenticity
-	
+
 	return status
 }
 
@@ -289,24 +296,24 @@ func (ege *EnhancedGenomicsEngine) ValidateLastGeneratedSequence(sequence []byte
 	if !ege.useAuthenticity || ege.authenticityEngine == nil {
 		return nil, errors.NewResourceError("enhanced_genomics_engine", "validate_last_generated_sequence", "authenticity engine not available")
 	}
-	
+
 	report, err := ege.authenticityEngine.ValidateSequence(sequence)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	// Convert validation report to map for easier consumption
 	result := map[string]interface{}{
-		"overall_passed": report.OverallPassed,
-		"total_tests":    report.TotalTests,
-		"passed_tests":   report.PassedTests,
-		"failed_tests":   report.FailedTests,
-		"average_score":  report.AverageScore,
-		"timestamp":      report.Timestamp,
-		"execution_time": report.ExecutionTime,
+		"overall_passed":  report.OverallPassed,
+		"total_tests":     report.TotalTests,
+		"passed_tests":    report.PassedTests,
+		"failed_tests":    report.FailedTests,
+		"average_score":   report.AverageScore,
+		"timestamp":       report.Timestamp,
+		"execution_time":  report.ExecutionTime,
 		"recommendations": report.RecommendedActions,
 	}
-	
+
 	// Add individual test results
 	var testResults []map[string]interface{}
 	for _, testResult := range report.Results {
@@ -321,7 +328,7 @@ func (ege *EnhancedGenomicsEngine) ValidateLastGeneratedSequence(sequence []byte
 		})
 	}
 	result["test_results"] = testResults
-	
+
 	return result, nil
 }
 
@@ -330,7 +337,7 @@ func (ege *EnhancedGenomicsEngine) GetAuthenticityScore(sequence []byte) (float6
 	if !ege.useAuthenticity || ege.authenticityEngine == nil {
 		return 0.0, errors.NewResourceError("enhanced_genomics_engine", "get_authenticity_score", "authenticity engine not available")
 	}
-	
+
 	return ege.authenticityEngine.GetAuthenticityScore(sequence)
 }
 
@@ -339,7 +346,7 @@ func (ege *EnhancedGenomicsEngine) UpdateAuthenticityConfig(config types.Sequenc
 	if ege.authenticityEngine == nil {
 		return errors.NewResourceError("enhanced_genomics_engine", "update_authenticity_config", "authenticity engine not available")
 	}
-	
+
 	return ege.authenticityEngine.UpdateFromSequencerConfig(config)
 }
 
@@ -348,7 +355,7 @@ func (ege *EnhancedGenomicsEngine) GetReferenceStatistics() (map[string]interfac
 	if !ege.useAuthenticity || ege.authenticityEngine == nil {
 		return nil, errors.NewResourceError("enhanced_genomics_engine", "get_reference_statistics", "authenticity engine not available")
 	}
-	
+
 	return ege.authenticityEngine.GetReferenceStatistics()
 }
 
@@ -357,16 +364,19 @@ func (ege *EnhancedGenomicsEngine) ConfigureForPlatform(platform string) error {
 	if ege.authenticityEngine == nil {
 		return errors.NewResourceError("enhanced_genomics_engine", "configure_for_platform", "authenticity engine not available")
 	}
-	
+
 	// Create a temporary sequencer config for platform-specific settings
 	tempConfig := types.SequencerConfig{
 		SequencerModel: platform,
 	}
-	
+
 	return ege.authenticityEngine.UpdateFromSequencerConfig(tempConfig)
 }
 
-// GetIntegrationInfo returns information about the integration with existing systems
+// GetIntegrationInfo returns a static description of the integration. The
+// feature flags are hard-coded true and not derived from configuration;
+// "homopolymer_error_modeling" is only a quality penalty, no base errors are
+// introduced.
 func (ege *EnhancedGenomicsEngine) GetIntegrationInfo() map[string]interface{} {
 	return map[string]interface{}{
 		"authenticity_available": ege.authenticityEngine != nil,

@@ -14,7 +14,8 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 )
 
-// AWSDataAcquisition handles downloading genomic data from AWS Open Data Archive
+// AWSDataAcquisition downloads files listed in AuthenticityValidationDatasets
+// from public S3 buckets (AWS Open Data).
 type AWSDataAcquisition struct {
 	s3Client    *s3.S3
 	downloader  *s3manager.Downloader
@@ -26,60 +27,61 @@ type AWSDataAcquisition struct {
 
 // AWSDataConfig contains configuration for AWS data acquisition
 type AWSDataConfig struct {
-	Region           string
-	DownloadDir      string
-	MaxConcurrency   int
-	MaxRetries       int
-	VerifyChecksums  bool
-	EnableProgress   bool
-	CacheData        bool
-	CleanupOnError   bool
+	Region          string
+	DownloadDir     string
+	MaxConcurrency  int
+	MaxRetries      int  // Not used yet
+	VerifyChecksums bool // Not used yet: only file sizes are checked
+	EnableProgress  bool // Not used yet
+	CacheData       bool // Skip files that already exist and are non-empty
+	CleanupOnError  bool // Not used yet
 }
 
 // DatasetInfo represents information about a genomic dataset
 type DatasetInfo struct {
-	Name        string
-	Description string
-	Bucket      string
-	Prefix      string
-	Files       []FileInfo
-	Size        int64
+	Name         string
+	Description  string
+	Bucket       string
+	Prefix       string
+	Files        []FileInfo
+	Size         int64
 	LastModified time.Time
-	Checksum    string
+	Checksum     string
 }
 
 // FileInfo represents information about a single file
 type FileInfo struct {
-	Key         string
-	Size        int64
+	Key          string
+	Size         int64
 	LastModified time.Time
-	ETag        string
-	LocalPath   string
+	ETag         string
+	LocalPath    string
 }
 
 // DownloadProgress tracks download progress
 type DownloadProgress struct {
-	TotalFiles     int
-	CompletedFiles int
-	TotalBytes     int64
+	TotalFiles      int
+	CompletedFiles  int
+	TotalBytes      int64
 	DownloadedBytes int64
-	StartTime      time.Time
-	CurrentFile    string
-	Speed          float64 // MB/s
-	ETA            time.Duration
+	StartTime       time.Time
+	CurrentFile     string
+	Speed           float64 // MB/s
+	ETA             time.Duration
 }
 
-// AWS Open Data Archive genomic datasets
+// GenomicDatasets lists AWS Open Data buckets and prefixes. The entries are
+// not checked against S3 by any test; see the notes on individual entries.
 var GenomicDatasets = map[string]DatasetInfo{
 	"grch38": {
 		Name:        "GRCh38 Reference Genome",
-		Description: "Human reference genome GRCh38/hg38",
+		Description: "Human reference genome (the prefix points at hs37d5.fa, which is GRCh37 with decoys, not GRCh38)",
 		Bucket:      "aws-roda-hcls-datalake",
 		Prefix:      "1000_genomes_dragen_3.7.6/reference/hs37d5.fa",
 	},
 	"grch39": {
-		Name:        "GRCh39 Reference Genome", 
-		Description: "Human reference genome GRCh39/hg39",
+		Name:        "GRCh39 Reference Genome",
+		Description: "Reference directory of the 1000 Genomes DRAGEN 3.7.6 release (GRCh39 has not been released)",
 		Bucket:      "aws-roda-hcls-datalake",
 		Prefix:      "1000_genomes_dragen_3.7.6/reference/",
 	},
@@ -133,7 +135,9 @@ var GenomicDatasets = map[string]DatasetInfo{
 	},
 }
 
-// Specific datasets for our authenticity validation
+// AuthenticityValidationDatasets lists the files that
+// DownloadAuthenticityDatasets fetches. File sizes are approximate, but
+// downloadDataset and ValidateDownloadedData require an exact size match.
 var AuthenticityValidationDatasets = map[string]DatasetInfo{
 	"reference_genome": {
 		Name:        "GRCh38 Reference Genome",
@@ -159,7 +163,7 @@ var AuthenticityValidationDatasets = map[string]DatasetInfo{
 	},
 	"illumina_fastq": {
 		Name:        "Illumina FASTQ Samples",
-		Description: "Real Illumina sequencing data for validation",
+		Description: "GIAB HG001 v4.2.1 benchmark BED and VCF (no FASTQ files)",
 		Bucket:      "giab",
 		Prefix:      "release/NA12878_HG001/NISTv4.2.1/GRCh38/",
 		Files: []FileInfo{
@@ -200,7 +204,7 @@ func NewAWSDataAcquisition(config *AWSDataConfig) (*AWSDataAcquisition, error) {
 
 	// Create S3 client
 	s3Client := s3.New(sess)
-	
+
 	// Create downloader with configuration
 	downloader := s3manager.NewDownloader(sess, func(d *s3manager.Downloader) {
 		d.Concurrency = config.MaxConcurrency
@@ -224,25 +228,25 @@ func NewAWSDataAcquisition(config *AWSDataConfig) (*AWSDataAcquisition, error) {
 // DownloadAuthenticityDatasets downloads all datasets needed for authenticity validation
 func (a *AWSDataAcquisition) DownloadAuthenticityDatasets() error {
 	a.logger.Println("Starting download of authenticity validation datasets")
-	
+
 	totalSize := int64(0)
 	for _, dataset := range AuthenticityValidationDatasets {
 		for _, file := range dataset.Files {
 			totalSize += file.Size
 		}
 	}
-	
+
 	a.logger.Printf("Total data to download: %.2f GB", float64(totalSize)/(1024*1024*1024))
-	
+
 	// Download each dataset
 	for datasetName, dataset := range AuthenticityValidationDatasets {
 		a.logger.Printf("Downloading dataset: %s", dataset.Name)
-		
+
 		if err := a.downloadDataset(datasetName, dataset); err != nil {
 			return fmt.Errorf("failed to download dataset %s: %w", datasetName, err)
 		}
 	}
-	
+
 	a.logger.Println("All authenticity validation datasets downloaded successfully")
 	return nil
 }
@@ -257,7 +261,7 @@ func (a *AWSDataAcquisition) downloadDataset(datasetName string, dataset Dataset
 	// Download each file in the dataset
 	for _, file := range dataset.Files {
 		localPath := filepath.Join(datasetDir, filepath.Base(file.Key))
-		
+
 		// Check if file already exists and is valid
 		if a.fileExists(localPath) && a.config.CacheData {
 			a.logger.Printf("File already exists, skipping: %s", file.Key)
@@ -267,7 +271,7 @@ func (a *AWSDataAcquisition) downloadDataset(datasetName string, dataset Dataset
 		if err := a.downloadFile(dataset.Bucket, file.Key, localPath); err != nil {
 			return fmt.Errorf("failed to download file %s: %w", file.Key, err)
 		}
-		
+
 		// Verify file size
 		if err := a.verifyFileSize(localPath, file.Size); err != nil {
 			return fmt.Errorf("file size verification failed for %s: %w", file.Key, err)
@@ -280,7 +284,7 @@ func (a *AWSDataAcquisition) downloadDataset(datasetName string, dataset Dataset
 // downloadFile downloads a single file from S3
 func (a *AWSDataAcquisition) downloadFile(bucket, key, localPath string) error {
 	a.logger.Printf("Downloading: s3://%s/%s -> %s", bucket, key, localPath)
-	
+
 	// Create local file
 	file, err := os.Create(localPath) // #nosec G304
 	if err != nil {
@@ -294,19 +298,19 @@ func (a *AWSDataAcquisition) downloadFile(bucket, key, localPath string) error {
 		Bucket: aws.String(bucket),
 		Key:    aws.String(key),
 	})
-	
+
 	if err != nil {
 		// Clean up partial download
 		os.Remove(localPath)
 		return fmt.Errorf("S3 download failed: %w", err)
 	}
-	
+
 	duration := time.Since(startTime)
 	speed := float64(bytesDownloaded) / duration.Seconds() / (1024 * 1024) // MB/s
-	
-	a.logger.Printf("Downloaded %s (%.2f MB) in %.2fs at %.2f MB/s", 
+
+	a.logger.Printf("Downloaded %s (%.2f MB) in %.2fs at %.2f MB/s",
 		key, float64(bytesDownloaded)/(1024*1024), duration.Seconds(), speed)
-	
+
 	return nil
 }
 
@@ -322,11 +326,11 @@ func (a *AWSDataAcquisition) verifyFileSize(path string, expectedSize int64) err
 	if err != nil {
 		return fmt.Errorf("failed to stat file: %w", err)
 	}
-	
+
 	if info.Size() != expectedSize {
 		return fmt.Errorf("size mismatch: expected %d, got %d", expectedSize, info.Size())
 	}
-	
+
 	return nil
 }
 
@@ -336,9 +340,9 @@ func (a *AWSDataAcquisition) ListDatasetFiles(bucket, prefix string) ([]FileInfo
 		Bucket: aws.String(bucket),
 		Prefix: aws.String(prefix),
 	}
-	
+
 	var files []FileInfo
-	
+
 	err := a.s3Client.ListObjectsV2Pages(input, func(page *s3.ListObjectsV2Output, lastPage bool) bool {
 		for _, obj := range page.Contents {
 			files = append(files, FileInfo{
@@ -350,18 +354,18 @@ func (a *AWSDataAcquisition) ListDatasetFiles(bucket, prefix string) ([]FileInfo
 		}
 		return !lastPage
 	})
-	
+
 	if err != nil {
 		return nil, fmt.Errorf("failed to list objects: %w", err)
 	}
-	
+
 	return files, nil
 }
 
 // DownloadReferenceGenome downloads reference genome specifically for training
 func (a *AWSDataAcquisition) DownloadReferenceGenome() error {
 	a.logger.Println("Downloading reference genome for model training")
-	
+
 	// Download GRCh38 reference genome
 	dataset := AuthenticityValidationDatasets["reference_genome"]
 	return a.downloadDataset("reference_genome", dataset)
@@ -370,7 +374,7 @@ func (a *AWSDataAcquisition) DownloadReferenceGenome() error {
 // DownloadPopulationData downloads population genetics data
 func (a *AWSDataAcquisition) DownloadPopulationData() error {
 	a.logger.Println("Downloading population genetics data")
-	
+
 	// Download 1000 Genomes population VCF files
 	dataset := AuthenticityValidationDatasets["population_vcf"]
 	return a.downloadDataset("population_vcf", dataset)
@@ -379,22 +383,22 @@ func (a *AWSDataAcquisition) DownloadPopulationData() error {
 // DownloadValidationFASTQ downloads FASTQ files for validation
 func (a *AWSDataAcquisition) DownloadValidationFASTQ() error {
 	a.logger.Println("Downloading validation FASTQ datasets")
-	
+
 	// Download Illumina FASTQ
 	if err := a.downloadDataset("illumina_fastq", AuthenticityValidationDatasets["illumina_fastq"]); err != nil {
 		return fmt.Errorf("failed to download Illumina FASTQ: %w", err)
 	}
-	
+
 	// Download PacBio FASTQ
 	if err := a.downloadDataset("pacbio_fastq", AuthenticityValidationDatasets["pacbio_fastq"]); err != nil {
 		return fmt.Errorf("failed to download PacBio FASTQ: %w", err)
 	}
-	
+
 	// Download Nanopore FASTQ
 	if err := a.downloadDataset("nanopore_fastq", AuthenticityValidationDatasets["nanopore_fastq"]); err != nil {
 		return fmt.Errorf("failed to download Nanopore FASTQ: %w", err)
 	}
-	
+
 	return nil
 }
 
@@ -406,54 +410,54 @@ func (a *AWSDataAcquisition) GetDatasetInfo(datasetName string) (*DatasetInfo, e
 		if err != nil {
 			return nil, fmt.Errorf("failed to list dataset files: %w", err)
 		}
-		
+
 		dataset.Files = files
 		return &dataset, nil
 	}
-	
+
 	return nil, fmt.Errorf("dataset not found: %s", datasetName)
 }
 
 // CalculateDownloadSize calculates total size of datasets to download
 func (a *AWSDataAcquisition) CalculateDownloadSize(datasetNames []string) (int64, error) {
 	totalSize := int64(0)
-	
+
 	for _, datasetName := range datasetNames {
 		dataset, err := a.GetDatasetInfo(datasetName)
 		if err != nil {
 			return 0, fmt.Errorf("failed to get dataset info for %s: %w", datasetName, err)
 		}
-		
+
 		for _, file := range dataset.Files {
 			totalSize += file.Size
 		}
 	}
-	
+
 	return totalSize, nil
 }
 
 // ValidateDownloadedData validates that all downloaded data is intact
 func (a *AWSDataAcquisition) ValidateDownloadedData() error {
 	a.logger.Println("Validating downloaded data integrity")
-	
+
 	for datasetName, dataset := range AuthenticityValidationDatasets {
 		datasetDir := filepath.Join(a.downloadDir, datasetName)
-		
+
 		for _, file := range dataset.Files {
 			localPath := filepath.Join(datasetDir, filepath.Base(file.Key))
-			
+
 			// Check file exists
 			if !a.fileExists(localPath) {
 				return fmt.Errorf("missing file: %s", localPath)
 			}
-			
+
 			// Verify file size
 			if err := a.verifyFileSize(localPath, file.Size); err != nil {
 				return fmt.Errorf("file validation failed for %s: %w", localPath, err)
 			}
 		}
 	}
-	
+
 	a.logger.Println("All downloaded data validated successfully")
 	return nil
 }
@@ -461,13 +465,13 @@ func (a *AWSDataAcquisition) ValidateDownloadedData() error {
 // CleanupIncompleteDownloads removes incomplete or corrupted downloads
 func (a *AWSDataAcquisition) CleanupIncompleteDownloads() error {
 	a.logger.Println("Cleaning up incomplete downloads")
-	
+
 	for datasetName, dataset := range AuthenticityValidationDatasets {
 		datasetDir := filepath.Join(a.downloadDir, datasetName)
-		
+
 		for _, file := range dataset.Files {
 			localPath := filepath.Join(datasetDir, filepath.Base(file.Key))
-			
+
 			// Check if file exists but has wrong size
 			if info, err := os.Stat(localPath); err == nil {
 				if info.Size() != file.Size {
@@ -479,22 +483,22 @@ func (a *AWSDataAcquisition) CleanupIncompleteDownloads() error {
 			}
 		}
 	}
-	
+
 	return nil
 }
 
 // GetDownloadedDataPaths returns paths to downloaded datasets
 func (a *AWSDataAcquisition) GetDownloadedDataPaths() map[string]string {
 	paths := make(map[string]string)
-	
+
 	for datasetName := range AuthenticityValidationDatasets {
 		paths[datasetName] = filepath.Join(a.downloadDir, datasetName)
 	}
-	
+
 	return paths
 }
 
-// Default configuration for AWS data acquisition
+// DefaultAWSDataConfig returns the default AWS data acquisition settings.
 func DefaultAWSDataConfig() *AWSDataConfig {
 	return &AWSDataConfig{
 		Region:          "us-east-1",
@@ -508,7 +512,8 @@ func DefaultAWSDataConfig() *AWSDataConfig {
 	}
 }
 
-// Progress tracking for large downloads
+// ProgressTracker tracks bytes downloaded against a total. Nothing in this
+// package updates one yet.
 type ProgressTracker struct {
 	mu              sync.Mutex
 	totalBytes      int64
@@ -530,7 +535,7 @@ func NewProgressTracker(totalBytes int64) *ProgressTracker {
 func (p *ProgressTracker) Update(bytesDownloaded int64) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	
+
 	p.downloadedBytes += bytesDownloaded
 	p.lastUpdate = time.Now()
 }
@@ -539,16 +544,16 @@ func (p *ProgressTracker) Update(bytesDownloaded int64) {
 func (p *ProgressTracker) GetProgress() *DownloadProgress {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	
+
 	elapsed := time.Since(p.startTime)
 	speed := float64(p.downloadedBytes) / elapsed.Seconds() / (1024 * 1024) // MB/s
-	
+
 	var eta time.Duration
 	if speed > 0 {
 		remainingBytes := p.totalBytes - p.downloadedBytes
 		eta = time.Duration(float64(remainingBytes)/speed/1024/1024) * time.Second
 	}
-	
+
 	return &DownloadProgress{
 		TotalBytes:      p.totalBytes,
 		DownloadedBytes: p.downloadedBytes,

@@ -7,24 +7,27 @@ import (
 	"unsafe"
 )
 
-// PackedFrequencyTable represents k-mer frequencies using memory-efficient packed arrays
-// instead of hash maps, reducing memory usage by 3-5x while maintaining performance
+// PackedFrequencyTable stores k-mer frequencies in a dense 4^k array whose
+// bit width per entry grows to fit the largest count. It is smaller than a
+// map when most k-mers occur and larger for sparse, high-k tables;
+// GetCompressionRatio estimates the ratio. No benchmark measures speed.
 type PackedFrequencyTable struct {
 	K                 int
-	PackedFrequencies *PackedArray  // Packed binary array for k-mer frequencies
+	PackedFrequencies *PackedArray // Packed binary array for k-mer frequencies
 	TotalCount        int
 	TotalKmers        int
-	MaxKmers          int           // 4^k maximum possible k-mers
-	NonZeroCount      int           // Number of k-mers with non-zero frequency
+	MaxKmers          int // 4^k maximum possible k-mers
+	NonZeroCount      int // Number of k-mers with non-zero frequency
 }
 
-// PackedArray provides memory-efficient storage for k-mer frequency data
+// PackedArray is a fixed-length array of unsigned integers packed at a
+// shared bit width that widens on demand.
 type PackedArray struct {
-	data        []uint32   // Packed frequency data
-	maxValue    uint32     // Maximum frequency value stored
-	bitsPerItem int       // Bits required per frequency value
-	itemCount   int       // Total number of items (4^k)
-	mask        uint32    // Bit mask for extracting values
+	data        []uint32 // Packed frequency data
+	maxValue    uint32   // Maximum frequency value stored
+	bitsPerItem int      // Bits required per frequency value
+	itemCount   int      // Total number of items (4^k)
+	mask        uint32   // Bit mask for extracting values
 }
 
 // NewPackedFrequencyTable creates a new packed frequency table for k-mer size k
@@ -54,7 +57,7 @@ func NewPackedArray(itemCount int, maxBitsPerItem int) (*PackedArray, error) {
 	if itemCount <= 0 {
 		return nil, fmt.Errorf("itemCount must be positive, got %d", itemCount)
 	}
-	
+
 	if maxBitsPerItem <= 0 || maxBitsPerItem > 32 {
 		return nil, fmt.Errorf("maxBitsPerItem must be between 1 and 32, got %d", maxBitsPerItem)
 	}
@@ -62,7 +65,7 @@ func NewPackedArray(itemCount int, maxBitsPerItem int) (*PackedArray, error) {
 	// Start with minimum bits per item (1 bit) and expand as needed
 	bitsPerItem := 1
 	dataSize := calculatePackedArraySize(itemCount, bitsPerItem)
-	
+
 	return &PackedArray{
 		data:        make([]uint32, dataSize),
 		maxValue:    0,
@@ -101,14 +104,14 @@ func (pa *PackedArray) Get(index int) uint32 {
 		// Value spans two uint32s
 		bitsInFirstWord := 32 - bitOffset
 		bitsInSecondWord := pa.bitsPerItem - bitsInFirstWord
-		
+
 		if wordIndex+1 >= len(pa.data) {
 			return (pa.data[wordIndex] >> bitOffset) & ((1 << bitsInFirstWord) - 1)
 		}
-		
+
 		firstPart := (pa.data[wordIndex] >> bitOffset) & ((1 << bitsInFirstWord) - 1)
 		secondPart := (pa.data[wordIndex+1] & ((1 << bitsInSecondWord) - 1)) << bitsInFirstWord
-		
+
 		return firstPart | secondPart
 	}
 }
@@ -153,12 +156,12 @@ func (pa *PackedArray) Set(index int, value uint32) error {
 		// Value spans two uint32s
 		bitsInFirstWord := 32 - bitOffset
 		bitsInSecondWord := pa.bitsPerItem - bitsInFirstWord
-		
+
 		// Clear and set first part
 		firstMask := uint32(((1 << bitsInFirstWord) - 1) << bitOffset)
 		pa.data[wordIndex] &= ^firstMask
 		pa.data[wordIndex] |= uint32((value & ((1 << bitsInFirstWord) - 1)) << bitOffset)
-		
+
 		// Clear and set second part
 		if wordIndex+1 < len(pa.data) {
 			secondMask := uint32((1 << bitsInSecondWord) - 1)
@@ -205,7 +208,7 @@ func (pa *PackedArray) expandBits(newMaxValue uint32) error {
 		} else {
 			bitsInFirstWord := 32 - bitOffset
 			bitsInSecondWord := oldBitsPerItem - bitsInFirstWord
-			
+
 			firstPart := (oldData[wordIndex] >> bitOffset) & ((1 << bitsInFirstWord) - 1)
 			var secondPart uint32
 			if wordIndex+1 < len(oldData) {
@@ -228,7 +231,7 @@ func countLeadingZeros(x uint32) int {
 	if x == 0 {
 		return 32
 	}
-	
+
 	n := 0
 	if x <= 0x0000FFFF {
 		n += 16
@@ -249,7 +252,7 @@ func countLeadingZeros(x uint32) int {
 	if x <= 0x7FFFFFFF {
 		n += 1
 	}
-	
+
 	return n
 }
 
@@ -329,19 +332,19 @@ func KmerStringToIndex(kmer string) (int, error) {
 func IndexToKmerString(index, k int) string {
 	bases := []byte{'A', 'T', 'G', 'C'}
 	kmer := make([]byte, k)
-	
+
 	for i := k - 1; i >= 0; i-- {
 		kmer[i] = bases[index%4]
 		index /= 4
 	}
-	
+
 	return string(kmer)
 }
 
 // ToFrequencyTable converts the packed frequency table to a standard map-based frequency table
 func (pft *PackedFrequencyTable) ToFrequencyTable() *FrequencyTable {
 	frequencies := make(map[string]int)
-	
+
 	for i := 0; i < pft.MaxKmers; i++ {
 		freq := pft.PackedFrequencies.Get(i)
 		if freq > 0 {
@@ -349,7 +352,7 @@ func (pft *PackedFrequencyTable) ToFrequencyTable() *FrequencyTable {
 			frequencies[kmerString] = int(freq)
 		}
 	}
-	
+
 	return &FrequencyTable{
 		K:           pft.K,
 		Frequencies: frequencies,
@@ -371,11 +374,11 @@ func FromFrequencyTable(ft *FrequencyTable) (*PackedFrequencyTable, error) {
 		if err != nil {
 			continue // Skip invalid k-mers
 		}
-		
+
 		if err := pft.PackedFrequencies.Set(index, uint32(freq)); err != nil { // #nosec G115
 			return nil, fmt.Errorf("failed to set frequency for %s: %w", kmerString, err)
 		}
-		
+
 		if freq > 0 {
 			pft.NonZeroCount++
 		}
@@ -430,37 +433,39 @@ func (pft *PackedFrequencyTable) GetMemoryUsage() int64 {
 	return pft.PackedFrequencies.GetMemoryUsage() + int64(unsafe.Sizeof(*pft))
 }
 
-// GetCompressionRatio calculates the compression ratio compared to map-based storage
+// GetCompressionRatio returns an estimate of map-based memory (48 bytes per
+// non-zero k-mer plus 8 bytes per possible k-mer) divided by the packed
+// table's actual memory.
 func (pft *PackedFrequencyTable) GetCompressionRatio() float64 {
 	// Estimate map-based memory usage
 	// Each map entry: ~48 bytes (key string + value int + map overhead)
 	mapMemory := int64(pft.NonZeroCount * 48)
-	
+
 	// Add base map structure overhead (~40 bytes + bucket array)
 	mapMemory += 40 + int64(pft.MaxKmers*8) // Approximate hash map overhead
-	
+
 	packedMemory := pft.GetMemoryUsage()
-	
+
 	if packedMemory == 0 {
 		return 1.0
 	}
-	
+
 	return float64(mapMemory) / float64(packedMemory)
 }
 
 // GetStatistics returns comprehensive statistics about the packed frequency table
 func (pft *PackedFrequencyTable) GetStatistics() PackedTableStatistics {
 	return PackedTableStatistics{
-		K:                 pft.K,
-		MaxKmers:          pft.MaxKmers,
-		NonZeroKmers:      pft.NonZeroCount,
-		TotalCount:        pft.TotalCount,
-		MemoryUsage:       pft.GetMemoryUsage(),
-		CompressionRatio:  pft.GetCompressionRatio(),
-		BitsPerItem:       pft.PackedFrequencies.bitsPerItem,
-		PackedArraySize:   len(pft.PackedFrequencies.data),
-		MaxFrequency:      int(pft.PackedFrequencies.maxValue),
-		Sparsity:          1.0 - (float64(pft.NonZeroCount)/float64(pft.MaxKmers)),
+		K:                pft.K,
+		MaxKmers:         pft.MaxKmers,
+		NonZeroKmers:     pft.NonZeroCount,
+		TotalCount:       pft.TotalCount,
+		MemoryUsage:      pft.GetMemoryUsage(),
+		CompressionRatio: pft.GetCompressionRatio(),
+		BitsPerItem:      pft.PackedFrequencies.bitsPerItem,
+		PackedArraySize:  len(pft.PackedFrequencies.data),
+		MaxFrequency:     int(pft.PackedFrequencies.maxValue),
+		Sparsity:         1.0 - (float64(pft.NonZeroCount) / float64(pft.MaxKmers)),
 	}
 }
 
@@ -475,5 +480,5 @@ type PackedTableStatistics struct {
 	BitsPerItem      int
 	PackedArraySize  int
 	MaxFrequency     int
-	Sparsity         float64  // Fraction of k-mers with zero frequency
+	Sparsity         float64 // Fraction of k-mers with zero frequency
 }

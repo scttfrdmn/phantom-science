@@ -9,39 +9,48 @@ import (
 	"github.com/scttfrdmn/phantom-science/internal/errors"
 )
 
-// AdaptiveHMMModel represents an adaptive HMM model that dynamically adjusts for sequence complexity
+// AdaptiveHMMModel is an order-(k-1) Markov chain like HMMKmerModel, with
+// heuristic controls. Training skips k-mers that fail fixed filters
+// (homopolymer runs over 8, a GC-steering rule toward 0.42, and random CpG
+// rejection) and weights the rest by a k-mer diversity target, so the trained
+// transitions are not the reference's empirical frequencies. Generation
+// reweights the transitions toward a target fraction of distinct k-mers in a
+// 100-k-mer window and against homopolymer runs of 5 or more. Qualities in
+// generated sequences come from generateAdaptiveQuality, a heuristic, not
+// from the trained quality distributions.
 type AdaptiveHMMModel struct {
-	k                      int
-	stateSpace             []string
-	transitionMatrix       [][]float64
-	emissionMatrix         [][]float64
-	startProbabilities     []float64
-	
+	k                  int
+	stateSpace         []string
+	transitionMatrix   [][]float64
+	emissionMatrix     [][]float64
+	startProbabilities []float64
+
 	// Adaptive complexity features
-	complexityMemory       []string              // Recent k-mer history for complexity tracking
-	complexityWindowSize   int                   // Size of complexity tracking window
-	targetComplexity       float64               // Target sequence complexity (0.6-0.8)
-	currentComplexity      float64               // Current measured complexity
-	adaptiveWeights        map[string]float64    // Dynamic weights based on complexity
-	
+	complexityMemory     []string           // Recent k-mer history for complexity tracking
+	complexityWindowSize int                // Size of complexity tracking window
+	targetComplexity     float64            // Target sequence complexity (0.6-0.8)
+	currentComplexity    float64            // Current measured complexity
+	adaptiveWeights      map[string]float64 // Dynamic weights based on complexity
+
 	// Biological constraints
-	gcContentTarget        float64
-	gcContentTolerance     float64
-	currentGCContent       float64
-	homopolymerMaxLength   int
-	cpgDepletionRatio      float64
-	
+	gcContentTarget      float64
+	gcContentTolerance   float64
+	currentGCContent     float64
+	homopolymerMaxLength int
+	cpgDepletionRatio    float64
+
 	// Training and generation state
-	totalKmers             uint64
-	trained                bool
-	mu                     sync.RWMutex
-	rng                    *rand.Rand
-	
+	totalKmers uint64
+	trained    bool
+	mu         sync.RWMutex
+	rng        *rand.Rand
+
 	// Performance metrics
-	generationStats        GenerationStats
+	generationStats GenerationStats
 }
 
-// GenerationStats tracks generation performance and quality
+// GenerationStats accumulates summary statistics over generated sequences.
+// AverageJSDivergence is never computed and stays zero.
 type GenerationStats struct {
 	TotalSequences      int
 	TotalBases          int64
@@ -63,12 +72,12 @@ func NewAdaptiveHMMModel(k int) *AdaptiveHMMModel {
 	model := &AdaptiveHMMModel{
 		k:                    k,
 		rng:                  rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), 0)), // #nosec G404
-		complexityWindowSize: 100,              // Track last 100 k-mers
-		targetComplexity:     0.7,              // Target 70% complexity
-		gcContentTarget:      0.42,             // Target 42% GC content
-		gcContentTolerance:   0.015,            // ±1.5% tolerance (enhanced)
-		homopolymerMaxLength: 8,                // Max 8-base homopolymer runs
-		cpgDepletionRatio:    0.25,             // CpG depletion ratio
+		complexityWindowSize: 100,                                                     // Track last 100 k-mers
+		targetComplexity:     0.7,                                                     // Target fraction of distinct k-mers in the window
+		gcContentTarget:      0.42,                                                    // Target GC fraction
+		gcContentTolerance:   0.015,                                                   // ±0.015 GC fraction
+		homopolymerMaxLength: 8,                                                       // Max 8-base homopolymer runs
+		cpgDepletionRatio:    0.25,                                                    // CpG depletion ratio
 		adaptiveWeights:      make(map[string]float64),
 		complexityMemory:     make([]string, 0),
 	}
@@ -153,9 +162,9 @@ func (m *AdaptiveHMMModel) TrainFromReferenceGenome(refGenome GenomeInterface) e
 }
 
 // trainOnChromosomeAdaptive trains on a single chromosome with adaptive complexity tracking
-func (m *AdaptiveHMMModel) trainOnChromosomeAdaptive(chr ChromosomeInterface, 
+func (m *AdaptiveHMMModel) trainOnChromosomeAdaptive(chr ChromosomeInterface,
 	transitionCounts, emissionCounts [][]int, startCounts []int) error {
-	
+
 	sequence := chr.GetSequence()
 	if len(sequence) < m.k {
 		return nil
@@ -163,11 +172,11 @@ func (m *AdaptiveHMMModel) trainOnChromosomeAdaptive(chr ChromosomeInterface,
 
 	// Track complexity during training
 	var kmerWindow []string
-	
+
 	// Process sequence with adaptive complexity awareness
 	for i := 0; i <= len(sequence)-m.k; i++ {
 		kmer := string(sequence[i : i+m.k])
-		
+
 		// Skip k-mers with non-standard bases
 		if !m.isValidKmer(kmer) {
 			continue
@@ -181,10 +190,10 @@ func (m *AdaptiveHMMModel) trainOnChromosomeAdaptive(chr ChromosomeInterface,
 
 		// Calculate current window complexity
 		windowComplexity := m.calculateWindowComplexity(kmerWindow)
-		
+
 		// Apply adaptive weighting based on complexity
 		weight := m.getAdaptiveWeight(kmer, windowComplexity)
-		
+
 		// Apply biological filters
 		if !m.passesBiologicalFilters(kmer, kmerWindow) {
 			continue
@@ -241,7 +250,7 @@ func (m *AdaptiveHMMModel) calculateWindowComplexity(window []string) float64 {
 // getAdaptiveWeight calculates adaptive weight based on complexity needs
 func (m *AdaptiveHMMModel) getAdaptiveWeight(kmer string, currentComplexity float64) float64 {
 	baseWeight := 1.0
-	
+
 	// If current complexity is too low, favor rare k-mers
 	if currentComplexity < m.targetComplexity {
 		// Check if this k-mer would increase complexity
@@ -251,16 +260,16 @@ func (m *AdaptiveHMMModel) getAdaptiveWeight(kmer string, currentComplexity floa
 			baseWeight *= 0.5 // Reduce weight for common k-mers
 		}
 	}
-	
+
 	// If current complexity is too high, favor common k-mers
-	if currentComplexity > m.targetComplexity + 0.1 {
+	if currentComplexity > m.targetComplexity+0.1 {
 		if m.wouldIncreaseComplexity(kmer) {
 			baseWeight *= 0.5 // Reduce weight for rare k-mers
 		} else {
 			baseWeight *= 1.5 // Favor common k-mers
 		}
 	}
-	
+
 	return baseWeight
 }
 
@@ -275,23 +284,23 @@ func (m *AdaptiveHMMModel) wouldIncreaseComplexity(kmer string) bool {
 	return true // Would increase complexity
 }
 
-// passesBiologicalFilters applies biological realism filters
+// passesBiologicalFilters applies the homopolymer, GC and CpG training filters.
 func (m *AdaptiveHMMModel) passesBiologicalFilters(kmer string, window []string) bool {
 	// Homopolymer filter
 	if !m.passesHomopolymerFilter(kmer) {
 		return false
 	}
-	
+
 	// GC content filter
 	if !m.passesGCFilter(kmer, window) {
 		return false
 	}
-	
+
 	// CpG depletion filter
 	if !m.passesCpGFilter(kmer) {
 		return false
 	}
-	
+
 	return true
 }
 
@@ -311,12 +320,14 @@ func (m *AdaptiveHMMModel) passesHomopolymerFilter(kmer string) bool {
 	return true
 }
 
-// passesGCFilter checks GC content constraints with enhanced control
+// passesGCFilter accepts a training k-mer only if its GC fraction moves the
+// recent window toward gcContentTarget; thresholds tighten as the window
+// deviates further.
 func (m *AdaptiveHMMModel) passesGCFilter(kmer string, window []string) bool {
 	// Calculate current window GC content
 	gcCount := 0
 	totalBases := 0
-	
+
 	for _, windowKmer := range window {
 		for _, base := range windowKmer {
 			totalBases++
@@ -325,13 +336,13 @@ func (m *AdaptiveHMMModel) passesGCFilter(kmer string, window []string) bool {
 			}
 		}
 	}
-	
+
 	if totalBases == 0 {
 		return true
 	}
-	
+
 	currentGC := float64(gcCount) / float64(totalBases)
-	
+
 	// Check if adding this k-mer would improve GC content
 	kmerGC := 0
 	for _, base := range kmer {
@@ -339,18 +350,17 @@ func (m *AdaptiveHMMModel) passesGCFilter(kmer string, window []string) bool {
 			kmerGC++
 		}
 	}
-	
+
 	kmerGCRatio := float64(kmerGC) / float64(len(kmer))
-	
-	// Enhanced GC content correction with tighter control
+
 	deviationFromTarget := currentGC - m.gcContentTarget
 	absDeviation := deviationFromTarget
 	if absDeviation < 0 {
 		absDeviation = -absDeviation
 	}
-	
+
 	// If we're significantly outside tolerance, be very aggressive
-	if absDeviation > m.gcContentTolerance * 2 {
+	if absDeviation > m.gcContentTolerance*2 {
 		if deviationFromTarget > 0 {
 			// Too GC-rich, strongly favor AT-rich k-mers
 			return kmerGCRatio < 0.3
@@ -359,7 +369,7 @@ func (m *AdaptiveHMMModel) passesGCFilter(kmer string, window []string) bool {
 			return kmerGCRatio > 0.7
 		}
 	}
-	
+
 	// If we're moderately outside tolerance, be moderately aggressive
 	if absDeviation > m.gcContentTolerance {
 		if deviationFromTarget > 0 {
@@ -370,7 +380,7 @@ func (m *AdaptiveHMMModel) passesGCFilter(kmer string, window []string) bool {
 			return kmerGCRatio > 0.65
 		}
 	}
-	
+
 	// If we're within tolerance, apply gentle corrections
 	if deviationFromTarget > 0 {
 		// Slightly too GC-rich, gently favor AT-rich k-mers
@@ -379,11 +389,12 @@ func (m *AdaptiveHMMModel) passesGCFilter(kmer string, window []string) bool {
 		// Slightly too AT-rich, gently favor GC-rich k-mers
 		return kmerGCRatio > 0.5
 	}
-	
+
 	return true
 }
 
-// passesCpGFilter applies CpG depletion constraints
+// passesCpGFilter keeps a k-mer containing CpG with probability
+// cpgDepletionRatio.
 func (m *AdaptiveHMMModel) passesCpGFilter(kmer string) bool {
 	// Count CpG dinucleotides in k-mer
 	cpgCount := 0
@@ -392,26 +403,27 @@ func (m *AdaptiveHMMModel) passesCpGFilter(kmer string) bool {
 			cpgCount++
 		}
 	}
-	
+
 	// Apply CpG depletion
 	if cpgCount > 0 {
 		return m.rng.Float64() < m.cpgDepletionRatio
 	}
-	
+
 	return true
 }
 
-// generateAdaptiveQuality generates quality scores based on complexity context
+// generateAdaptiveQuality returns a heuristic quality: 30 (32 above 0.6
+// complexity, 28 below 0.3), minus 2 for GC-rich k-mers, plus Gaussian noise
+// with SD 3, clamped to [0, 41]. The adjustments are not fitted to data.
 func (m *AdaptiveHMMModel) generateAdaptiveQuality(kmer string, complexity float64) int {
 	baseQuality := 30
-	
-	// Higher complexity sequences tend to have slightly higher quality
+
 	if complexity > 0.6 {
 		baseQuality = 32
 	} else if complexity < 0.3 {
 		baseQuality = 28
 	}
-	
+
 	// GC content affects quality
 	gcCount := 0
 	for _, base := range kmer {
@@ -419,11 +431,11 @@ func (m *AdaptiveHMMModel) generateAdaptiveQuality(kmer string, complexity float
 			gcCount++
 		}
 	}
-	
+
 	if gcCount > len(kmer)/2 {
 		baseQuality -= 2
 	}
-	
+
 	// Add randomness and clamp
 	quality := baseQuality + int(m.rng.NormFloat64()*3)
 	if quality < 0 {
@@ -432,20 +444,20 @@ func (m *AdaptiveHMMModel) generateAdaptiveQuality(kmer string, complexity float
 	if quality >= 42 {
 		quality = 41
 	}
-	
+
 	return quality
 }
 
 // normalizeWithComplexityControl normalizes probabilities with complexity control
 func (m *AdaptiveHMMModel) normalizeWithComplexityControl(
 	transitionCounts, emissionCounts [][]int, startCounts []int) {
-	
+
 	// Normalize start probabilities
 	startTotal := 0
 	for _, count := range startCounts {
 		startTotal += count
 	}
-	
+
 	if startTotal > 0 {
 		for i, count := range startCounts {
 			m.startProbabilities[i] = float64(count) / float64(startTotal)
@@ -462,23 +474,23 @@ func (m *AdaptiveHMMModel) normalizeWithComplexityControl(
 		for _, count := range counts {
 			total += count
 		}
-		
+
 		if total > 0 {
 			for j, count := range counts {
 				baseProb := float64(count) / float64(total)
-				
+
 				// Apply adaptive complexity weighting
 				state := m.stateSpace[i]
 				nextBase := m.getBaseFromIndex(j)
 				nextKmer := state + string(nextBase)
-				
+
 				complexityWeight := m.getComplexityWeight(nextKmer)
 				biologicalWeight := m.getBiologicalWeight(state, nextBase)
-				
+
 				finalProb := baseProb * complexityWeight * biologicalWeight
 				m.transitionMatrix[i][j] = finalProb
 			}
-			
+
 			// Renormalize
 			m.renormalizeTransitionRow(i)
 		} else {
@@ -495,7 +507,7 @@ func (m *AdaptiveHMMModel) normalizeWithComplexityControl(
 		for _, count := range counts {
 			total += count
 		}
-		
+
 		if total > 0 {
 			for j, count := range counts {
 				m.emissionMatrix[i][j] = float64(count) / float64(total)
@@ -517,12 +529,13 @@ func (m *AdaptiveHMMModel) getComplexityWeight(kmer string) float64 {
 	return 1.0
 }
 
-// getBiologicalWeight calculates biological realism weight with enhanced GC control
+// getBiologicalWeight returns a heuristic multiplier for a transition: it
+// steers toward gcContentTarget and down-weights CpG and homopolymer
+// extensions.
 func (m *AdaptiveHMMModel) getBiologicalWeight(state string, nextBase byte) float64 {
 	weight := 1.0
-	
-	// Enhanced GC content bias with adaptive correction
-	// Calculate current local GC content from state
+
+	// Local GC content of the state
 	localGC := 0.0
 	if len(state) > 0 {
 		gcCount := 0
@@ -533,21 +546,21 @@ func (m *AdaptiveHMMModel) getBiologicalWeight(state string, nextBase byte) floa
 		}
 		localGC = float64(gcCount) / float64(len(state))
 	}
-	
+
 	// Calculate deviation from target GC content
 	gcDeviation := localGC - m.gcContentTarget
-	
+
 	// Apply adaptive GC content weighting
 	if nextBase == 'G' || nextBase == 'C' {
 		// GC base - reduce weight if we're already GC-rich
 		baseGCWeight := m.gcContentTarget / 0.5
 		if gcDeviation > m.gcContentTolerance {
 			// Too GC-rich, penalize GC bases more heavily
-			penalty := 1.0 + (gcDeviation - m.gcContentTolerance) * 10.0
+			penalty := 1.0 + (gcDeviation-m.gcContentTolerance)*10.0
 			baseGCWeight /= penalty
 		} else if gcDeviation < -m.gcContentTolerance {
 			// Too AT-rich, favor GC bases more heavily
-			bonus := 1.0 + (-gcDeviation - m.gcContentTolerance) * 5.0
+			bonus := 1.0 + (-gcDeviation-m.gcContentTolerance)*5.0
 			baseGCWeight *= bonus
 		}
 		weight *= baseGCWeight
@@ -556,26 +569,26 @@ func (m *AdaptiveHMMModel) getBiologicalWeight(state string, nextBase byte) floa
 		baseATWeight := (1.0 - m.gcContentTarget) / 0.5
 		if gcDeviation < -m.gcContentTolerance {
 			// Too AT-rich, penalize AT bases more heavily
-			penalty := 1.0 + (-gcDeviation - m.gcContentTolerance) * 10.0
+			penalty := 1.0 + (-gcDeviation-m.gcContentTolerance)*10.0
 			baseATWeight /= penalty
 		} else if gcDeviation > m.gcContentTolerance {
 			// Too GC-rich, favor AT bases more heavily
-			bonus := 1.0 + (gcDeviation - m.gcContentTolerance) * 5.0
+			bonus := 1.0 + (gcDeviation-m.gcContentTolerance)*5.0
 			baseATWeight *= bonus
 		}
 		weight *= baseATWeight
 	}
-	
+
 	// CpG depletion
 	if len(state) > 0 && state[len(state)-1] == 'C' && nextBase == 'G' {
 		weight *= m.cpgDepletionRatio
 	}
-	
+
 	// Homopolymer penalty
 	if len(state) > 0 && state[len(state)-1] == nextBase {
 		weight *= 0.7
 	}
-	
+
 	return weight
 }
 
@@ -636,7 +649,7 @@ func (m *AdaptiveHMMModel) generateAdaptiveSequence(length int) ([]byte, []byte,
 
 	// Initialize complexity tracking
 	m.complexityMemory = make([]string, 0)
-	
+
 	// Choose initial state
 	currentState := m.sampleFromDistribution(m.startProbabilities)
 	states[0] = currentState
@@ -644,7 +657,7 @@ func (m *AdaptiveHMMModel) generateAdaptiveSequence(length int) ([]byte, []byte,
 	// Generate initial k-mer
 	initialKmer := m.stateSpace[currentState]
 	for i, base := range initialKmer {
-		sequence[i] = byte(base) // #nosec G115
+		sequence[i] = byte(base)                                         // #nosec G115
 		qualities[i] = byte(m.generateAdaptiveQuality(initialKmer, 0.5)) // #nosec G115
 	}
 
@@ -657,7 +670,7 @@ func (m *AdaptiveHMMModel) generateAdaptiveSequence(length int) ([]byte, []byte,
 	for i := m.k - 1; i < length; i++ {
 		// Calculate current sequence complexity
 		currentComplexity := m.calculateCurrentComplexity(sequence, i)
-		
+
 		// Generate next base with adaptive control
 		nextBase := m.generateAdaptiveBase(currentState, sequence, i, currentComplexity)
 		nextQuality := m.generateAdaptiveQuality(string(nextBase), currentComplexity)
@@ -690,32 +703,32 @@ func (m *AdaptiveHMMModel) calculateCurrentComplexity(sequence []byte, pos int) 
 	if pos < m.k {
 		return 0.5 // Default complexity
 	}
-	
+
 	// Look at recent window
 	windowStart := pos - m.complexityWindowSize
 	if windowStart < 0 {
 		windowStart = 0
 	}
-	
+
 	windowEnd := pos
 	if windowEnd > len(sequence) {
 		windowEnd = len(sequence)
 	}
-	
+
 	windowSeq := sequence[windowStart:windowEnd]
-	
+
 	// Count unique k-mers in window
 	uniqueKmers := make(map[string]bool)
 	for i := 0; i <= len(windowSeq)-m.k; i++ {
 		kmer := string(windowSeq[i : i+m.k])
 		uniqueKmers[kmer] = true
 	}
-	
+
 	totalPossibleKmers := len(windowSeq) - m.k + 1
 	if totalPossibleKmers <= 0 {
 		return 0.5
 	}
-	
+
 	return float64(len(uniqueKmers)) / float64(totalPossibleKmers)
 }
 
@@ -727,11 +740,11 @@ func (m *AdaptiveHMMModel) generateAdaptiveBase(state int, sequence []byte, pos 
 	// Apply adaptive complexity adjustments
 	for i := 0; i < 4; i++ {
 		nextBase := []byte{'A', 'T', 'G', 'C'}[i]
-		
+
 		// Check if this base would create a k-mer that increases complexity
 		if pos >= m.k-1 {
 			potentialKmer := string(sequence[pos-m.k+1:pos]) + string(nextBase)
-			
+
 			// If complexity is too low, favor new k-mers
 			if complexity < m.targetComplexity {
 				if m.wouldIncreaseComplexity(potentialKmer) {
@@ -740,9 +753,9 @@ func (m *AdaptiveHMMModel) generateAdaptiveBase(state int, sequence []byte, pos 
 					transitionProbs[i] *= 0.7
 				}
 			}
-			
+
 			// If complexity is too high, favor repeated k-mers
-			if complexity > m.targetComplexity + 0.1 {
+			if complexity > m.targetComplexity+0.1 {
 				if m.wouldIncreaseComplexity(potentialKmer) {
 					transitionProbs[i] *= 0.7
 				} else {
@@ -750,7 +763,7 @@ func (m *AdaptiveHMMModel) generateAdaptiveBase(state int, sequence []byte, pos 
 				}
 			}
 		}
-		
+
 		// Apply biological constraints
 		if pos > 0 {
 			prevBase := sequence[pos-1]
@@ -760,7 +773,7 @@ func (m *AdaptiveHMMModel) generateAdaptiveBase(state int, sequence []byte, pos 
 				for j := pos - 2; j >= 0 && sequence[j] == prevBase; j-- {
 					runLength++
 				}
-				
+
 				if runLength >= 5 {
 					transitionProbs[i] *= 0.2
 				}
@@ -795,11 +808,11 @@ func (m *AdaptiveHMMModel) updateComplexityMemory(kmer string) {
 func (m *AdaptiveHMMModel) updateGenerationStats(sequence, qualities []byte) {
 	m.generationStats.TotalSequences++
 	m.generationStats.TotalBases += int64(len(sequence))
-	
+
 	// Calculate complexity
 	complexity := m.calculateSequenceComplexity(sequence)
 	m.generationStats.AverageComplexity = (m.generationStats.AverageComplexity*float64(m.generationStats.TotalSequences-1) + complexity) / float64(m.generationStats.TotalSequences)
-	
+
 	// Calculate GC content
 	gcCount := 0
 	for _, base := range sequence {
@@ -809,7 +822,7 @@ func (m *AdaptiveHMMModel) updateGenerationStats(sequence, qualities []byte) {
 	}
 	gcContent := float64(gcCount) / float64(len(sequence))
 	m.generationStats.AverageGCContent = (m.generationStats.AverageGCContent*float64(m.generationStats.TotalSequences-1) + gcContent) / float64(m.generationStats.TotalSequences)
-	
+
 	// Calculate max homopolymer
 	maxHomopolymer := m.findMaxHomopolymerRun(sequence)
 	if maxHomopolymer > m.generationStats.MaxHomopolymer {
@@ -822,13 +835,13 @@ func (m *AdaptiveHMMModel) calculateSequenceComplexity(sequence []byte) float64 
 	if len(sequence) < m.k {
 		return 0.0
 	}
-	
+
 	uniqueKmers := make(map[string]bool)
 	for i := 0; i <= len(sequence)-m.k; i++ {
 		kmer := string(sequence[i : i+m.k])
 		uniqueKmers[kmer] = true
 	}
-	
+
 	totalKmers := len(sequence) - m.k + 1
 	return float64(len(uniqueKmers)) / float64(totalKmers)
 }
@@ -864,11 +877,11 @@ func (m *AdaptiveHMMModel) SetSeed(seed int64) {
 func (m *AdaptiveHMMModel) ValidateModel() error {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	
+
 	if !m.trained {
 		return errors.NewValidationError("adaptive_hmm_model", "validate_model", "model has not been trained")
 	}
-	
+
 	return nil
 }
 
@@ -900,11 +913,16 @@ func (m *AdaptiveHMMModel) getStateIndex(state string) int {
 
 func (m *AdaptiveHMMModel) getBaseIndex(base byte) int {
 	switch base {
-	case 'A': return 0
-	case 'T': return 1
-	case 'G': return 2
-	case 'C': return 3
-	default: return -1
+	case 'A':
+		return 0
+	case 'T':
+		return 1
+	case 'G':
+		return 2
+	case 'C':
+		return 3
+	default:
+		return -1
 	}
 }
 
@@ -919,14 +937,14 @@ func (m *AdaptiveHMMModel) getBaseFromIndex(index int) byte {
 func (m *AdaptiveHMMModel) sampleFromDistribution(probs []float64) int {
 	r := m.rng.Float64()
 	cumulative := 0.0
-	
+
 	for i, prob := range probs {
 		cumulative += prob
 		if r <= cumulative {
 			return i
 		}
 	}
-	
+
 	return len(probs) - 1
 }
 
@@ -942,7 +960,7 @@ func (m *AdaptiveHMMModel) renormalizeTransitionRow(row int) {
 	for _, prob := range m.transitionMatrix[row] {
 		sum += prob
 	}
-	
+
 	if sum > 0 {
 		for j := range m.transitionMatrix[row] {
 			m.transitionMatrix[row][j] /= sum
@@ -954,10 +972,10 @@ func (m *AdaptiveHMMModel) findMaxHomopolymerRun(sequence []byte) int {
 	if len(sequence) == 0 {
 		return 0
 	}
-	
+
 	maxRun := 1
 	currentRun := 1
-	
+
 	for i := 1; i < len(sequence); i++ {
 		if sequence[i] == sequence[i-1] {
 			currentRun++
@@ -968,11 +986,11 @@ func (m *AdaptiveHMMModel) findMaxHomopolymerRun(sequence []byte) int {
 			currentRun = 1
 		}
 	}
-	
+
 	if currentRun > maxRun {
 		maxRun = currentRun
 	}
-	
+
 	return maxRun
 }
 
@@ -981,23 +999,23 @@ func (m *AdaptiveHMMModel) TrainFromSequence(sequence []byte) error {
 	if len(sequence) < m.k {
 		return nil
 	}
-	
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	
+
 	// Process sequence and update model
 	for i := 0; i <= len(sequence)-m.k; i++ {
 		kmer := string(sequence[i : i+m.k])
 		if !m.isValidKmer(kmer) {
 			continue
 		}
-		
+
 		// Update k-mer counts
 		m.totalKmers++
-		
+
 		// Update complexity memory
 		m.updateComplexityMemory(kmer)
-		
+
 		// Train transitions if we have a previous k-mer
 		if i > 0 {
 			prevKmer := string(sequence[i-1 : i-1+m.k])
@@ -1006,14 +1024,14 @@ func (m *AdaptiveHMMModel) TrainFromSequence(sequence []byte) error {
 				prevStateIndex := m.getStateIndex(prevKmer[:m.k-1])
 				nextBase := kmer[m.k-1]
 				nextBaseIndex := m.getBaseIndex(nextBase)
-				
+
 				if prevStateIndex >= 0 && nextBaseIndex >= 0 {
 					m.transitionMatrix[prevStateIndex][nextBaseIndex] += 1.0
 				}
 			}
 		}
 	}
-	
+
 	m.trained = true
 	return nil
 }

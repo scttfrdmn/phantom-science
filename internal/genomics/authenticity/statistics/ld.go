@@ -12,7 +12,8 @@ import (
 type LDResult struct {
 	// D is the linkage disequilibrium coefficient: D = p_AB − p_A·p_B.
 	D float64
-	// DPrime is the normalised LD coefficient D' ∈ [−1, 1].
+	// DPrime is |D'|, Lewontin's normalised LD coefficient, in [0, 1]. For
+	// D < 0 both D and D_max are negative, so the sign is not kept.
 	DPrime float64
 	// RSquared is the squared correlation coefficient r² ∈ [0, 1].
 	RSquared float64
@@ -45,7 +46,7 @@ type LDResult struct {
 //
 //	D_max = min(p_A·q_b, q_a·p_B)   if D > 0
 //	       max(−p_A·p_B, −q_a·q_b)  if D ≤ 0
-//	D'   = D / D_max
+//	D'   = D / D_max                 (always ≥ 0; this is |D'|)
 //
 // Returns an error for monomorphic loci (p_A = 0 or 1, or p_B = 0 or 1).
 //

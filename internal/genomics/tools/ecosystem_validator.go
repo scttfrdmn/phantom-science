@@ -1,3 +1,11 @@
+// Package tools checks which external genomics tools (and workflow engines)
+// are installed and runs each one with a version or help command. It also
+// writes uniform random FASTQ, VCF and FASTA test files.
+//
+// Only the basic-compatibility mode executes anything. The performance,
+// population-scale, workflow, streaming and cloud modes are stubs that
+// return fixed metrics without running a tool or contacting a cloud
+// provider, and the scores derived from them reflect those fixed values.
 package tools
 
 import (
@@ -15,7 +23,8 @@ import (
 	"github.com/scttfrdmn/phantom-science/internal/errors"
 )
 
-// GenomicsEcosystemValidator provides comprehensive validation of genomics tools integration
+// GenomicsEcosystemValidator checks that configured genomics tools run. See
+// the package comment for which validation modes are stubs.
 type GenomicsEcosystemValidator struct {
 	config          EcosystemConfig
 	toolSuite       *GenomicsToolSuite
@@ -37,27 +46,27 @@ type GenomicsEcosystemValidator struct {
 // EcosystemConfig contains configuration for ecosystem validation
 type EcosystemConfig struct {
 	// Tool installation paths
-	ToolPaths       map[string]string
-	
+	ToolPaths map[string]string
+
 	// Test data directories
-	TestDataPath    string
-	ReferencePath   string
-	
+	TestDataPath  string
+	ReferencePath string
+
 	// Validation parameters
-	ValidationModes []ValidationMode
+	ValidationModes  []ValidationMode
 	PopulationPanels []string
-	PlatformTargets []string
-	
+	PlatformTargets  []string
+
 	// Performance settings
 	MaxConcurrentJobs int
 	TimeoutDuration   time.Duration
 	ResourceLimits    ResourceLimits
-	
+
 	// Quality thresholds
 	QualityThresholds QualityThresholds
-	
+
 	// Cloud integration
-	CloudConfig     CloudConfig
+	CloudConfig CloudConfig
 }
 
 // ValidationMode defines different types of ecosystem validation
@@ -74,39 +83,39 @@ const (
 
 // ResourceLimits defines resource constraints for tool execution
 type ResourceLimits struct {
-	MaxMemoryGB     int
-	MaxCPUCores     int
-	MaxDiskSpaceGB  int
+	MaxMemoryGB      int
+	MaxCPUCores      int
+	MaxDiskSpaceGB   int
 	MaxExecutionTime time.Duration
 }
 
 // QualityThresholds defines quality metrics thresholds
 type QualityThresholds struct {
-	MinAccuracy        float64  // Minimum variant calling accuracy
-	MaxFalsePositive   float64  // Maximum false positive rate
-	MaxFalseNegative   float64  // Maximum false negative rate
-	MinCoverage        int      // Minimum sequencing coverage
-	MaxContamination   float64  // Maximum sample contamination
-	MinMappingQuality  int      // Minimum mapping quality
+	MinAccuracy       float64 // Minimum variant calling accuracy
+	MaxFalsePositive  float64 // Maximum false positive rate
+	MaxFalseNegative  float64 // Maximum false negative rate
+	MinCoverage       int     // Minimum sequencing coverage
+	MaxContamination  float64 // Maximum sample contamination
+	MinMappingQuality int     // Minimum mapping quality
 }
 
 // CloudConfig contains cloud deployment configuration
 type CloudConfig struct {
-	Provider        string            // "aws", "gcp", "azure"
-	Region          string
-	InstanceTypes   []string
-	StorageConfig   StorageConfig
-	NetworkConfig   NetworkConfig
-	SecurityGroups  []string
-	Credentials     map[string]string
+	Provider       string // "aws", "gcp", "azure"
+	Region         string
+	InstanceTypes  []string
+	StorageConfig  StorageConfig
+	NetworkConfig  NetworkConfig
+	SecurityGroups []string
+	Credentials    map[string]string
 }
 
 // StorageConfig defines cloud storage configuration
 type StorageConfig struct {
-	BucketName       string
-	StorageClass     string
-	EncryptionKey    string `json:"-" yaml:"-"`
-	BackupRetention  time.Duration
+	BucketName      string
+	StorageClass    string
+	EncryptionKey   string `json:"-" yaml:"-"`
+	BackupRetention time.Duration
 }
 
 // NetworkConfig defines cloud networking configuration
@@ -123,7 +132,7 @@ func NewGenomicsEcosystemValidator(config EcosystemConfig) (*GenomicsEcosystemVa
 	if err := config.Validate(); err != nil {
 		return nil, errors.WrapError(err, errors.ConfigurationError, "ecosystem_validator", "new_validator", "invalid configuration")
 	}
-	
+
 	validator := &GenomicsEcosystemValidator{
 		config:             config,
 		toolSuite:          NewGenomicsToolSuite(config.ToolPaths),
@@ -134,12 +143,12 @@ func NewGenomicsEcosystemValidator(config EcosystemConfig) (*GenomicsEcosystemVa
 		validationResults:  make(map[string]*ToolValidationResult),
 		performanceMetrics: NewEcosystemMetrics(),
 	}
-	
+
 	// Initialize components
 	if err := validator.initialize(); err != nil {
 		return nil, errors.WrapError(err, errors.InitializationError, "ecosystem_validator", "new_validator", "failed to initialize components")
 	}
-	
+
 	return validator, nil
 }
 
@@ -148,23 +157,23 @@ func (config *EcosystemConfig) Validate() error {
 	if config.TestDataPath == "" {
 		return fmt.Errorf("test data path is required")
 	}
-	
+
 	if config.ReferencePath == "" {
 		return fmt.Errorf("reference path is required")
 	}
-	
+
 	if len(config.ToolPaths) == 0 {
 		return fmt.Errorf("at least one tool path is required")
 	}
-	
+
 	if config.MaxConcurrentJobs <= 0 {
 		config.MaxConcurrentJobs = 4 // Default
 	}
-	
+
 	if config.TimeoutDuration <= 0 {
 		config.TimeoutDuration = 1 * time.Hour // Default
 	}
-	
+
 	return nil
 }
 
@@ -174,17 +183,17 @@ func (gev *GenomicsEcosystemValidator) initialize() error {
 	if err := gev.toolSuite.VerifyToolAvailability(); err != nil {
 		return fmt.Errorf("tool verification failed: %w", err)
 	}
-	
+
 	// Initialize workflow engine
 	if err := gev.workflowEngine.Initialize(); err != nil {
 		return fmt.Errorf("workflow engine initialization failed: %w", err)
 	}
-	
+
 	// Prepare test data
 	if err := gev.prepareTestData(); err != nil {
 		return fmt.Errorf("test data preparation failed: %w", err)
 	}
-	
+
 	return nil
 }
 
@@ -194,19 +203,19 @@ func (gev *GenomicsEcosystemValidator) prepareTestData() error {
 	testDirs := []string{
 		"fastq", "vcf", "bam", "reference", "annotations", "populations", "benchmarks",
 	}
-	
+
 	for _, dir := range testDirs {
 		dirPath := filepath.Join(gev.config.TestDataPath, dir)
 		if err := os.MkdirAll(dirPath, 0750); err != nil {
 			return fmt.Errorf("failed to create test directory %s: %w", dirPath, err)
 		}
 	}
-	
+
 	// Generate synthetic test datasets if needed
 	if err := gev.generateSyntheticTestData(); err != nil {
 		return fmt.Errorf("failed to generate synthetic test data: %w", err)
 	}
-	
+
 	return nil
 }
 
@@ -220,31 +229,29 @@ func (gev *GenomicsEcosystemValidator) generateSyntheticTestData() error {
 			}
 		}
 	}
-	
+
 	// Generate test VCF files
 	if err := gev.generateTestVCF(); err != nil {
 		return fmt.Errorf("failed to generate test VCF: %w", err)
 	}
-	
+
 	// Generate reference sequences
 	if err := gev.generateTestReference(); err != nil {
 		return fmt.Errorf("failed to generate test reference: %w", err)
 	}
-	
+
 	return nil
 }
 
 // generateTestFASTQ generates synthetic FASTQ data for a platform/population combination
 func (gev *GenomicsEcosystemValidator) generateTestFASTQ(platform, population string) error {
-	// Placeholder implementation - would generate realistic FASTQ data
-	// based on platform characteristics and population genetics
-	
+	// Reads are uniform random bases with a constant per-platform quality;
+	// population is only used in the file name.
 	filename := fmt.Sprintf("%s_%s_test.fastq.gz", platform, population)
 	filepath := filepath.Join(gev.config.TestDataPath, "fastq", filename)
-	
-	// Generate synthetic reads with platform-specific characteristics
+
 	syntheticReads := gev.generatePlatformSpecificReads(platform, population, 100000)
-	
+
 	// Write to compressed FASTQ file
 	return gev.writeFASTQFile(filepath, syntheticReads)
 }
@@ -255,16 +262,16 @@ func (gev *GenomicsEcosystemValidator) generateTestVCF() error {
 	for _, population := range gev.config.PopulationPanels {
 		filename := fmt.Sprintf("%s_test_variants.vcf.gz", population)
 		filepath := filepath.Join(gev.config.TestDataPath, "vcf", filename)
-		
+
 		// Generate synthetic variants with population-specific characteristics
 		syntheticVariants := gev.generatePopulationVariants(population, 50000)
-		
+
 		// Write to compressed VCF file
 		if err := gev.writeVCFFile(filepath, syntheticVariants); err != nil {
 			return fmt.Errorf("failed to write VCF for %s: %w", population, err)
 		}
 	}
-	
+
 	return nil
 }
 
@@ -272,45 +279,46 @@ func (gev *GenomicsEcosystemValidator) generateTestVCF() error {
 func (gev *GenomicsEcosystemValidator) generateTestReference() error {
 	// Generate test chromosome sequences
 	chromosomes := []string{"chr1", "chr2", "chr3", "chrX", "chrY", "chrM"}
-	
+
 	for _, chr := range chromosomes {
 		filename := fmt.Sprintf("%s_test.fa", chr)
 		filepath := filepath.Join(gev.config.TestDataPath, "reference", filename)
-		
+
 		// Generate synthetic chromosome sequence
 		sequence := gev.generateChromosomeSequence(chr, 10000000) // 10MB test chromosomes
-		
+
 		// Write to FASTA file
 		if err := gev.writeFASTAFile(filepath, chr, sequence); err != nil {
 			return fmt.Errorf("failed to write reference for %s: %w", chr, err)
 		}
 	}
-	
+
 	return nil
 }
 
-// ValidateEcosystem performs comprehensive ecosystem validation
+// ValidateEcosystem runs the configured validation modes and builds a report.
+// Results from the stub modes are fixed values (see the package comment).
 func (gev *GenomicsEcosystemValidator) ValidateEcosystem(ctx context.Context) (*EcosystemValidationReport, error) {
 	report := &EcosystemValidationReport{
-		StartTime:     time.Now(),
-		ValidatorConfig: gev.config,
-		ToolResults:     make(map[string]*ToolValidationResult),
-		WorkflowResults: make(map[string]*WorkflowValidationResult),
+		StartTime:          time.Now(),
+		ValidatorConfig:    gev.config,
+		ToolResults:        make(map[string]*ToolValidationResult),
+		WorkflowResults:    make(map[string]*WorkflowValidationResult),
 		PerformanceMetrics: gev.performanceMetrics,
 	}
-	
+
 	// Execute validation modes
 	for _, mode := range gev.config.ValidationModes {
 		if err := gev.executeValidationMode(ctx, mode, report); err != nil {
 			return nil, fmt.Errorf("validation mode %v failed: %w", mode, err)
 		}
 	}
-	
+
 	// Generate overall assessment
 	report.OverallAssessment = gev.generateOverallAssessment(report)
 	report.EndTime = time.Now()
 	report.Duration = report.EndTime.Sub(report.StartTime)
-	
+
 	return report, nil
 }
 
@@ -337,32 +345,32 @@ func (gev *GenomicsEcosystemValidator) executeValidationMode(ctx context.Context
 // validateBasicCompatibility validates basic tool compatibility
 func (gev *GenomicsEcosystemValidator) validateBasicCompatibility(ctx context.Context, report *EcosystemValidationReport) error {
 	tools := gev.toolSuite.GetAvailableTools()
-	
+
 	for _, tool := range tools {
 		result, err := gev.validateToolCompatibility(ctx, tool)
 		if err != nil {
 			return fmt.Errorf("tool compatibility validation failed for %s: %w", tool.Name, err)
 		}
-		
+
 		report.ToolResults[tool.Name] = result
 		gev.performanceMetrics.ToolsAttempted++
 		if result.Status == "passed" {
 			gev.performanceMetrics.ToolsValidated++
 		}
 	}
-	
+
 	return nil
 }
 
 // validateToolCompatibility validates a specific tool's compatibility
 func (gev *GenomicsEcosystemValidator) validateToolCompatibility(ctx context.Context, tool *GenomicsTool) (*ToolValidationResult, error) {
 	result := &ToolValidationResult{
-		ToolName:    tool.Name,
-		Version:     tool.Version,
-		StartTime:   time.Now(),
-		TestCases:   make([]*TestCaseResult, 0),
+		ToolName:  tool.Name,
+		Version:   tool.Version,
+		StartTime: time.Now(),
+		TestCases: make([]*TestCaseResult, 0),
 	}
-	
+
 	// Test basic execution
 	basicTest, err := gev.runBasicToolTest(ctx, tool)
 	if err != nil {
@@ -371,7 +379,7 @@ func (gev *GenomicsEcosystemValidator) validateToolCompatibility(ctx context.Con
 		return result, nil
 	}
 	result.TestCases = append(result.TestCases, basicTest)
-	
+
 	// Test with synthetic data
 	for _, platform := range gev.config.PlatformTargets {
 		for _, population := range gev.config.PopulationPanels {
@@ -384,16 +392,16 @@ func (gev *GenomicsEcosystemValidator) validateToolCompatibility(ctx context.Con
 			result.TestCases = append(result.TestCases, testCase)
 		}
 	}
-	
+
 	// Calculate overall metrics
 	result.calculateMetrics()
 	result.EndTime = time.Now()
 	result.Duration = result.EndTime.Sub(result.StartTime)
-	
+
 	if result.Status == "" {
 		result.Status = "passed"
 	}
-	
+
 	return result, nil
 }
 
@@ -405,16 +413,16 @@ func (gev *GenomicsEcosystemValidator) validatePerformanceBenchmark(ctx context.
 		{Name: "quality_control", Tools: []string{"fastqc", "multiqc", "qualimap"}},
 		{Name: "structural_variants", Tools: []string{"manta", "delly", "cnvnator"}},
 	}
-	
+
 	for _, suite := range benchmarkSuites {
 		suiteResult, err := gev.runBenchmarkSuite(ctx, suite)
 		if err != nil {
 			return fmt.Errorf("benchmark suite %s failed: %w", suite.Name, err)
 		}
-		
+
 		report.BenchmarkResults = append(report.BenchmarkResults, suiteResult)
 	}
-	
+
 	return nil
 }
 
@@ -426,16 +434,16 @@ func (gev *GenomicsEcosystemValidator) validatePopulationScale(ctx context.Conte
 		{Name: "gnomad_compatibility", DatasetSize: 10000, Populations: []string{"AFR", "EUR", "EAS", "AMR"}},
 		{Name: "ukbiobank_scale", DatasetSize: 50000, Populations: []string{"EUR", "SAS", "AFR", "EAS"}},
 	}
-	
+
 	for _, test := range populationTests {
 		testResult, err := gev.runPopulationTest(ctx, test)
 		if err != nil {
 			return fmt.Errorf("population test %s failed: %w", test.Name, err)
 		}
-		
+
 		report.PopulationResults = append(report.PopulationResults, testResult)
 	}
-	
+
 	return nil
 }
 
@@ -447,16 +455,16 @@ func (gev *GenomicsEcosystemValidator) validateWorkflowIntegration(ctx context.C
 		{Engine: "snakemake", WorkflowType: "snakefile", Name: "variant_calling_pipeline"},
 		{Engine: "cwl", WorkflowType: "cwl", Name: "population_analysis_workflow"},
 	}
-	
+
 	for _, workflow := range workflows {
 		workflowResult, err := gev.runWorkflowTest(ctx, workflow)
 		if err != nil {
 			return fmt.Errorf("workflow test %s failed: %w", workflow.Name, err)
 		}
-		
+
 		report.WorkflowResults[workflow.Name] = workflowResult
 	}
-	
+
 	return nil
 }
 
@@ -468,16 +476,16 @@ func (gev *GenomicsEcosystemValidator) validateRealTimeProcessing(ctx context.Co
 		{Name: "streaming_quality_control", DataRate: "5MB/s", Duration: 3 * time.Minute},
 		{Name: "live_alignment_processing", DataRate: "2MB/s", Duration: 10 * time.Minute},
 	}
-	
+
 	for _, test := range streamingTests {
 		streamResult, err := gev.runStreamingTest(ctx, test)
 		if err != nil {
 			return fmt.Errorf("streaming test %s failed: %w", test.Name, err)
 		}
-		
+
 		report.StreamingResults = append(report.StreamingResults, streamResult)
 	}
-	
+
 	return nil
 }
 
@@ -485,20 +493,20 @@ func (gev *GenomicsEcosystemValidator) validateRealTimeProcessing(ctx context.Co
 func (gev *GenomicsEcosystemValidator) validateCloudDeployment(ctx context.Context, report *EcosystemValidationReport) error {
 	if gev.config.CloudConfig.Provider == "" {
 		report.CloudResults = &CloudValidationResult{
-			Status: "skipped",
+			Status:  "skipped",
 			Message: "Cloud configuration not provided",
 		}
 		return nil
 	}
-	
+
 	// Test cloud deployment
 	cloudResult, err := gev.runCloudDeploymentTest(ctx, gev.config.CloudConfig)
 	if err != nil {
 		return fmt.Errorf("cloud deployment test failed: %w", err)
 	}
-	
+
 	report.CloudResults = cloudResult
-	
+
 	return nil
 }
 
@@ -511,7 +519,7 @@ func (gev *GenomicsEcosystemValidator) generateOverallAssessment(report *Ecosyst
 		ReliabilityScore:   gev.calculateReliabilityScore(report),
 		Recommendations:    gev.generateRecommendations(report),
 	}
-	
+
 	// Calculate overall score
 	scores := []float64{
 		assessment.CompatibilityScore,
@@ -519,13 +527,13 @@ func (gev *GenomicsEcosystemValidator) generateOverallAssessment(report *Ecosyst
 		assessment.ScalabilityScore,
 		assessment.ReliabilityScore,
 	}
-	
+
 	total := 0.0
 	for _, score := range scores {
 		total += score
 	}
 	assessment.OverallScore = total / float64(len(scores))
-	
+
 	// Determine overall status
 	if assessment.OverallScore >= 0.9 {
 		assessment.Status = "excellent"
@@ -536,7 +544,7 @@ func (gev *GenomicsEcosystemValidator) generateOverallAssessment(report *Ecosyst
 	} else {
 		assessment.Status = "needs_improvement"
 	}
-	
+
 	return assessment
 }
 
@@ -544,7 +552,7 @@ func (gev *GenomicsEcosystemValidator) generateOverallAssessment(report *Ecosyst
 
 func (gev *GenomicsEcosystemValidator) generatePlatformSpecificReads(platform, population string, numReads int) []*FASTQRead {
 	reads := make([]*FASTQRead, numReads)
-	
+
 	for i := 0; i < numReads; i++ {
 		reads[i] = &FASTQRead{
 			Header:   fmt.Sprintf("@read_%d_%s_%s", i+1, platform, population),
@@ -553,7 +561,7 @@ func (gev *GenomicsEcosystemValidator) generatePlatformSpecificReads(platform, p
 			Quality:  gev.generatePlatformQuality(platform, 150),
 		}
 	}
-	
+
 	return reads
 }
 
@@ -670,12 +678,12 @@ func (gev *GenomicsEcosystemValidator) generatePlatformQuality(platform string, 
 	case "nanopore":
 		baseQuality = 20
 	}
-	
+
 	quality := make([]rune, length)
 	for i := 0; i < length; i++ {
 		quality[i] = rune(baseQuality + 33) // ASCII offset
 	}
-	
+
 	return string(quality)
 }
 
@@ -687,11 +695,11 @@ func (gev *GenomicsEcosystemValidator) writeFASTQFile(filepath string, reads []*
 		return err
 	}
 	defer file.Close()
-	
+
 	for _, read := range reads {
 		fmt.Fprintf(file, "%s\n%s\n%s\n%s\n", read.Header, read.Sequence, read.Plus, read.Quality)
 	}
-	
+
 	return nil
 }
 
@@ -701,12 +709,12 @@ func (gev *GenomicsEcosystemValidator) writeVCFFile(filepath string, variants []
 		return err
 	}
 	defer file.Close()
-	
+
 	// Write VCF header
 	fmt.Fprintln(file, "##fileformat=VCFv4.3")
 	fmt.Fprintln(file, "##source=phantom-science-ecosystem-validator")
 	fmt.Fprintln(file, "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO")
-	
+
 	// Write variants
 	for _, variant := range variants {
 		fmt.Fprintf(file, "%s\t%d\t%s\t%s\t%s\t%.1f\t%s\t%s\n",
@@ -714,7 +722,7 @@ func (gev *GenomicsEcosystemValidator) writeVCFFile(filepath string, variants []
 			strings.Join(variant.Alternate, ","), variant.Quality, variant.Filter,
 			formatInfo(variant.Info))
 	}
-	
+
 	return nil
 }
 
@@ -724,9 +732,9 @@ func (gev *GenomicsEcosystemValidator) writeFASTAFile(filepath, chromosome strin
 		return err
 	}
 	defer file.Close()
-	
+
 	fmt.Fprintf(file, ">%s\n", chromosome)
-	
+
 	// Write sequence in 80-character lines
 	for i := 0; i < len(sequence); i += 80 {
 		end := i + 80
@@ -735,7 +743,7 @@ func (gev *GenomicsEcosystemValidator) writeFASTAFile(filepath, chromosome strin
 		}
 		fmt.Fprintf(file, "%s\n", string(sequence[i:end]))
 	}
-	
+
 	return nil
 }
 
@@ -757,12 +765,12 @@ type GenomicsToolSuite struct {
 
 // GenomicsTool represents a genomics analysis tool
 type GenomicsTool struct {
-	Name              string
-	Version           string
-	ExecutablePath    string
-	Category          string
-	Capabilities      []string
-	Parameters        map[string]interface{}
+	Name           string
+	Version        string
+	ExecutablePath string
+	Category       string
+	Capabilities   []string
+	Parameters     map[string]interface{}
 	// ValidationCommand is an optional shell command (space-separated) to run
 	// instead of "--version" during per-platform/population test cases.
 	// Example: "--version" (default) or "view --help"
@@ -771,11 +779,11 @@ type GenomicsTool struct {
 
 // WorkflowEngine manages workflow execution engines
 type WorkflowEngine struct {
-	config          EcosystemConfig
-	cromwellPath    string
-	nextflowPath    string
-	snakemakePath   string
-	cwlPath         string
+	config           EcosystemConfig
+	cromwellPath     string
+	nextflowPath     string
+	snakemakePath    string
+	cwlPath          string
 	supportedEngines map[string]bool
 }
 
@@ -817,7 +825,7 @@ type EcosystemMetrics struct {
 	ExecutionTimeMS   int64
 	SuccessRate       float64
 	ErrorRate         float64
-	mutex            sync.RWMutex
+	mutex             sync.RWMutex
 }
 
 // NewGenomicsToolSuite creates a new tool suite
@@ -826,11 +834,11 @@ func NewGenomicsToolSuite(toolPaths map[string]string) *GenomicsToolSuite {
 		toolPaths: toolPaths,
 		tools:     make([]*GenomicsTool, 0),
 	}
-	
+
 	// Initialize standard genomics tools
 	standardTools := []struct {
-		name       string
-		category   string
+		name         string
+		category     string
 		capabilities []string
 	}{
 		{"gatk", "variant_calling", []string{"haplotype_caller", "mutect2", "genomics_db_import"}},
@@ -844,7 +852,7 @@ func NewGenomicsToolSuite(toolPaths map[string]string) *GenomicsToolSuite {
 		{"multiqc", "quality_control", []string{"report_aggregation"}},
 		{"minimap2", "alignment", []string{"long_read_mapping"}},
 	}
-	
+
 	for _, toolSpec := range standardTools {
 		if path, exists := toolPaths[toolSpec.name]; exists {
 			tool := &GenomicsTool{
@@ -854,16 +862,16 @@ func NewGenomicsToolSuite(toolPaths map[string]string) *GenomicsToolSuite {
 				Capabilities:   toolSpec.capabilities,
 				Parameters:     make(map[string]interface{}),
 			}
-			
+
 			// Detect version
 			if version := suite.detectToolVersion(path); version != "" {
 				tool.Version = version
 			}
-			
+
 			suite.tools = append(suite.tools, tool)
 		}
 	}
-	
+
 	return suite
 }
 
@@ -880,17 +888,17 @@ func (gts *GenomicsToolSuite) detectToolVersion(toolPath string) string {
 			}
 		}
 	}
-	
+
 	if err != nil {
 		return "unknown"
 	}
-	
+
 	versionText := string(output)
 	lines := strings.Split(versionText, "\n")
 	if len(lines) > 0 {
 		return strings.TrimSpace(lines[0])
 	}
-	
+
 	return "unknown"
 }
 
@@ -905,14 +913,14 @@ func (gts *GenomicsToolSuite) VerifyToolAvailability() error {
 		if _, err := os.Stat(tool.ExecutablePath); os.IsNotExist(err) {
 			return fmt.Errorf("tool %s not found at path: %s", tool.Name, tool.ExecutablePath)
 		}
-		
+
 		// Test basic execution
 		cmd := exec.Command(tool.ExecutablePath, "--help") // #nosec G204
 		if err := cmd.Run(); err != nil {
 			return fmt.Errorf("tool %s failed basic execution test: %w", tool.Name, err)
 		}
 	}
-	
+
 	return nil
 }
 
@@ -977,7 +985,7 @@ func (we *WorkflowEngine) Initialize() error {
 	if len(we.supportedEngines) == 0 {
 		return fmt.Errorf("no workflow engines available")
 	}
-	
+
 	return nil
 }
 
@@ -986,7 +994,7 @@ func NewFormatValidator() *FormatValidator {
 	validator := &FormatValidator{
 		supportedFormats: make(map[string]*FormatSpec),
 	}
-	
+
 	// Define supported formats
 	formats := []*FormatSpec{
 		{
@@ -1016,11 +1024,11 @@ func NewFormatValidator() *FormatValidator {
 			Compression: []string{"gzip", "none"},
 		},
 	}
-	
+
 	for _, format := range formats {
 		validator.supportedFormats[format.Name] = format
 	}
-	
+
 	return validator
 }
 
@@ -1030,15 +1038,15 @@ func (fv *FormatValidator) validateFASTQ(data []byte) error {
 	if len(lines) < 4 {
 		return fmt.Errorf("insufficient lines for FASTQ format")
 	}
-	
+
 	if !strings.HasPrefix(lines[0], "@") {
 		return fmt.Errorf("FASTQ header must start with @")
 	}
-	
+
 	if !strings.HasPrefix(lines[2], "+") {
 		return fmt.Errorf("FASTQ plus line must start with +")
 	}
-	
+
 	return nil
 }
 
@@ -1047,7 +1055,7 @@ func (fv *FormatValidator) validateVCF(data []byte) error {
 	if !strings.HasPrefix(header, "##fileformat=VCF") {
 		return fmt.Errorf("VCF must start with ##fileformat=VCF")
 	}
-	
+
 	return nil
 }
 
@@ -1056,12 +1064,12 @@ func (fv *FormatValidator) validateSAM(data []byte) error {
 	if len(data) >= 4 && string(data[:4]) == "BAM\x01" {
 		return nil // Valid BAM
 	}
-	
+
 	header := string(data[:min(100, len(data))])
 	if strings.HasPrefix(header, "@HD") || strings.HasPrefix(header, "@SQ") {
 		return nil // Valid SAM
 	}
-	
+
 	return fmt.Errorf("invalid SAM/BAM format")
 }
 
@@ -1070,7 +1078,7 @@ func (fv *FormatValidator) validateFASTA(data []byte) error {
 	if !strings.HasPrefix(header, ">") {
 		return fmt.Errorf("FASTA must start with >")
 	}
-	
+
 	return nil
 }
 
@@ -1119,28 +1127,28 @@ type EcosystemValidationReport struct {
 	EndTime         time.Time
 	Duration        time.Duration
 	ValidatorConfig EcosystemConfig
-	
+
 	// Tool validation results
 	ToolResults map[string]*ToolValidationResult
-	
+
 	// Workflow validation results
 	WorkflowResults map[string]*WorkflowValidationResult
-	
+
 	// Performance benchmarks
 	BenchmarkResults []*BenchmarkResult
-	
+
 	// Population-scale tests
 	PopulationResults []*PopulationTestResult
-	
+
 	// Streaming/real-time tests
 	StreamingResults []*StreamingTestResult
-	
+
 	// Cloud deployment results
 	CloudResults *CloudValidationResult
-	
+
 	// Performance metrics
 	PerformanceMetrics *EcosystemMetrics
-	
+
 	// Overall assessment
 	OverallAssessment *OverallAssessment
 }
@@ -1163,22 +1171,22 @@ func (tvr *ToolValidationResult) calculateMetrics() {
 	if tvr.Metrics == nil {
 		tvr.Metrics = make(map[string]float64)
 	}
-	
+
 	passedCases := 0
 	totalExecutionTime := float64(0)
-	
+
 	for _, testCase := range tvr.TestCases {
 		if testCase.Status == "passed" {
 			passedCases++
 		}
 		totalExecutionTime += testCase.Duration.Seconds()
 	}
-	
+
 	if len(tvr.TestCases) > 0 {
 		tvr.Metrics["success_rate"] = float64(passedCases) / float64(len(tvr.TestCases))
 		tvr.Metrics["avg_execution_time"] = totalExecutionTime / float64(len(tvr.TestCases))
 	}
-	
+
 	tvr.Metrics["total_test_cases"] = float64(len(tvr.TestCases))
 }
 
@@ -1208,13 +1216,13 @@ type WorkflowValidationResult struct {
 
 // BenchmarkResult contains performance benchmark results
 type BenchmarkResult struct {
-	SuiteName   string
-	Status      string
-	StartTime   time.Time
-	EndTime     time.Time
-	Duration    time.Duration
-	Metrics     map[string]float64
-	Comparison  map[string]float64 // Comparison to baseline
+	SuiteName  string
+	Status     string
+	StartTime  time.Time
+	EndTime    time.Time
+	Duration   time.Duration
+	Metrics    map[string]float64
+	Comparison map[string]float64 // Comparison to baseline
 }
 
 // BenchmarkSuite defines a performance benchmark suite
@@ -1323,18 +1331,19 @@ type VCFVariant struct {
 	Info       map[string]string
 }
 
-// Placeholder test execution methods (to be implemented)
+// Test execution. runBasicToolTest and runToolTestCase execute the tool; the
+// remaining run* methods are stubs that return fixed metrics.
 
 func (gev *GenomicsEcosystemValidator) runBasicToolTest(ctx context.Context, tool *GenomicsTool) (*TestCaseResult, error) {
 	// Test basic tool execution
 	cmd := exec.CommandContext(ctx, tool.ExecutablePath, "--version") // #nosec G204
 	output, err := cmd.CombinedOutput()
-	
+
 	result := &TestCaseResult{
 		TestName:  "basic_execution",
 		StartTime: time.Now(),
 	}
-	
+
 	if err != nil {
 		result.Status = "failed"
 		result.ErrorMessage = err.Error()
@@ -1342,10 +1351,10 @@ func (gev *GenomicsEcosystemValidator) runBasicToolTest(ctx context.Context, too
 		result.Status = "passed"
 		result.Output = string(output)
 	}
-	
+
 	result.EndTime = time.Now()
 	result.Duration = result.EndTime.Sub(result.StartTime)
-	
+
 	return result, nil
 }
 
@@ -1379,7 +1388,7 @@ func (gev *GenomicsEcosystemValidator) runToolTestCase(ctx context.Context, tool
 }
 
 func (gev *GenomicsEcosystemValidator) runBenchmarkSuite(ctx context.Context, suite BenchmarkSuite) (*BenchmarkResult, error) {
-	// Run performance benchmark suite
+	// Stub: nothing is run; the metrics are fixed values.
 	return &BenchmarkResult{
 		SuiteName: suite.Name,
 		Status:    "completed",
@@ -1392,7 +1401,7 @@ func (gev *GenomicsEcosystemValidator) runBenchmarkSuite(ctx context.Context, su
 }
 
 func (gev *GenomicsEcosystemValidator) runPopulationTest(ctx context.Context, test PopulationTest) (*PopulationTestResult, error) {
-	// Run population-scale test
+	// Stub: nothing is run; the metrics are fixed values.
 	return &PopulationTestResult{
 		TestName:    test.Name,
 		DatasetSize: test.DatasetSize,
@@ -1406,42 +1415,43 @@ func (gev *GenomicsEcosystemValidator) runPopulationTest(ctx context.Context, te
 }
 
 func (gev *GenomicsEcosystemValidator) runWorkflowTest(ctx context.Context, workflow WorkflowTest) (*WorkflowValidationResult, error) {
-	// Run workflow integration test
+	// Stub: no workflow is executed; time and resource usage are fixed values.
 	return &WorkflowValidationResult{
-		WorkflowName: workflow.Name,
-		Engine:       workflow.Engine,
-		Status:       "completed",
+		WorkflowName:  workflow.Name,
+		Engine:        workflow.Engine,
+		Status:        "completed",
 		ExecutionTime: 5 * time.Minute,
 		ResourceUsage: map[string]interface{}{
-			"cpu_hours":    2.5,
-			"memory_gb":    16.0,
-			"storage_gb":   100.0,
+			"cpu_hours":  2.5,
+			"memory_gb":  16.0,
+			"storage_gb": 100.0,
 		},
 	}, nil
 }
 
 func (gev *GenomicsEcosystemValidator) runStreamingTest(ctx context.Context, test StreamingTest) (*StreamingTestResult, error) {
-	// Run streaming/real-time test
+	// Stub: nothing is streamed; throughput and latency are fixed values.
 	return &StreamingTestResult{
 		TestName:   test.Name,
 		DataRate:   test.DataRate,
 		Duration:   test.Duration,
 		Status:     "completed",
-		Throughput: 0.9, // 90% of target throughput
+		Throughput: 0.9, // fixed placeholder
 		Latency:    100 * time.Millisecond,
 	}, nil
 }
 
 func (gev *GenomicsEcosystemValidator) runCloudDeploymentTest(ctx context.Context, config CloudConfig) (*CloudValidationResult, error) {
-	// Run cloud deployment test
+	// Stub: nothing is deployed and no provider is contacted; the timings
+	// and scaling figures are fixed values.
 	return &CloudValidationResult{
-		Provider: config.Provider,
-		Region:   config.Region,
-		Status:   "completed",
+		Provider:       config.Provider,
+		Region:         config.Region,
+		Status:         "completed",
 		DeploymentTime: 10 * time.Minute,
 		ScalingTest: map[string]interface{}{
-			"max_instances": 100,
-			"scale_up_time": "2m30s",
+			"max_instances":   100,
+			"scale_up_time":   "2m30s",
 			"scale_down_time": "1m45s",
 		},
 	}, nil
@@ -1453,14 +1463,14 @@ func (gev *GenomicsEcosystemValidator) calculateCompatibilityScore(report *Ecosy
 	if len(report.ToolResults) == 0 {
 		return 0.0
 	}
-	
+
 	passedTools := 0
 	for _, result := range report.ToolResults {
 		if result.Status == "passed" {
 			passedTools++
 		}
 	}
-	
+
 	return float64(passedTools) / float64(len(report.ToolResults))
 }
 
@@ -1468,14 +1478,14 @@ func (gev *GenomicsEcosystemValidator) calculatePerformanceScore(report *Ecosyst
 	if len(report.BenchmarkResults) == 0 {
 		return 0.0
 	}
-	
+
 	totalScore := 0.0
 	for _, result := range report.BenchmarkResults {
 		if throughput, exists := result.Metrics["throughput"]; exists {
 			totalScore += throughput / 1000.0 // Normalize to 0-1
 		}
 	}
-	
+
 	return totalScore / float64(len(report.BenchmarkResults))
 }
 
@@ -1483,14 +1493,14 @@ func (gev *GenomicsEcosystemValidator) calculateScalabilityScore(report *Ecosyst
 	if len(report.PopulationResults) == 0 {
 		return 0.0
 	}
-	
+
 	totalScore := 0.0
 	for _, result := range report.PopulationResults {
 		if scalability, exists := result.Metrics["scalability"]; exists {
 			totalScore += scalability
 		}
 	}
-	
+
 	return totalScore / float64(len(report.PopulationResults))
 }
 
@@ -1499,20 +1509,20 @@ func (gev *GenomicsEcosystemValidator) calculateReliabilityScore(report *Ecosyst
 	if totalTests == 0 {
 		return 0.0
 	}
-	
+
 	reliableTools := 0
 	for _, result := range report.ToolResults {
 		if result.Status == "passed" && len(result.TestCases) > 0 {
 			reliableTools++
 		}
 	}
-	
+
 	return float64(reliableTools) / float64(totalTests)
 }
 
 func (gev *GenomicsEcosystemValidator) generateRecommendations(report *EcosystemValidationReport) []string {
 	recommendations := []string{}
-	
+
 	// Analyze results and generate recommendations
 	failedTools := 0
 	for _, result := range report.ToolResults {
@@ -1520,27 +1530,27 @@ func (gev *GenomicsEcosystemValidator) generateRecommendations(report *Ecosystem
 			failedTools++
 		}
 	}
-	
+
 	if failedTools > 0 {
-		recommendations = append(recommendations, 
+		recommendations = append(recommendations,
 			fmt.Sprintf("Address %d failed tool integrations", failedTools))
 	}
-	
+
 	if len(report.BenchmarkResults) == 0 {
-		recommendations = append(recommendations, 
+		recommendations = append(recommendations,
 			"Implement performance benchmarking for all tools")
 	}
-	
+
 	if report.CloudResults == nil || report.CloudResults.Status == "skipped" {
-		recommendations = append(recommendations, 
+		recommendations = append(recommendations,
 			"Configure and test cloud deployment capabilities")
 	}
-	
+
 	if len(recommendations) == 0 {
-		recommendations = append(recommendations, 
-			"All ecosystem validations passed - system ready for production")
+		recommendations = append(recommendations,
+			"All ecosystem validation modes passed (only basic tool compatibility runs real checks)")
 	}
-	
+
 	return recommendations
 }
 
@@ -1548,7 +1558,7 @@ func (gev *GenomicsEcosystemValidator) generateRecommendations(report *Ecosystem
 func (gev *GenomicsEcosystemValidator) GetValidationStatus() *ValidationStatus {
 	gev.validationMutex.RLock()
 	defer gev.validationMutex.RUnlock()
-	
+
 	status := &ValidationStatus{
 		TotalTools:      len(gev.toolSuite.GetAvailableTools()),
 		ValidatedTools:  len(gev.validationResults),
@@ -1556,7 +1566,7 @@ func (gev *GenomicsEcosystemValidator) GetValidationStatus() *ValidationStatus {
 		LastUpdate:      time.Now(),
 		Metrics:         gev.performanceMetrics,
 	}
-	
+
 	return status
 }
 
@@ -1566,10 +1576,10 @@ func (gev *GenomicsEcosystemValidator) SaveValidationReport(report *EcosystemVal
 	if err != nil {
 		return fmt.Errorf("failed to marshal report: %w", err)
 	}
-	
+
 	if err := os.WriteFile(filepath, data, 0600); err != nil {
 		return fmt.Errorf("failed to write report file: %w", err)
 	}
-	
+
 	return nil
 }

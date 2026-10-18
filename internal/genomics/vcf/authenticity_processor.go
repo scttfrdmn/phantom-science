@@ -9,26 +9,28 @@ import (
 	"github.com/scttfrdmn/phantom-science/internal/genomics/authenticity/kmer"
 )
 
-// AuthenticityProcessor processes VCF variants for authenticity analysis
+// AuthenticityProcessor scores VCF variants by the k-mer diversity of their
+// reference and alternate context, aggregated overall and per population.
+// The score is a heuristic, not a test against real data.
 type AuthenticityProcessor struct {
-	kmerSize           int
-	contextWindowSize  int
+	kmerSize            int
+	contextWindowSize   int
 	authenticityEnabled bool
-	kmerExtractor      *kmer.PackedFrequencyExtractor
-	gpuProcessor       *kmer.GPUPackedProcessor
-	useGPU             bool
-	
+	kmerExtractor       *kmer.PackedFrequencyExtractor
+	gpuProcessor        *kmer.GPUPackedProcessor
+	useGPU              bool
+
 	// Aggregated results
-	variantCount        int64
-	authenticityScores  []float64
-	kmerProfiles        []*kmer.PackedFrequencyTable
-	populationContexts  map[string]*PopulationContext
-	
+	variantCount       int64
+	authenticityScores []float64
+	kmerProfiles       []*kmer.PackedFrequencyTable
+	populationContexts map[string]*PopulationContext
+
 	// Thread safety
 	mutex sync.RWMutex
-	
+
 	// Statistics
-	processingStats     AuthenticityStats
+	processingStats AuthenticityStats
 }
 
 // PopulationContext contains population-specific variant context
@@ -42,24 +44,24 @@ type PopulationContext struct {
 
 // AuthenticityStats contains statistics about authenticity processing
 type AuthenticityStats struct {
-	ProcessedVariants    int64
-	AuthenticityScores   []float64
+	ProcessedVariants     int64
+	AuthenticityScores    []float64
 	MeanAuthenticityScore float64
-	MedianScore          float64
-	StandardDeviation    float64
-	
+	MedianScore           float64
+	StandardDeviation     float64
+
 	// K-mer analysis stats
-	TotalKmers           int64
-	UniqueKmers          int64
-	KmerComplexity       float64
-	
+	TotalKmers     int64
+	UniqueKmers    int64
+	KmerComplexity float64
+
 	// Performance stats
-	GPUProcessingTime    int64  // nanoseconds
-	CPUProcessingTime    int64  // nanoseconds
-	MemoryUsage          int64  // bytes
-	
+	GPUProcessingTime int64 // nanoseconds
+	CPUProcessingTime int64 // nanoseconds
+	MemoryUsage       int64 // bytes
+
 	// Population analysis
-	PopulationProfiles   map[string]*PopulationStats
+	PopulationProfiles map[string]*PopulationStats
 }
 
 // PopulationStats contains population-specific authenticity statistics
@@ -84,7 +86,7 @@ func NewAuthenticityProcessor(config AuthenticityConfig) (*AuthenticityProcessor
 
 	// Create k-mer extractor with packed arrays
 	kmerExtractor := kmer.NewPackedFrequencyExtractor(config.KmerSize)
-	
+
 	// Initialize GPU processor if requested
 	var gpuProcessor *kmer.GPUPackedProcessor
 	var err error
@@ -117,11 +119,11 @@ type AuthenticityConfig struct {
 	KmerSize          int
 	ContextWindowSize int
 	UseGPU            bool
-	UseML             bool
-	PopulationPanels  []string
+	UseML             bool     // Not used yet
+	PopulationPanels  []string // Not used yet
 	TargetScore       float64  // Reference value for the k-mer diversity score (50 = diversity 0.5); a heuristic, not a classifier accuracy
-	EnableCaching     bool
-	MaxCacheSize      int64
+	EnableCaching     bool     // Not used yet
+	MaxCacheSize      int64    // Not used yet
 }
 
 // ProcessVariant implements the VariantProcessor interface for authenticity analysis
@@ -188,7 +190,8 @@ func (ap *AuthenticityProcessor) extractVariantKmers(variant *Variant) (*kmer.Pa
 	return ap.kmerExtractor.ExtractFromMultipleSequences(sequences)
 }
 
-// calculateAuthenticityScore calculates the authenticity score for a variant
+// calculateAuthenticityScore returns 50 + (diversity-0.5)*10, where diversity
+// is the fraction of possible k-mers observed in the variant's context.
 func (ap *AuthenticityProcessor) calculateAuthenticityScore(variant *Variant, kmerProfile *kmer.PackedFrequencyTable) (float64, error) {
 	// Calculate a basic authenticity score based on k-mer complexity
 	if kmerProfile.TotalCount == 0 {
@@ -203,9 +206,9 @@ func (ap *AuthenticityProcessor) calculateAuthenticityScore(variant *Variant, km
 
 // updatePopulationStats updates population-specific statistics
 func (ap *AuthenticityProcessor) updatePopulationStats(variant *Variant, kmerProfile *kmer.PackedFrequencyTable, authenticityScore float64) error {
-	// Extract population information from variant (would be more sophisticated in production)
+	// Population comes from the INFO POP key only (see extractPopulationID).
 	populationID := ap.extractPopulationID(variant)
-	
+
 	// Get or create population context
 	popContext, exists := ap.populationContexts[populationID]
 	if !exists {
@@ -219,7 +222,7 @@ func (ap *AuthenticityProcessor) updatePopulationStats(variant *Variant, kmerPro
 
 	// Update population statistics
 	popContext.SampleCount++
-	variantKey := fmt.Sprintf("%s:%d:%s>%s", variant.Chromosome, variant.Position, 
+	variantKey := fmt.Sprintf("%s:%d:%s>%s", variant.Chromosome, variant.Position,
 		variant.Reference, strings.Join(variant.Alternate, ","))
 	popContext.VariantFrequency[variantKey]++
 
@@ -274,28 +277,27 @@ func (ap *AuthenticityProcessor) updatePopulationStats(variant *Variant, kmerPro
 	return nil
 }
 
-// extractPopulationID extracts population ID from variant (placeholder implementation)
+// extractPopulationID returns the variant's INFO POP value, or "UNKNOWN".
+// Sample names and external annotations are not consulted.
 func (ap *AuthenticityProcessor) extractPopulationID(variant *Variant) string {
-	// In a real implementation, this would extract population information
-	// from variant INFO fields, sample names, or external annotation
-	
 	// Look for population in INFO field
 	if popID, exists := variant.Info["POP"]; exists {
 		return popID
 	}
-	
+
 	// Default to "UNKNOWN" population
 	return "UNKNOWN"
 }
 
-// GetAuthenticityResults returns comprehensive authenticity analysis results
+// GetAuthenticityResults returns the aggregated scores, k-mer statistics and
+// per-population results
 func (ap *AuthenticityProcessor) GetAuthenticityResults() *AuthenticityResults {
 	ap.mutex.RLock()
 	defer ap.mutex.RUnlock()
 
 	// Calculate summary statistics
 	meanScore, medianScore, stdDev := ap.calculateStatistics(ap.authenticityScores)
-	
+
 	// Calculate k-mer complexity
 	totalKmers := int64(0)
 	uniqueKmers := int64(0)
@@ -303,7 +305,7 @@ func (ap *AuthenticityProcessor) GetAuthenticityResults() *AuthenticityResults {
 		totalKmers += int64(profile.TotalCount)
 		uniqueKmers += int64(profile.NonZeroCount)
 	}
-	
+
 	complexity := 0.0
 	if totalKmers > 0 {
 		complexity = float64(uniqueKmers) / float64(totalKmers)
@@ -317,20 +319,20 @@ func (ap *AuthenticityProcessor) GetAuthenticityResults() *AuthenticityResults {
 	}
 
 	results := &AuthenticityResults{
-		ProcessedVariants:    ap.variantCount,
+		ProcessedVariants:     ap.variantCount,
 		MeanAuthenticityScore: meanScore,
-		MedianScore:          medianScore,
-		StandardDeviation:    stdDev,
-		AuthenticityScores:   make([]float64, len(ap.authenticityScores)),
-		
+		MedianScore:           medianScore,
+		StandardDeviation:     stdDev,
+		AuthenticityScores:    make([]float64, len(ap.authenticityScores)),
+
 		// K-mer analysis
-		TotalKmers:      totalKmers,
-		UniqueKmers:     uniqueKmers,
-		KmerComplexity:  complexity,
-		
+		TotalKmers:     totalKmers,
+		UniqueKmers:    uniqueKmers,
+		KmerComplexity: complexity,
+
 		// Population analysis
 		PopulationResults: make(map[string]*PopulationAuthenticityResult),
-		
+
 		// Memory efficiency
 		MemoryUsage:      ap.calculateMemoryUsage(),
 		CompressionRatio: ap.calculateCompressionRatio(),
@@ -343,13 +345,13 @@ func (ap *AuthenticityProcessor) GetAuthenticityResults() *AuthenticityResults {
 	for popID, popContext := range ap.populationContexts {
 		popStats := ap.processingStats.PopulationProfiles[popID]
 		results.PopulationResults[popID] = &PopulationAuthenticityResult{
-			PopulationID:         popID,
-			SampleCount:          popContext.SampleCount,
+			PopulationID:          popID,
+			SampleCount:           popContext.SampleCount,
 			MeanAuthenticityScore: popContext.AuthenticityScore,
-			VariantCount:         popStats.VariantCount,
-			AuthenticityVariance: popStats.AuthenticityVariance,
-			KmerDiversity:        popStats.KmerDiversity,
-			MemoryUsage:          popContext.KmerProfile.GetMemoryUsage(),
+			VariantCount:          popStats.VariantCount,
+			AuthenticityVariance:  popStats.AuthenticityVariance,
+			KmerDiversity:         popStats.KmerDiversity,
+			MemoryUsage:           popContext.KmerProfile.GetMemoryUsage(),
 		}
 	}
 
@@ -372,7 +374,7 @@ func (ap *AuthenticityProcessor) calculateStatistics(scores []float64) (mean, me
 	// Calculate median (requires sorting)
 	sortedScores := make([]float64, len(scores))
 	copy(sortedScores, scores)
-	
+
 	// Simple bubble sort for median calculation
 	for i := 0; i < len(sortedScores)-1; i++ {
 		for j := i + 1; j < len(sortedScores); j++ {
@@ -381,7 +383,7 @@ func (ap *AuthenticityProcessor) calculateStatistics(scores []float64) (mean, me
 			}
 		}
 	}
-	
+
 	if len(sortedScores)%2 == 0 {
 		median = (sortedScores[len(sortedScores)/2-1] + sortedScores[len(sortedScores)/2]) / 2
 	} else {
@@ -420,47 +422,47 @@ func (ap *AuthenticityProcessor) calculateCompressionRatio() float64 {
 	for _, profile := range ap.kmerProfiles {
 		totalCompression += profile.GetCompressionRatio()
 	}
-	
+
 	return totalCompression / float64(len(ap.kmerProfiles))
 }
 
-// AuthenticityResults contains comprehensive authenticity analysis results
+// AuthenticityResults contains the aggregated k-mer diversity scores
 type AuthenticityResults struct {
 	ProcessedVariants     int64
 	MeanAuthenticityScore float64
-	MedianScore          float64
-	StandardDeviation    float64
-	AuthenticityScores   []float64
-	
+	MedianScore           float64
+	StandardDeviation     float64
+	AuthenticityScores    []float64
+
 	// K-mer analysis results
-	TotalKmers           int64
-	UniqueKmers          int64
-	KmerComplexity       float64
-	
+	TotalKmers     int64
+	UniqueKmers    int64
+	KmerComplexity float64
+
 	// Population-specific results
-	PopulationResults    map[string]*PopulationAuthenticityResult
-	
+	PopulationResults map[string]*PopulationAuthenticityResult
+
 	// Memory efficiency metrics
-	MemoryUsage          int64
-	CompressionRatio     float64
-	
+	MemoryUsage      int64
+	CompressionRatio float64
+
 	// Reference-range check set by IsAuthenticityTargetMet. Despite the
 	// field name, this only records whether the mean k-mer diversity score
 	// lies within tolerance of the reference value; it is not a statistical
 	// test against real data. The name is kept for API compatibility.
 	IsStatisticallyIndistinguishable bool
-	TargetScoreDeviation            float64
+	TargetScoreDeviation             float64
 }
 
 // PopulationAuthenticityResult contains population-specific authenticity results
 type PopulationAuthenticityResult struct {
-	PopulationID         string
-	SampleCount          int
-	VariantCount         int64
+	PopulationID          string
+	SampleCount           int
+	VariantCount          int64
 	MeanAuthenticityScore float64
-	AuthenticityVariance float64
-	KmerDiversity        float64
-	MemoryUsage          int64
+	AuthenticityVariance  float64
+	KmerDiversity         float64
+	MemoryUsage           int64
 }
 
 // IsAuthenticityTargetMet reports whether the mean k-mer diversity score lies

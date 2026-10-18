@@ -1,6 +1,9 @@
+// Package metal counts k-mers on Apple GPUs through a Metal compute kernel
+// (kmer_kernels.metal) called via an Objective-C bridge. The GPU
+// implementation builds only on macOS with CGO; elsewhere the package
+// compiles to stubs whose constructors return an error. This file holds
+// helpers that compile and install the Metal shader library.
 package metal
-
-// This file provides build instructions and compilation helpers for Metal GPU acceleration
 
 import (
 	"fmt"
@@ -10,7 +13,8 @@ import (
 	"runtime"
 )
 
-// BuildMetalShaders compiles Metal shaders to optimized Metal library
+// BuildMetalShaders compiles kmer_kernels.metal in the working directory into a
+// .metallib with xcrun.
 func BuildMetalShaders() error {
 	if runtime.GOOS != "darwin" {
 		return fmt.Errorf("Metal shaders can only be built on macOS")
@@ -32,7 +36,7 @@ func BuildMetalShaders() error {
 
 	// Compile Metal shaders using xcrun metal
 	fmt.Printf("Compiling Metal shaders: %s\n", metalSourcePath)
-	
+
 	cmd := exec.Command("xcrun", "metal",
 		"-o", metallibPath,
 		metalSourcePath) // #nosec G204

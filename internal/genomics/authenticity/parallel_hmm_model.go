@@ -13,56 +13,61 @@ import (
 	"time"
 )
 
-// ParallelHMMModel represents a high-performance, multi-core HMM model for genomic training
+// ParallelHMMModel counts k-mer to k-mer transitions from a FASTA file with a
+// pool of worker goroutines, one 100 kb chunk per job (transitions spanning
+// chunk boundaries are not counted). Its states are full k-mers. No GPU is
+// used: the useGPU flag only selects goroutine-parallel CPU helpers. The
+// GC, homopolymer and CpG fields are not applied during training, and
+// generation uses a time-seeded generator, so output is not reproducible.
 type ParallelHMMModel struct {
-	k                      int
-	stateSpace             []string
-	transitionMatrix       [][]float64
-	emissionMatrix         [][]float64
-	startProbabilities     []float64
-	
+	k                  int
+	stateSpace         []string
+	transitionMatrix   [][]float64
+	emissionMatrix     [][]float64
+	startProbabilities []float64
+
 	// Parallel processing configuration
-	numWorkers             int
-	chunkSize              int
-	processingPool         chan processingJob
-	resultPool             chan processingResult
-	
+	numWorkers     int
+	chunkSize      int
+	processingPool chan processingJob
+	resultPool     chan processingResult
+
 	// Adaptive complexity features (thread-safe)
-	complexityMemory       []string
-	complexityWindowSize   int
-	targetComplexity       float64
-	currentComplexity      int64  // atomic operations
-	adaptiveWeights        sync.Map // thread-safe map
-	
+	complexityMemory     []string
+	complexityWindowSize int
+	targetComplexity     float64
+	currentComplexity    int64    // atomic operations
+	adaptiveWeights      sync.Map // thread-safe map
+
 	// Biological constraints
-	gcContentTarget        float64
-	gcContentTolerance     float64
-	currentGCContent       int64  // atomic operations
-	homopolymerMaxLength   int
-	cpgDepletionRatio      float64
-	
+	gcContentTarget      float64
+	gcContentTolerance   float64
+	currentGCContent     int64 // atomic operations
+	homopolymerMaxLength int
+	cpgDepletionRatio    float64
+
 	// Training state (thread-safe)
-	totalKmers             uint64  // atomic operations
-	trained                int32   // atomic bool
-	mu                     sync.RWMutex
-	rng                    *rand.Rand
-	
+	totalKmers uint64 // atomic operations
+	trained    int32  // atomic bool
+	mu         sync.RWMutex
+	rng        *rand.Rand
+
 	// Performance metrics (thread-safe)
-	generationStats        *ThreadSafeGenerationStats
-	
-	// GPU acceleration (optional)
-	useGPU                 bool
-	gpuDevice              interface{} // GPU context if available
+	generationStats *ThreadSafeGenerationStats
+
+	// GPU flag; no GPU is used (see initializeGPU)
+	useGPU    bool
+	gpuDevice interface{} // GPU context if available
 }
 
 // ThreadSafeGenerationStats provides thread-safe performance tracking
 type ThreadSafeGenerationStats struct {
-	TotalSequences      int64   // atomic
-	TotalBases          int64   // atomic
-	AverageComplexity   int64   // atomic (scaled by 1000000)
-	AverageGCContent    int64   // atomic (scaled by 1000000)
-	MaxHomopolymer      int64   // atomic
-	AverageJSDivergence int64   // atomic (scaled by 1000000)
+	TotalSequences      int64 // atomic
+	TotalBases          int64 // atomic
+	AverageComplexity   int64 // atomic (scaled by 1000000)
+	AverageGCContent    int64 // atomic (scaled by 1000000)
+	MaxHomopolymer      int64 // atomic
+	AverageJSDivergence int64 // atomic (scaled by 1000000)
 	mu                  sync.RWMutex
 }
 
@@ -77,44 +82,45 @@ type processingJob struct {
 
 // processingResult represents the result of parallel processing
 type processingResult struct {
-	id           int
-	kmerCounts   map[string]int
-	transitions  map[string]map[string]int
-	gcCount      int
-	totalBases   int
-	complexity   float64
-	err          error
+	id          int
+	kmerCounts  map[string]int
+	transitions map[string]map[string]int
+	gcCount     int
+	totalBases  int
+	complexity  float64
+	err         error
 }
 
-// NewParallelHMMModel creates a new high-performance parallel HMM model
+// NewParallelHMMModel creates a model and starts its worker pool. The worker
+// count comes from detectPerformanceCores.
 func NewParallelHMMModel(k int) *ParallelHMMModel {
 	numWorkers := detectPerformanceCores()
-	fmt.Printf("🍎 Apple Silicon detected: Using %d P-cores (leaving E-cores for system)\n", numWorkers)
-	
+	fmt.Printf("ParallelHMMModel: using %d worker goroutines\n", numWorkers)
+
 	model := &ParallelHMMModel{
 		k:                    k,
-		numWorkers:          numWorkers,
-		chunkSize:           100000, // 100KB chunks
-		processingPool:      make(chan processingJob, numWorkers*2),
-		resultPool:          make(chan processingResult, numWorkers*2),
+		numWorkers:           numWorkers,
+		chunkSize:            100000, // 100KB chunks
+		processingPool:       make(chan processingJob, numWorkers*2),
+		resultPool:           make(chan processingResult, numWorkers*2),
 		complexityWindowSize: 1000000,
-		targetComplexity:    0.6,
-		gcContentTarget:     0.42,
-		gcContentTolerance:  0.02,
+		targetComplexity:     0.6,
+		gcContentTarget:      0.42,
+		gcContentTolerance:   0.02,
 		homopolymerMaxLength: 15,
-		cpgDepletionRatio:   0.25,
-		rng:                 rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), 0)), // #nosec G404
-		generationStats:     &ThreadSafeGenerationStats{},
-		useGPU:              false, // Will be enabled if GPU detected
+		cpgDepletionRatio:    0.25,
+		rng:                  rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), 0)), // #nosec G404
+		generationStats:      &ThreadSafeGenerationStats{},
+		useGPU:               false, // Will be enabled if GPU detected
 	}
-	
+
 	model.initializeStateSpace()
 	model.initializeMatrices()
 	model.startWorkerPool()
-	
+
 	// Try to initialize GPU if available
 	model.initializeGPU()
-	
+
 	return model
 }
 
@@ -122,7 +128,7 @@ func NewParallelHMMModel(k int) *ParallelHMMModel {
 func (m *ParallelHMMModel) initializeStateSpace() {
 	bases := []string{"A", "T", "C", "G"}
 	m.stateSpace = make([]string, 0, 1<<(2*uint(m.k))) // #nosec G115
-	
+
 	// Generate all possible k-mers
 	var generateKmers func(current string, remaining int)
 	generateKmers = func(current string, remaining int) {
@@ -134,14 +140,14 @@ func (m *ParallelHMMModel) initializeStateSpace() {
 			generateKmers(current+base, remaining-1)
 		}
 	}
-	
+
 	generateKmers("", m.k)
 }
 
 // initializeMatrices creates the transition and emission matrices
 func (m *ParallelHMMModel) initializeMatrices() {
 	stateCount := len(m.stateSpace)
-	
+
 	// Initialize transition matrix
 	m.transitionMatrix = make([][]float64, stateCount)
 	for i := range m.transitionMatrix {
@@ -151,7 +157,7 @@ func (m *ParallelHMMModel) initializeMatrices() {
 			m.transitionMatrix[i][j] = 1.0 / float64(stateCount)
 		}
 	}
-	
+
 	// Initialize emission matrix (for our case, emissions are the k-mers themselves)
 	m.emissionMatrix = make([][]float64, stateCount)
 	for i := range m.emissionMatrix {
@@ -160,7 +166,7 @@ func (m *ParallelHMMModel) initializeMatrices() {
 			m.emissionMatrix[i][j] = 0.25 // Uniform initially
 		}
 	}
-	
+
 	// Initialize start probabilities
 	m.startProbabilities = make([]float64, stateCount)
 	for i := range m.startProbabilities {
@@ -184,10 +190,10 @@ func (m *ParallelHMMModel) worker(workerID int) {
 			continue
 		default:
 		}
-		
+
 		result := m.processSequenceChunk(job)
 		result.id = job.id
-		
+
 		select {
 		case m.resultPool <- result:
 		case <-job.ctx.Done():
@@ -199,17 +205,17 @@ func (m *ParallelHMMModel) worker(workerID int) {
 // processSequenceChunk processes a chunk of sequence data
 func (m *ParallelHMMModel) processSequenceChunk(job processingJob) processingResult {
 	sequence := job.sequence[job.startPos:job.endPos]
-	
+
 	kmerCounts := make(map[string]int)
 	transitions := make(map[string]map[string]int)
 	gcCount := 0
 	totalBases := len(sequence)
-	
+
 	// Process k-mers
 	for i := 0; i <= len(sequence)-m.k; i++ {
 		kmer := string(sequence[i : i+m.k])
 		kmerCounts[kmer]++
-		
+
 		// Count transitions
 		if i > 0 {
 			prevKmer := string(sequence[i-1 : i-1+m.k])
@@ -219,17 +225,17 @@ func (m *ParallelHMMModel) processSequenceChunk(job processingJob) processingRes
 			transitions[prevKmer][kmer]++
 		}
 	}
-	
+
 	// Count GC content
 	for _, base := range sequence {
 		if base == 'G' || base == 'C' {
 			gcCount++
 		}
 	}
-	
+
 	// Calculate complexity
 	complexity := float64(len(kmerCounts)) / float64(len(sequence)-m.k+1)
-	
+
 	return processingResult{
 		kmerCounts:  kmerCounts,
 		transitions: transitions,
@@ -241,31 +247,28 @@ func (m *ParallelHMMModel) processSequenceChunk(job processingJob) processingRes
 
 // TrainFromFileParallel trains the model using parallel processing
 func (m *ParallelHMMModel) TrainFromFileParallel(filename string, ctx context.Context) error {
-	fmt.Printf("🚀 Starting parallel training with %d CPU cores\n", m.numWorkers)
-	if m.useGPU {
-		fmt.Printf("🎮 GPU acceleration enabled\n")
-	}
-	
+	fmt.Printf("🚀 Starting parallel training with %d workers\n", m.numWorkers)
+
 	// Read sequence data
 	sequences, err := ReadFASTAFile(filename)
 	if err != nil {
 		return fmt.Errorf("failed to read FASTA file: %w", err)
 	}
-	
+
 	fmt.Printf("📊 Processing %d sequences with parallel pipeline\n", len(sequences))
-	
+
 	// Process sequences in parallel
 	for seqIdx, sequence := range sequences {
 		if err := m.trainOnSequenceParallel(sequence, ctx); err != nil {
 			return fmt.Errorf("failed to train on sequence %d: %w", seqIdx, err)
 		}
 	}
-	
+
 	// Finalize training
 	m.normalizeMatrices()
 	atomic.StoreInt32(&m.trained, 1)
-	
-	fmt.Printf("✅ Parallel training completed with %d CPU cores\n", m.numWorkers)
+
+	fmt.Printf("✅ Parallel training completed with %d workers\n", m.numWorkers)
 	return nil
 }
 
@@ -274,11 +277,11 @@ func (m *ParallelHMMModel) trainOnSequenceParallel(sequence []byte, ctx context.
 	if len(sequence) < m.k {
 		return nil
 	}
-	
+
 	// Split sequence into chunks for parallel processing
 	numChunks := (len(sequence) + m.chunkSize - 1) / m.chunkSize
 	results := make([]processingResult, numChunks)
-	
+
 	// Submit jobs
 	for i := 0; i < numChunks; i++ {
 		startPos := i * m.chunkSize
@@ -286,7 +289,7 @@ func (m *ParallelHMMModel) trainOnSequenceParallel(sequence []byte, ctx context.
 		if endPos > len(sequence) {
 			endPos = len(sequence)
 		}
-		
+
 		job := processingJob{
 			id:       i,
 			sequence: sequence,
@@ -294,14 +297,14 @@ func (m *ParallelHMMModel) trainOnSequenceParallel(sequence []byte, ctx context.
 			endPos:   endPos,
 			ctx:      ctx,
 		}
-		
+
 		select {
 		case m.processingPool <- job:
 		case <-ctx.Done():
 			return ctx.Err()
 		}
 	}
-	
+
 	// Collect results
 	for i := 0; i < numChunks; i++ {
 		select {
@@ -314,7 +317,7 @@ func (m *ParallelHMMModel) trainOnSequenceParallel(sequence []byte, ctx context.
 			return ctx.Err()
 		}
 	}
-	
+
 	// Merge results and update matrices
 	return m.mergeResults(results)
 }
@@ -323,48 +326,48 @@ func (m *ParallelHMMModel) trainOnSequenceParallel(sequence []byte, ctx context.
 func (m *ParallelHMMModel) mergeResults(results []processingResult) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	
+
 	totalKmers := uint64(0)
 	totalGC := 0
 	totalBases := 0
 	totalComplexity := 0.0
-	
+
 	// Merge k-mer counts and transitions
 	for _, result := range results {
 		totalKmers += uint64(len(result.kmerCounts))
 		totalGC += result.gcCount
 		totalBases += result.totalBases
 		totalComplexity += result.complexity
-		
+
 		// Update transition matrix
 		for fromKmer, transitions := range result.transitions {
 			fromIdx := m.getStateIndex(fromKmer)
 			if fromIdx < 0 {
 				continue
 			}
-			
+
 			for toKmer, count := range transitions {
 				toIdx := m.getStateIndex(toKmer)
 				if toIdx < 0 {
 					continue
 				}
-				
+
 				m.transitionMatrix[fromIdx][toIdx] += float64(count)
 			}
 		}
 	}
-	
+
 	// Update atomic counters
 	atomic.AddUint64(&m.totalKmers, totalKmers)
-	
+
 	// Update GC content (scaled by 1000000 for atomic operations)
 	currentGC := float64(totalGC) / float64(totalBases)
 	atomic.StoreInt64(&m.currentGCContent, int64(currentGC*1000000))
-	
+
 	// Update complexity (scaled by 1000000 for atomic operations)
 	avgComplexity := totalComplexity / float64(len(results))
 	atomic.StoreInt64(&m.currentComplexity, int64(avgComplexity*1000000))
-	
+
 	return nil
 }
 
@@ -382,7 +385,7 @@ func (m *ParallelHMMModel) getStateIndex(kmer string) int {
 func (m *ParallelHMMModel) normalizeMatrices() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	
+
 	// Normalize transition matrix
 	for i := range m.transitionMatrix {
 		sum := 0.0
@@ -397,31 +400,30 @@ func (m *ParallelHMMModel) normalizeMatrices() {
 	}
 }
 
-// GenerateSequenceParallel generates a sequence using parallel processing
+// GenerateSequenceParallel generates a sequence sequentially (despite the
+// name) from a uniformly random start k-mer, using a time-seeded generator.
 func (m *ParallelHMMModel) GenerateSequenceParallel(length int, ctx context.Context) ([]byte, error) {
 	if atomic.LoadInt32(&m.trained) == 0 {
 		return nil, fmt.Errorf("model not trained")
 	}
-	
-	// For now, generation is still sequential but optimized
-	// In production, this could be parallelized using beam search
+
 	return m.generateSequenceOptimized(length, ctx)
 }
 
-// generateSequenceOptimized generates a sequence with optimization
+// generateSequenceOptimized walks the transition matrix one base at a time.
 func (m *ParallelHMMModel) generateSequenceOptimized(length int, ctx context.Context) ([]byte, error) {
 	sequence := make([]byte, length)
-	
-	// Use faster random number generation
+
+	// Unseeded: output is not reproducible
 	rng := rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), 0)) // #nosec G404
-	
+
 	// Start with a random k-mer
 	startStateIdx := rng.IntN(len(m.stateSpace))
 	startKmer := m.stateSpace[startStateIdx]
-	
+
 	// Copy start k-mer
 	copy(sequence[:m.k], startKmer)
-	
+
 	// Generate remaining bases
 	currentKmer := startKmer
 	for i := m.k; i < length; i++ {
@@ -430,7 +432,7 @@ func (m *ParallelHMMModel) generateSequenceOptimized(length int, ctx context.Con
 			return nil, ctx.Err()
 		default:
 		}
-		
+
 		// Find current state
 		currentStateIdx := m.getStateIndex(currentKmer)
 		if currentStateIdx < 0 {
@@ -443,13 +445,13 @@ func (m *ParallelHMMModel) generateSequenceOptimized(length int, ctx context.Con
 			nextKmer := m.stateSpace[nextStateIdx]
 			sequence[i] = nextKmer[len(nextKmer)-1]
 		}
-		
+
 		// Update current k-mer
 		if i >= m.k {
 			currentKmer = string(sequence[i-m.k+1 : i+1])
 		}
 	}
-	
+
 	return sequence, nil
 }
 
@@ -457,58 +459,57 @@ func (m *ParallelHMMModel) generateSequenceOptimized(length int, ctx context.Con
 func (m *ParallelHMMModel) selectNextState(currentStateIdx int, rng *rand.Rand) int {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	
+
 	// Use weighted random selection
 	totalProb := 0.0
 	for _, prob := range m.transitionMatrix[currentStateIdx] {
 		totalProb += prob
 	}
-	
+
 	if totalProb == 0 {
 		return rng.IntN(len(m.stateSpace))
 	}
-	
+
 	target := rng.Float64() * totalProb
 	cumulative := 0.0
-	
+
 	for i, prob := range m.transitionMatrix[currentStateIdx] {
 		cumulative += prob
 		if cumulative >= target {
 			return i
 		}
 	}
-	
+
 	return len(m.stateSpace) - 1
 }
 
-// initializeGPU attempts to initialize GPU acceleration
+// initializeGPU sets useGPU on macOS (see detectMetalGPU). No GPU work is
+// done either way; useGPU only selects the goroutine-parallel CPU helpers.
 func (m *ParallelHMMModel) initializeGPU() {
-	// Detect Metal GPU on macOS
 	if m.detectMetalGPU() {
 		m.useGPU = true
-		fmt.Println("🎮 Metal GPU acceleration initialized")
-		fmt.Println("⚡ Matrix operations will be GPU-accelerated")
 	} else {
 		m.useGPU = false
-		fmt.Printf("💻 CPU-only mode with %d P-cores\n", m.numWorkers)
 	}
+	fmt.Printf("ParallelHMMModel: CPU only, %d workers\n", m.numWorkers)
 }
 
-// detectPerformanceCores detects Apple Silicon performance cores
+// detectPerformanceCores guesses a worker count from runtime.NumCPU alone,
+// using a table of Apple Silicon P-core counts for common core totals. It
+// does not query the hardware and applies the same table on any platform.
 func detectPerformanceCores() int {
 	totalCores := runtime.NumCPU()
-	
-	// Apple Silicon detection heuristics
+
 	if totalCores >= 8 {
-		// M1/M2/M3 series - typically 4-8 P-cores + 4-8 E-cores
+		// Guessed P-core counts for Apple Silicon core totals
 		switch totalCores {
-		case 8:  // M1: 4P + 4E
+		case 8: // M1: 4P + 4E
 			return 4
 		case 10: // M1 Pro: 6P + 4E or 8P + 2E
 			return 6
 		case 12: // M1 Max: 8P + 4E
 			return 8
-		case 16: // M2 Ultra: 12P + 4E
+		case 16: // e.g. M3 Max: 12P + 4E
 			return 12
 		case 20: // M1 Ultra: 16P + 4E
 			return 16
@@ -519,37 +520,31 @@ func detectPerformanceCores() int {
 			return (totalCores * 2) / 3
 		}
 	}
-	
-	// Non-Apple Silicon fallback
+
+	// Fewer than 8 cores (any platform)
 	if totalCores > 4 {
 		return totalCores - 2 // Leave 2 cores for system
 	}
-	
+
 	return totalCores
 }
 
-// detectMetalGPU detects Metal GPU availability on macOS
+// detectMetalGPU reports true on any macOS host without checking for a Metal
+// device. It is a stub.
 func (m *ParallelHMMModel) detectMetalGPU() bool {
-	// Check if running on macOS
-	if runtime.GOOS != "darwin" {
-		return false
-	}
-	
-	// In production, this would use Metal framework
-	// For now, we'll assume Metal is available on macOS
-	return true
+	return runtime.GOOS == "darwin"
 }
 
 // GetPerformanceStats returns current performance statistics
 func (m *ParallelHMMModel) GetPerformanceStats() map[string]interface{} {
 	return map[string]interface{}{
-		"cpu_cores":        m.numWorkers,
-		"gpu_enabled":      m.useGPU,
-		"total_kmers":      atomic.LoadUint64(&m.totalKmers),
-		"current_gc":       float64(atomic.LoadInt64(&m.currentGCContent)) / 1000000.0,
+		"cpu_cores":          m.numWorkers,
+		"gpu_enabled":        m.useGPU,
+		"total_kmers":        atomic.LoadUint64(&m.totalKmers),
+		"current_gc":         float64(atomic.LoadInt64(&m.currentGCContent)) / 1000000.0,
 		"current_complexity": float64(atomic.LoadInt64(&m.currentComplexity)) / 1000000.0,
-		"trained":          atomic.LoadInt32(&m.trained) == 1,
-		"chunk_size":       m.chunkSize,
+		"trained":            atomic.LoadInt32(&m.trained) == 1,
+		"chunk_size":         m.chunkSize,
 	}
 }
 
@@ -557,20 +552,19 @@ func (m *ParallelHMMModel) GetPerformanceStats() map[string]interface{} {
 func (m *ParallelHMMModel) Cleanup() {
 	close(m.processingPool)
 	close(m.resultPool)
-	
+
 	if m.useGPU {
 		m.cleanupGPU()
 	}
 }
 
-// GPU-accelerated matrix operations
+// multiplyMatricesGPU runs on the CPU despite its name: one goroutine per row
+// when useGPU is set, a serial triple loop otherwise.
 func (m *ParallelHMMModel) multiplyMatricesGPU(a, b [][]float64) [][]float64 {
 	if !m.useGPU {
 		return m.multiplyMatricesCPU(a, b)
 	}
-	
-	// In production, this would use Metal Performance Shaders
-	// For now, we'll use optimized CPU with vectorization hints
+
 	return m.multiplyMatricesOptimized(a, b)
 }
 
@@ -579,12 +573,12 @@ func (m *ParallelHMMModel) multiplyMatricesCPU(a, b [][]float64) [][]float64 {
 	rows := len(a)
 	cols := len(b[0])
 	inner := len(b)
-	
+
 	result := make([][]float64, rows)
 	for i := range result {
 		result[i] = make([]float64, cols)
 	}
-	
+
 	for i := 0; i < rows; i++ {
 		for j := 0; j < cols; j++ {
 			for k := 0; k < inner; k++ {
@@ -592,21 +586,21 @@ func (m *ParallelHMMModel) multiplyMatricesCPU(a, b [][]float64) [][]float64 {
 			}
 		}
 	}
-	
+
 	return result
 }
 
-// multiplyMatricesOptimized performs optimized matrix multiplication
+// multiplyMatricesOptimized multiplies matrices with one goroutine per row.
 func (m *ParallelHMMModel) multiplyMatricesOptimized(a, b [][]float64) [][]float64 {
 	rows := len(a)
 	cols := len(b[0])
 	inner := len(b)
-	
+
 	result := make([][]float64, rows)
 	for i := range result {
 		result[i] = make([]float64, cols)
 	}
-	
+
 	// Use goroutines for parallel matrix multiplication
 	var wg sync.WaitGroup
 	for i := 0; i < rows; i++ {
@@ -622,18 +616,18 @@ func (m *ParallelHMMModel) multiplyMatricesOptimized(a, b [][]float64) [][]float
 			}
 		}(i)
 	}
-	
+
 	wg.Wait()
 	return result
 }
 
-// vectorAddGPU performs GPU-accelerated vector addition
+// vectorAddGPU runs on the CPU despite its name: chunked goroutines when
+// useGPU is set, a serial loop otherwise.
 func (m *ParallelHMMModel) vectorAddGPU(a, b []float64) []float64 {
 	if !m.useGPU {
 		return m.vectorAddCPU(a, b)
 	}
-	
-	// In production, this would use Metal compute shaders
+
 	return m.vectorAddOptimized(a, b)
 }
 
@@ -649,12 +643,12 @@ func (m *ParallelHMMModel) vectorAddCPU(a, b []float64) []float64 {
 // vectorAddOptimized performs optimized vector addition
 func (m *ParallelHMMModel) vectorAddOptimized(a, b []float64) []float64 {
 	result := make([]float64, len(a))
-	
+
 	// Use parallel processing for large vectors
 	if len(a) > 1000 {
 		var wg sync.WaitGroup
 		chunkSize := len(a) / m.numWorkers
-		
+
 		for i := 0; i < m.numWorkers; i++ {
 			wg.Add(1)
 			go func(start, end int) {
@@ -664,23 +658,22 @@ func (m *ParallelHMMModel) vectorAddOptimized(a, b []float64) []float64 {
 				}
 			}(i*chunkSize, (i+1)*chunkSize)
 		}
-		
+
 		wg.Wait()
 	} else {
 		for i := range a {
 			result[i] = a[i] + b[i]
 		}
 	}
-	
+
 	return result
 }
 
-// cleanupGPU releases GPU resources
+// cleanupGPU clears gpuDevice. Nothing sets gpuDevice, so this is a no-op.
 func (m *ParallelHMMModel) cleanupGPU() {
 	if m.gpuDevice != nil {
-		// In production, this would release Metal resources
 		m.gpuDevice = nil
-		fmt.Println("🎮 Metal GPU resources released")
+		fmt.Println("GPU device handle cleared")
 	}
 }
 
@@ -691,14 +684,14 @@ func ReadFASTAFile(filename string) ([][]byte, error) {
 		return nil, fmt.Errorf("failed to open FASTA file: %w", err)
 	}
 	defer file.Close()
-	
+
 	var sequences [][]byte
 	var currentSequence []byte
-	
+
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
-		
+
 		if strings.HasPrefix(line, ">") {
 			// New sequence header
 			if len(currentSequence) > 0 {
@@ -710,16 +703,16 @@ func ReadFASTAFile(filename string) ([][]byte, error) {
 			currentSequence = append(currentSequence, []byte(strings.ToUpper(line))...)
 		}
 	}
-	
+
 	// Add the last sequence
 	if len(currentSequence) > 0 {
 		sequences = append(sequences, currentSequence)
 	}
-	
+
 	if err := scanner.Err(); err != nil {
 		return nil, fmt.Errorf("error reading FASTA file: %w", err)
 	}
-	
+
 	return sequences, nil
 }
 
@@ -728,15 +721,15 @@ func (m *ParallelHMMModel) TrainFromSequence(sequence []byte) error {
 	if len(sequence) < m.k {
 		return nil
 	}
-	
+
 	// Process k-mers from the sequence
 	kmerCounts := make(map[string]int)
 	transitions := make(map[string]map[string]int)
-	
+
 	for i := 0; i <= len(sequence)-m.k; i++ {
 		kmer := string(sequence[i : i+m.k])
 		kmerCounts[kmer]++
-		
+
 		// Count transitions
 		if i > 0 {
 			prevKmer := string(sequence[i-1 : i-1+m.k])
@@ -746,31 +739,31 @@ func (m *ParallelHMMModel) TrainFromSequence(sequence []byte) error {
 			transitions[prevKmer][kmer]++
 		}
 	}
-	
+
 	// Update model with thread safety
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	
+
 	// Update transition matrix
 	for fromKmer, transitionMap := range transitions {
 		fromIdx := m.getStateIndex(fromKmer)
 		if fromIdx < 0 {
 			continue
 		}
-		
+
 		for toKmer, count := range transitionMap {
 			toIdx := m.getStateIndex(toKmer)
 			if toIdx < 0 {
 				continue
 			}
-			
+
 			m.transitionMatrix[fromIdx][toIdx] += float64(count)
 		}
 	}
-	
+
 	// Update counters
 	atomic.AddUint64(&m.totalKmers, uint64(len(kmerCounts)))
-	
+
 	return nil
 }
 
@@ -780,20 +773,20 @@ func (m *ParallelHMMModel) GenerateSequence(length int) ([]byte, error) {
 		// For untrained models, generate based on current training state
 		return m.generateSequenceUntrained(length)
 	}
-	
+
 	return m.generateSequenceOptimized(length, context.Background())
 }
 
 // generateSequenceUntrained generates a sequence from an untrained model
 func (m *ParallelHMMModel) generateSequenceUntrained(length int) ([]byte, error) {
 	sequence := make([]byte, length)
-	
+
 	// Simple random generation with biological constraints
 	bases := []byte{'A', 'T', 'C', 'G'}
-	
+
 	// Target GC content around 42%
 	gcTarget := 0.42
-	
+
 	for i := 0; i < length; i++ {
 		// Calculate current GC content
 		gcCount := 0
@@ -802,9 +795,9 @@ func (m *ParallelHMMModel) generateSequenceUntrained(length int) ([]byte, error)
 				gcCount++
 			}
 		}
-		
+
 		currentGC := float64(gcCount) / float64(i+1)
-		
+
 		// Bias towards GC or AT to reach target
 		if currentGC < gcTarget {
 			// Favor GC
@@ -830,6 +823,6 @@ func (m *ParallelHMMModel) generateSequenceUntrained(length int) ([]byte, error)
 			}
 		}
 	}
-	
+
 	return sequence, nil
 }

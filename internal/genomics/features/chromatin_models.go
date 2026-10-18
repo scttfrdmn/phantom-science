@@ -5,7 +5,9 @@ import (
 	"math"
 )
 
-// NewChromatinAccessibilityModel creates a new chromatin accessibility model
+// NewChromatinAccessibilityModel builds the synthetic chromatin annotation for
+// chr1–chr10 (positions up to 100 Mb). Construction precomputes 10^4 region
+// states and about 10^5 TF sites per chromosome.
 func NewChromatinAccessibilityModel() (*ChromatinAccessibilityModel, error) {
 	model := &ChromatinAccessibilityModel{
 		accessibilityScores: make(map[string]float64),
@@ -13,12 +15,12 @@ func NewChromatinAccessibilityModel() (*ChromatinAccessibilityModel, error) {
 		tfBindingSites:      make(map[string][]TranscriptionFactorSite),
 		chromatinStates:     make(map[string]ChromatinState),
 	}
-	
+
 	// Initialize with default chromatin landscape data
 	if err := model.initializeChromatinLandscape(); err != nil {
 		return nil, fmt.Errorf("failed to initialize chromatin landscape: %w", err)
 	}
-	
+
 	return model, nil
 }
 
@@ -26,17 +28,19 @@ func NewChromatinAccessibilityModel() (*ChromatinAccessibilityModel, error) {
 func (cam *ChromatinAccessibilityModel) initializeChromatinLandscape() error {
 	// Initialize histone modification patterns for different chromatin states
 	cam.initializeHistoneMarks()
-	
+
 	// Initialize transcription factor binding sites
 	cam.initializeTFBindingSites()
-	
+
 	// Initialize chromatin state annotations
 	cam.initializeChromatinStates()
-	
+
 	return nil
 }
 
-// initializeHistoneMarks sets up histone modification patterns
+// initializeHistoneMarks sets illustrative relative histone-mark levels per
+// chromatin state. The marks follow the usual ChromHMM state definitions; the
+// numeric levels are hand-set, not measured.
 func (cam *ChromatinAccessibilityModel) initializeHistoneMarks() {
 	// Different histone marks associated with various chromatin states
 	histoneMarks := map[string]map[string]float64{
@@ -49,7 +53,7 @@ func (cam *ChromatinAccessibilityModel) initializeHistoneMarks() {
 			"H3K27me3": 0.05, // Repressive mark (low)
 			"H3K9me3":  0.02, // Heterochromatin mark (very low)
 		},
-		
+
 		// Enhancer signatures
 		"strong_enhancer": {
 			"H3K4me1":  0.80, // Strong enhancer mark
@@ -59,7 +63,7 @@ func (cam *ChromatinAccessibilityModel) initializeHistoneMarks() {
 			"H3K27me3": 0.08, // Repressive mark (low)
 			"H3K9me3":  0.03, // Heterochromatin mark (very low)
 		},
-		
+
 		// Transcribed regions
 		"transcribed": {
 			"H3K36me3": 0.75, // Transcriptional elongation
@@ -69,7 +73,7 @@ func (cam *ChromatinAccessibilityModel) initializeHistoneMarks() {
 			"H3K27me3": 0.10, // Low repression
 			"H3K9me3":  0.05, // Low heterochromatin
 		},
-		
+
 		// Polycomb repressed regions
 		"polycomb_repressed": {
 			"H3K27me3": 0.80, // Strong Polycomb mark
@@ -79,7 +83,7 @@ func (cam *ChromatinAccessibilityModel) initializeHistoneMarks() {
 			"H3K9ac":   0.02,
 			"H3K9me3":  0.15, // Some heterochromatin
 		},
-		
+
 		// Heterochromatin
 		"heterochromatin": {
 			"H3K9me3":  0.85, // Strong heterochromatin mark
@@ -89,7 +93,7 @@ func (cam *ChromatinAccessibilityModel) initializeHistoneMarks() {
 			"H3K4me1":  0.02,
 			"H3K9ac":   0.01,
 		},
-		
+
 		// Inactive regions
 		"inactive": {
 			"H3K4me3":  0.05, // Low active marks
@@ -100,11 +104,13 @@ func (cam *ChromatinAccessibilityModel) initializeHistoneMarks() {
 			"H3K9me3":  0.25, // Moderate heterochromatin
 		},
 	}
-	
+
 	cam.histoneMarks = histoneMarks
 }
 
-// initializeTFBindingSites sets up transcription factor binding patterns
+// initializeTFBindingSites places synthetic transcription-factor sites every
+// 5 kb, chosen by a deterministic position formula. The motifs are not
+// searched for in any sequence.
 func (cam *ChromatinAccessibilityModel) initializeTFBindingSites() {
 	// Common transcription factors and their binding patterns
 	commonTFs := []struct {
@@ -112,27 +118,27 @@ func (cam *ChromatinAccessibilityModel) initializeTFBindingSites() {
 		motif string
 		score float64
 	}{
-		{"CTCF", "CCGCGNGGNGGCAG", 0.85},      // Insulator
-		{"SP1", "GGGCGG", 0.75},               // GC-rich promoters
-		{"AP1", "TGAGTCA", 0.70},              // Stress response
-		{"NFY", "CCAAT", 0.65},                // CCAAT box
-		{"ELF1", "AGGAAGT", 0.60},             // ETS family
-		{"GABPA", "CGGAAGT", 0.58},            // ETS family
-		{"YY1", "GCGCCATNTT", 0.72},           // Polycomb recruitment
-		{"REST", "TTCAGCACCATGGACAG", 0.80},   // Transcriptional repressor
+		{"CTCF", "CCGCGNGGNGGCAG", 0.85},    // Insulator
+		{"SP1", "GGGCGG", 0.75},             // GC-rich promoters
+		{"AP1", "TGAGTCA", 0.70},            // Stress response
+		{"NFY", "CCAAT", 0.65},              // CCAAT box
+		{"ELF1", "AGGAAGT", 0.60},           // ETS family
+		{"GABPA", "CGGAAGT", 0.58},          // ETS family
+		{"YY1", "GCGCCATNTT", 0.72},         // Polycomb recruitment
+		{"REST", "TTCAGCACCATGGACAG", 0.80}, // Transcriptional repressor
 	}
-	
-	// Simulate TF binding sites across different chromosomes
+
+	// Synthetic TF binding sites on chr1–chr10
 	chromosomes := []string{"chr1", "chr2", "chr3", "chr4", "chr5", "chr6", "chr7", "chr8", "chr9", "chr10"}
-	
+
 	for _, chr := range chromosomes {
 		sites := make([]TranscriptionFactorSite, 0)
-		
+
 		// Generate binding sites at regular intervals (simplified model)
 		for pos := int64(1000); pos < 100000000; pos += 5000 {
 			for _, tf := range commonTFs {
-				// Probabilistic binding based on TF score
-				if (pos*17 + int64(len(tf.name)))%100 < int64(tf.score*100) {
+				// Deterministic placement: keep the site for about score×100% of positions
+				if (pos*17+int64(len(tf.name)))%100 < int64(tf.score*100) {
 					site := TranscriptionFactorSite{
 						Name:       tf.name,
 						Position:   pos,
@@ -144,24 +150,25 @@ func (cam *ChromatinAccessibilityModel) initializeTFBindingSites() {
 				}
 			}
 		}
-		
+
 		cam.tfBindingSites[chr] = sites
 	}
 }
 
-// initializeChromatinStates sets up chromatin state annotations
+// initializeChromatinStates assigns each 10 kb region a state from its offset
+// within the enclosing 1 Mb, so the same pattern repeats every megabase. It
+// is a synthetic annotation, not a chromatin-state map.
 func (cam *ChromatinAccessibilityModel) initializeChromatinStates() {
-	// Simulate chromatin states across genomic regions
 	chromosomes := []string{"chr1", "chr2", "chr3", "chr4", "chr5", "chr6", "chr7", "chr8", "chr9", "chr10"}
-	
+
 	for _, chr := range chromosomes {
 		// Assign chromatin states based on genomic position patterns
 		for pos := int64(0); pos < 100000000; pos += 10000 {
 			regionKey := fmt.Sprintf("%s:%d-%d", chr, pos, pos+10000)
-			
+
 			// Simple model based on position
-			positionFactor := float64(pos % 1000000) / 1000000.0
-			
+			positionFactor := float64(pos%1000000) / 1000000.0
+
 			var state ChromatinState
 			if positionFactor < 0.05 {
 				state = ActivePromoter
@@ -182,49 +189,53 @@ func (cam *ChromatinAccessibilityModel) initializeChromatinStates() {
 			} else {
 				state = Repetitive_CNV
 			}
-			
+
 			cam.chromatinStates[regionKey] = state
 		}
 	}
 }
 
-// AnalyzeRegion analyzes chromatin accessibility for a genomic region
+// AnalyzeRegion looks up the synthetic state of the 10 kb bin containing
+// start (regions on other chromosomes or beyond 100 Mb are Inactive_Low) and
+// returns a weighted score of the state's fixed accessibility, regulatory and
+// DNase values, the TF-site density and a histone-consistency term. It does
+// not look at sequence.
 func (cam *ChromatinAccessibilityModel) AnalyzeRegion(chromosome string, start, end int64) (float64, *ChromatinAnalysisDetails, error) {
 	if start >= end {
 		return 0.0, nil, fmt.Errorf("invalid genomic coordinates: %s:%d-%d", chromosome, start, end)
 	}
-	
+
 	// Get chromatin state for the region
 	chromatinState := cam.getChromatinState(chromosome, start, end)
-	
+
 	// Calculate accessibility score based on chromatin state
 	accessibilityScore := cam.calculateAccessibilityScore(chromatinState)
-	
+
 	// Get histone modification profile
 	histoneProfile := cam.getHistoneProfile(chromatinState)
-	
+
 	// Find overlapping transcription factor binding sites
 	overlappingTFs := cam.findOverlappingTFs(chromosome, start, end)
-	
+
 	// Calculate regulatory potential
 	regulatoryPotential := cam.calculateRegulatoryPotential(chromatinState, overlappingTFs)
-	
-	// Calculate DNase I hypersensitivity score (proxy for accessibility)
+
+	// DNase-like score derived from the accessibility value (no DNase data)
 	dnaseScore := cam.calculateDNaseScore(chromatinState, accessibilityScore)
-	
+
 	details := &ChromatinAnalysisDetails{
-		ChromatinState:       chromatinState,
-		AccessibilityScore:   accessibilityScore,
-		HistoneProfile:       histoneProfile,
-		OverlappingTFs:       overlappingTFs,
-		RegulatoryPotential:  regulatoryPotential,
+		ChromatinState:      chromatinState,
+		AccessibilityScore:  accessibilityScore,
+		HistoneProfile:      histoneProfile,
+		OverlappingTFs:      overlappingTFs,
+		RegulatoryPotential: regulatoryPotential,
 		DNaseScore:          dnaseScore,
 		RegionSize:          end - start,
 	}
-	
+
 	// Overall chromatin realism score
 	realismScore := cam.calculateChromatinRealism(details)
-	
+
 	return realismScore, details, nil
 }
 
@@ -233,11 +244,11 @@ func (cam *ChromatinAccessibilityModel) getChromatinState(chromosome string, sta
 	// Find the region that overlaps with our query
 	regionStart := (start / 10000) * 10000
 	regionKey := fmt.Sprintf("%s:%d-%d", chromosome, regionStart, regionStart+10000)
-	
+
 	if state, exists := cam.chromatinStates[regionKey]; exists {
 		return state
 	}
-	
+
 	// Default to inactive if not found
 	return Inactive_Low
 }
@@ -253,17 +264,17 @@ func (cam *ChromatinAccessibilityModel) calculateAccessibilityScore(state Chroma
 		WeakEnhancer:        0.65,
 		Txn_Transition:      0.50,
 		Txn_Elongation:      0.55,
-		Weak_Txn:           0.40,
+		Weak_Txn:            0.40,
 		Polycomb_Repressed:  0.15,
 		Heterochromatin_low: 0.10,
 		Repetitive_CNV:      0.08,
 		Inactive_Low:        0.20,
 	}
-	
+
 	if score, exists := accessibilityMap[state]; exists {
 		return score
 	}
-	
+
 	return 0.20 // Default low accessibility
 }
 
@@ -274,18 +285,18 @@ func (cam *ChromatinAccessibilityModel) getHistoneProfile(state ChromatinState) 
 		StrongEnhancer:      "strong_enhancer",
 		WeakEnhancer:        "strong_enhancer", // Use same as strong enhancer
 		Txn_Elongation:      "transcribed",
-		Weak_Txn:           "transcribed",
+		Weak_Txn:            "transcribed",
 		Polycomb_Repressed:  "polycomb_repressed",
 		Heterochromatin_low: "heterochromatin",
 		Inactive_Low:        "inactive",
 	}
-	
+
 	if stateName, exists := stateNames[state]; exists {
 		if profile, exists := cam.histoneMarks[stateName]; exists {
 			return profile
 		}
 	}
-	
+
 	// Return default inactive profile
 	return cam.histoneMarks["inactive"]
 }
@@ -293,7 +304,7 @@ func (cam *ChromatinAccessibilityModel) getHistoneProfile(state ChromatinState) 
 // findOverlappingTFs finds transcription factors binding sites overlapping with the region
 func (cam *ChromatinAccessibilityModel) findOverlappingTFs(chromosome string, start, end int64) []TranscriptionFactorSite {
 	var overlapping []TranscriptionFactorSite
-	
+
 	if sites, exists := cam.tfBindingSites[chromosome]; exists {
 		for _, site := range sites {
 			if site.Position >= start && site.Position <= end {
@@ -301,7 +312,7 @@ func (cam *ChromatinAccessibilityModel) findOverlappingTFs(chromosome string, st
 			}
 		}
 	}
-	
+
 	return overlapping
 }
 
@@ -309,64 +320,64 @@ func (cam *ChromatinAccessibilityModel) findOverlappingTFs(chromosome string, st
 func (cam *ChromatinAccessibilityModel) calculateRegulatoryPotential(state ChromatinState, tfSites []TranscriptionFactorSite) float64 {
 	// Base regulatory potential from chromatin state
 	baseRegulatory := map[ChromatinState]float64{
-		ActivePromoter:     0.95,
-		WeakPromoter:       0.75,
-		PoisedPromoter:     0.60,
-		StrongEnhancer:     0.90,
-		WeakEnhancer:       0.70,
-		Txn_Transition:     0.40,
-		Txn_Elongation:     0.30,
-		Weak_Txn:          0.25,
-		Polycomb_Repressed: 0.05,
+		ActivePromoter:      0.95,
+		WeakPromoter:        0.75,
+		PoisedPromoter:      0.60,
+		StrongEnhancer:      0.90,
+		WeakEnhancer:        0.70,
+		Txn_Transition:      0.40,
+		Txn_Elongation:      0.30,
+		Weak_Txn:            0.25,
+		Polycomb_Repressed:  0.05,
 		Heterochromatin_low: 0.02,
-		Repetitive_CNV:     0.01,
-		Inactive_Low:       0.15,
+		Repetitive_CNV:      0.01,
+		Inactive_Low:        0.15,
 	}
-	
+
 	basePotential := baseRegulatory[state]
-	
+
 	// Add contribution from transcription factor binding sites
 	tfContribution := 0.0
 	for _, site := range tfSites {
 		tfContribution += site.Score * 0.1 // Each TF contributes up to 0.1
 	}
-	
+
 	// Cap the total potential at 1.0
 	totalPotential := basePotential + tfContribution
 	if totalPotential > 1.0 {
 		totalPotential = 1.0
 	}
-	
+
 	return totalPotential
 }
 
-// calculateDNaseScore calculates DNase I hypersensitivity score
+// calculateDNaseScore derives a DNase-like score from the accessibility value,
+// a per-state multiplier and a fixed per-state offset. No DNase data is used.
 func (cam *ChromatinAccessibilityModel) calculateDNaseScore(state ChromatinState, accessibilityScore float64) float64 {
-	// DNase score is highly correlated with accessibility but with some noise
 	baseScore := accessibilityScore
-	
+
 	// Add chromatin state-specific modulation
 	stateModulation := map[ChromatinState]float64{
-		ActivePromoter:     1.1,  // Higher DNase sensitivity
-		StrongEnhancer:     1.15, // Highest sensitivity
-		WeakEnhancer:       1.05,
-		Txn_Elongation:     0.9,  // Lower in gene bodies
-		Polycomb_Repressed: 0.7,  // Reduced accessibility
+		ActivePromoter:      1.1,  // Higher DNase sensitivity
+		StrongEnhancer:      1.15, // Highest sensitivity
+		WeakEnhancer:        1.05,
+		Txn_Elongation:      0.9, // Lower in gene bodies
+		Polycomb_Repressed:  0.7, // Reduced accessibility
 		Heterochromatin_low: 0.5, // Very low accessibility
-		Inactive_Low:       0.8,
+		Inactive_Low:        0.8,
 	}
-	
+
 	modulation := stateModulation[state]
 	if modulation == 0 {
 		modulation = 1.0
 	}
-	
+
 	dnaseScore := baseScore * modulation
-	
-	// Add some biological noise (±10%)
+
+	// Fixed per-state offset in [−0.15, 0.05]; deterministic, not noise
 	noise := 0.1 * (math.Sin(float64(int(state)*17)) - 0.5)
 	dnaseScore += noise
-	
+
 	// Ensure score stays in [0, 1] range
 	if dnaseScore < 0 {
 		dnaseScore = 0
@@ -374,7 +385,7 @@ func (cam *ChromatinAccessibilityModel) calculateDNaseScore(state ChromatinState
 	if dnaseScore > 1 {
 		dnaseScore = 1
 	}
-	
+
 	return dnaseScore
 }
 
@@ -384,20 +395,20 @@ func (cam *ChromatinAccessibilityModel) calculateChromatinRealism(details *Chrom
 	weights := map[string]float64{
 		"accessibility":        0.3,
 		"regulatory_potential": 0.25,
-		"dnase_score":         0.2,
-		"tf_density":          0.15,
-		"histone_consistency": 0.1,
+		"dnase_score":          0.2,
+		"tf_density":           0.15,
+		"histone_consistency":  0.1,
 	}
-	
+
 	// Calculate TF density score
 	tfDensity := float64(len(details.OverlappingTFs)) / float64(details.RegionSize/1000.0)
 	if tfDensity > 1.0 {
 		tfDensity = 1.0
 	}
-	
+
 	// Calculate histone mark consistency
 	histoneConsistency := cam.calculateHistoneConsistency(details.HistoneProfile, details.ChromatinState)
-	
+
 	// Combine scores
 	realismScore := 0.0
 	realismScore += details.AccessibilityScore * weights["accessibility"]
@@ -405,17 +416,19 @@ func (cam *ChromatinAccessibilityModel) calculateChromatinRealism(details *Chrom
 	realismScore += details.DNaseScore * weights["dnase_score"]
 	realismScore += tfDensity * weights["tf_density"]
 	realismScore += histoneConsistency * weights["histone_consistency"]
-	
+
 	return realismScore
 }
 
-// calculateHistoneConsistency checks consistency of histone marks with chromatin state
+// calculateHistoneConsistency compares a histone profile with the profile
+// for state. AnalyzeRegion passes the state's own profile, so the result is
+// always 1.0 there.
 func (cam *ChromatinAccessibilityModel) calculateHistoneConsistency(observedProfile map[string]float64, state ChromatinState) float64 {
 	expectedProfile := cam.getHistoneProfile(state)
-	
+
 	consistency := 0.0
 	markCount := 0
-	
+
 	for mark, expectedLevel := range expectedProfile {
 		if observedLevel, exists := observedProfile[mark]; exists {
 			// Calculate how close observed is to expected
@@ -425,11 +438,11 @@ func (cam *ChromatinAccessibilityModel) calculateHistoneConsistency(observedProf
 			markCount++
 		}
 	}
-	
+
 	if markCount == 0 {
 		return 0.5 // Neutral score if no marks to compare
 	}
-	
+
 	return consistency / float64(markCount)
 }
 
@@ -440,30 +453,30 @@ type ChromatinAnalysisDetails struct {
 	HistoneProfile      map[string]float64
 	OverlappingTFs      []TranscriptionFactorSite
 	RegulatoryPotential float64
-	DNaseScore         float64
-	RegionSize         int64
+	DNaseScore          float64
+	RegionSize          int64
 }
 
 // String returns a string representation of the chromatin state
 func (cs ChromatinState) String() string {
 	stateNames := map[ChromatinState]string{
 		ActivePromoter:      "Active Promoter",
-		WeakPromoter:        "Weak Promoter", 
+		WeakPromoter:        "Weak Promoter",
 		PoisedPromoter:      "Poised Promoter",
 		StrongEnhancer:      "Strong Enhancer",
 		WeakEnhancer:        "Weak Enhancer",
 		Txn_Transition:      "Transcriptional Transition",
 		Txn_Elongation:      "Transcriptional Elongation",
-		Weak_Txn:           "Weak Transcription",
+		Weak_Txn:            "Weak Transcription",
 		Polycomb_Repressed:  "Polycomb Repressed",
 		Heterochromatin_low: "Heterochromatin",
 		Repetitive_CNV:      "Repetitive/CNV",
 		Inactive_Low:        "Inactive",
 	}
-	
+
 	if name, exists := stateNames[cs]; exists {
 		return name
 	}
-	
+
 	return "Unknown"
 }

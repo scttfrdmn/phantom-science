@@ -8,7 +8,8 @@ import "math"
 type PopulationSample struct {
 	// AlleleFreq is the frequency of the derived (or minor) allele in [0, 1].
 	AlleleFreq float64
-	// SampleSize is the number of diploid individuals (i.e. 2×n chromosomes).
+	// SampleSize is n_j in ComputeFST: the number of sampled allele copies
+	// (chromosomes), not individuals.
 	SampleSize int
 }
 
@@ -28,7 +29,10 @@ type FSTResult struct {
 	Valid bool
 }
 
-// ComputeFST returns the Weir-Cockerham (1984) F_ST estimator for a single locus.
+// ComputeFST returns the Weir-Cockerham (1984) F_ST (theta) estimator for a
+// single biallelic locus, in the form without the observed-heterozygosity
+// term (i.e. treating the sample as allele copies). Negative estimates are
+// clamped to 0.
 //
 // Mathematical derivation (r populations, allele frequency p_j in population j,
 // sample size n_j, N = Σ n_j):

@@ -1,3 +1,12 @@
+// Package training wires the HMM k-mer, GC-quality and population-genetics
+// trainers into a five-phase pipeline (data preparation, training,
+// validation, performance testing, final threshold checks), and downloads
+// reference and validation files from AWS Open Data.
+//
+// Several validation stages are stubs: RunDownstreamTesting records a fixed
+// result without running any tool, the platform validation datasets are
+// uniform random sequences, and without trained models the statistical and
+// performance stages store fixed placeholder values.
 package training
 
 import (
@@ -20,15 +29,15 @@ import (
 	"github.com/scttfrdmn/phantom-science/internal/security"
 )
 
-// TrainingPipeline manages the complete model training and validation process
+// TrainingPipeline runs model training and the validation stages in order.
 type TrainingPipeline struct {
-	config         *TrainingConfig
-	dataManager    *DataManager
-	modelTrainer   *ModelTrainer
-	validator      *ValidationManager
-	logger         *PipelineLogger
-	metrics        *TrainingMetrics
-	mu             sync.RWMutex
+	config       *TrainingConfig
+	dataManager  *DataManager
+	modelTrainer *ModelTrainer
+	validator    *ValidationManager
+	logger       *PipelineLogger
+	metrics      *TrainingMetrics
+	mu           sync.RWMutex
 }
 
 // TrainingConfig contains configuration for the training pipeline
@@ -40,25 +49,25 @@ type TrainingConfig struct {
 	ValidationDataPath  string
 	OutputPath          string
 	CachePath           string
-	
+
 	// Training parameters
-	KmerSizes           []int
-	Populations         []string
-	Platforms           []string
-	ValidationSplit     float64
+	KmerSizes            []int
+	Populations          []string
+	Platforms            []string
+	ValidationSplit      float64
 	CrossValidationFolds int
-	
+
 	// Performance parameters
-	MaxMemoryGB         int
-	NumWorkers          int
-	BatchSize           int
-	EnableGPU           bool
-	
+	MaxMemoryGB int
+	NumWorkers  int
+	BatchSize   int
+	EnableGPU   bool
+
 	// Validation thresholds
-	JSdivergenceThreshold   float64
-	ExpertAccuracyThreshold float64
+	JSdivergenceThreshold      float64
+	ExpertAccuracyThreshold    float64
 	DownstreamSuccessThreshold float64
-	
+
 	// Training controls
 	EnableEarlyStopping bool
 	MaxTrainingTime     time.Duration
@@ -67,23 +76,24 @@ type TrainingConfig struct {
 
 // DataManager handles data loading and preprocessing
 type DataManager struct {
-	config         *TrainingConfig
-	referenceCache map[string]*reference.ReferenceGenome
+	config          *TrainingConfig
+	referenceCache  map[string]*reference.ReferenceGenome
 	populationCache map[string]*population.PopulationPanel
 	validationCache map[string]*ValidationDataset
-	mu             sync.RWMutex
+	mu              sync.RWMutex
 }
 
 // ModelTrainer handles training of all model components
 type ModelTrainer struct {
-	config       *TrainingConfig
-	hmmTrainer   *HMMTrainer
+	config         *TrainingConfig
+	hmmTrainer     *HMMTrainer
 	qualityTrainer *QualityTrainer
-	popTrainer   *PopulationTrainer
-	checkpointer *ModelCheckpointer
+	popTrainer     *PopulationTrainer
+	checkpointer   *ModelCheckpointer
 }
 
-// ValidationManager handles comprehensive validation
+// ValidationManager runs the statistical, expert, downstream and
+// performance validation stages.
 type ValidationManager struct {
 	config               *TrainingConfig
 	statisticalValidator *validation.StatisticalValidator
@@ -103,25 +113,25 @@ func (vm *ValidationManager) SetSequenceGenerators(gens map[string]authenticity.
 
 // TrainingMetrics tracks training progress and performance
 type TrainingMetrics struct {
-	StartTime         time.Time
-	TrainingDuration  time.Duration
-	ModelsTrained     int
-	ValidationScores  map[string]float64
+	StartTime          time.Time
+	TrainingDuration   time.Duration
+	ModelsTrained      int
+	ValidationScores   map[string]float64
 	PerformanceMetrics map[string]float64
-	ErrorLog          []TrainingError
-	mu                sync.RWMutex
+	ErrorLog           []TrainingError
+	mu                 sync.RWMutex
 }
 
 // ValidationDataset represents a dataset for validation
 type ValidationDataset struct {
-	Platform    string
-	DataType    string
-	FilePath    string
-	Sequences   [][]byte
-	Qualities   [][]byte
-	Metadata    map[string]interface{}
-	Size        int
-	Checksum    string
+	Platform  string
+	DataType  string
+	FilePath  string
+	Sequences [][]byte
+	Qualities [][]byte
+	Metadata  map[string]interface{}
+	Size      int
+	Checksum  string
 }
 
 // TrainingError represents a training error
@@ -170,24 +180,24 @@ func NewDataManager(config *TrainingConfig) *DataManager {
 func (dm *DataManager) LoadReferenceGenome(assembly string) error {
 	dm.mu.Lock()
 	defer dm.mu.Unlock()
-	
+
 	// Check if already cached
 	if _, exists := dm.referenceCache[assembly]; exists {
 		return nil
 	}
-	
+
 	// Determine base directory for the assembly
 	baseDir := filepath.Join(dm.config.ReferenceGenomePath, assembly)
-	
+
 	// Create reference genome instance
 	refGenome := reference.NewReferenceGenome(baseDir)
-	
+
 	// Validate that the reference genome has data
 	chromosomes := refGenome.GetChromosomeNames()
 	if len(chromosomes) == 0 {
 		return fmt.Errorf("no chromosomes found for assembly %s", assembly)
 	}
-	
+
 	// Test loading one chromosome to validate format
 	testChr, err := refGenome.LoadChromosome(chromosomes[0])
 	if err != nil {
@@ -196,10 +206,10 @@ func (dm *DataManager) LoadReferenceGenome(assembly string) error {
 	if testChr.GetLength() == 0 {
 		return fmt.Errorf("test chromosome has zero length for assembly %s", assembly)
 	}
-	
+
 	// Cache the reference genome
 	dm.referenceCache[assembly] = refGenome
-	
+
 	log.Printf("Loaded reference genome %s with %d chromosomes", assembly, len(chromosomes))
 	return nil
 }
@@ -208,18 +218,18 @@ func (dm *DataManager) LoadReferenceGenome(assembly string) error {
 func (dm *DataManager) LoadPopulationPanel(populationName string) error {
 	dm.mu.Lock()
 	defer dm.mu.Unlock()
-	
+
 	// Check if already cached
 	if _, exists := dm.populationCache[populationName]; exists {
 		return nil
 	}
-	
+
 	// Create population panel with default sample size
 	sampleSize := 100 // Default sample size
 	if dm.config.ValidationSplit > 0 {
 		sampleSize = int(100.0 / dm.config.ValidationSplit)
 	}
-	
+
 	// The panel's demography (Ne, growth, bottleneck, split from its parent
 	// population) comes from the presets in internal/genomics/population.
 	// Codes without their own preset (LWK, GBR, JPT, ...) use the closest
@@ -231,31 +241,32 @@ func (dm *DataManager) LoadPopulationPanel(populationName string) error {
 	} else if panel.PresetName() != populationName {
 		log.Printf("Population %s simulated with the %s demographic preset as a proxy", populationName, panel.PresetName())
 	}
-	
+
 	// Load simulation data
 	regionLength := 1000000 // 1MB default region
 	if err := panel.LoadFromSimulation(regionLength); err != nil {
 		return fmt.Errorf("failed to load simulation data for %s: %w", populationName, err)
 	}
-	
+
 	// Cache the population panel
 	dm.populationCache[populationName] = panel
-	
+
 	stats := panel.GetPopulationStats()
 	log.Printf("Loaded population panel %s with %v variants", populationName, stats["variants"])
 	return nil
 }
 
-// LoadValidationDataset loads a validation dataset for a platform
+// LoadValidationDataset builds (and caches) a synthetic validation dataset
+// for a platform; see generateValidationData.
 func (dm *DataManager) LoadValidationDataset(platform string) error {
 	dm.mu.Lock()
 	defer dm.mu.Unlock()
-	
+
 	// Check if already cached
 	if _, exists := dm.validationCache[platform]; exists {
 		return nil
 	}
-	
+
 	// Create validation dataset
 	dataset := &ValidationDataset{
 		Platform: platform,
@@ -263,26 +274,28 @@ func (dm *DataManager) LoadValidationDataset(platform string) error {
 		FilePath: filepath.Join(dm.config.ValidationDataPath, platform),
 		Metadata: make(map[string]interface{}),
 	}
-	
+
 	// Generate synthetic validation data
 	if err := dm.generateValidationData(dataset); err != nil {
 		return fmt.Errorf("failed to generate validation data for %s: %w", platform, err)
 	}
-	
+
 	// Cache the validation dataset
 	dm.validationCache[platform] = dataset
-	
+
 	log.Printf("Loaded validation dataset for %s with %d sequences", platform, dataset.Size)
 	return nil
 }
 
-// generateValidationData generates synthetic validation data for a platform
+// generateValidationData fills dataset with uniform random bases and raw
+// quality values (30, or 10 at the platform's error rate). It is not real
+// sequencing data.
 func (dm *DataManager) generateValidationData(dataset *ValidationDataset) error {
 	// Platform-specific sequence generation parameters
 	var sequenceLength int
 	var numSequences int
 	var errorRate float64
-	
+
 	switch dataset.Platform {
 	case "illumina", "novaseq", "nextseq":
 		sequenceLength = 150
@@ -301,38 +314,38 @@ func (dm *DataManager) generateValidationData(dataset *ValidationDataset) error 
 		numSequences = 1000
 		errorRate = 0.001
 	}
-	
+
 	// Generate sequences
 	dataset.Sequences = make([][]byte, numSequences)
 	dataset.Qualities = make([][]byte, numSequences)
-	
+
 	for i := 0; i < numSequences; i++ {
 		// Generate random sequence
 		sequence := make([]byte, sequenceLength)
 		qualities := make([]byte, sequenceLength)
-		
+
 		for j := 0; j < sequenceLength; j++ {
 			// Random base
 			bases := []byte{'A', 'T', 'G', 'C'}
 			sequence[j] = bases[rand.IntN(4)] // #nosec G404
-			
+
 			// Platform-specific quality score
-			baseQuality := 30.0 // Phred score 30
+			baseQuality := 30.0             // Phred score 30
 			if rand.Float64() < errorRate { // #nosec G404
 				baseQuality = 10.0 // Lower quality for errors
 			}
 			qualities[j] = byte(baseQuality)
 		}
-		
+
 		dataset.Sequences[i] = sequence
 		dataset.Qualities[i] = qualities
 	}
-	
+
 	dataset.Size = numSequences
 	dataset.Metadata["sequence_length"] = sequenceLength
 	dataset.Metadata["error_rate"] = errorRate
 	dataset.Metadata["generated"] = true
-	
+
 	return nil
 }
 
@@ -340,11 +353,11 @@ func (dm *DataManager) generateValidationData(dataset *ValidationDataset) error 
 func (dm *DataManager) GetReferenceGenome(assembly string) (*reference.ReferenceGenome, error) {
 	dm.mu.RLock()
 	defer dm.mu.RUnlock()
-	
+
 	if genome, exists := dm.referenceCache[assembly]; exists {
 		return genome, nil
 	}
-	
+
 	return nil, fmt.Errorf("reference genome %s not loaded", assembly)
 }
 
@@ -352,11 +365,11 @@ func (dm *DataManager) GetReferenceGenome(assembly string) (*reference.Reference
 func (dm *DataManager) GetPopulationPanel(populationName string) (*population.PopulationPanel, error) {
 	dm.mu.RLock()
 	defer dm.mu.RUnlock()
-	
+
 	if panel, exists := dm.populationCache[populationName]; exists {
 		return panel, nil
 	}
-	
+
 	return nil, fmt.Errorf("population panel %s not loaded", populationName)
 }
 
@@ -364,22 +377,22 @@ func (dm *DataManager) GetPopulationPanel(populationName string) (*population.Po
 func (dm *DataManager) GetValidationDataset(platform string) (*ValidationDataset, error) {
 	dm.mu.RLock()
 	defer dm.mu.RUnlock()
-	
+
 	if dataset, exists := dm.validationCache[platform]; exists {
 		return dataset, nil
 	}
-	
+
 	return nil, fmt.Errorf("validation dataset %s not loaded", platform)
 }
 
 // NewModelTrainer creates a new model trainer
 func NewModelTrainer(config *TrainingConfig) *ModelTrainer {
 	return &ModelTrainer{
-		config:       config,
-		hmmTrainer:   NewHMMTrainer(config),
+		config:         config,
+		hmmTrainer:     NewHMMTrainer(config),
 		qualityTrainer: NewQualityTrainer(config),
-		popTrainer:   NewPopulationTrainer(config),
-		checkpointer: NewModelCheckpointer(config.OutputPath),
+		popTrainer:     NewPopulationTrainer(config),
+		checkpointer:   NewModelCheckpointer(config.OutputPath),
 	}
 }
 
@@ -401,25 +414,23 @@ func (mt *ModelTrainer) TrainPopulationModel(population string) error {
 // NewValidationManager creates a new validation manager
 func NewValidationManager(config *TrainingConfig) *ValidationManager {
 	return &ValidationManager{
-		config:              config,
+		config:               config,
 		statisticalValidator: validation.NewStatisticalValidator(),
-		expertTesting:       validation.NewExpertTestingFramework(),
-		performanceTester:   NewPerformanceTester(config),
-		results:             &ValidationResults{},
+		expertTesting:        validation.NewExpertTestingFramework(),
+		performanceTester:    NewPerformanceTester(config),
+		results:              &ValidationResults{},
 	}
 }
 
 // RunStatisticalValidation runs statistical validation tests.
 //
-// Placeholder: real implementation requires trained model output files from
-// the HMM training phase and a held-out reference dataset to compute actual
-// Jensen-Shannon divergence values per platform. The values below are
-// stand-ins that allow downstream pipeline stages to complete; replace with
-// calls to the StatisticalValidator when data paths are wired in.
+// Without trained models (see SetSequenceGenerators) it stores fixed
+// placeholder divergences for illumina, pacbio and nanopore and returns.
 //
-// When trained HMM models are available (wired via SetSequenceGenerators),
-// it generates a sample of sequences per model and computes actual k-mer
-// frequency JS divergence against the distribution the model was trained on.
+// With models, it generates 50 sequences of 200 bases per model, counts
+// 4-mers, and computes the Jensen-Shannon divergence against a uniform
+// distribution over the observed 4-mers. That measures k-mer uniformity; it
+// is not a comparison with the training data or a held-out reference.
 func (vm *ValidationManager) RunStatisticalValidation() error {
 	log.Printf("Running statistical validation tests...")
 
@@ -465,9 +476,8 @@ func (vm *ValidationManager) RunStatisticalValidation() error {
 			}
 		}
 
-		// Compare against a uniform-ish reference using the training distribution
-		// as a proxy. The self-consistency JS divergence should be near zero for a
-		// well-trained model; deviations indicate generation drift.
+		// Reference: uniform over the observed k-mers (not the training
+		// distribution).
 		referenceFreqs := make(map[string]float64, len(generatedFreqs))
 		for kmer := range generatedFreqs {
 			referenceFreqs[kmer] = 1.0 / float64(len(generatedFreqs))
@@ -525,9 +535,9 @@ func (vm *ValidationManager) RunExpertTesting() error {
 
 // RunDownstreamTesting runs downstream compatibility testing.
 //
-// Placeholder: real implementation invokes BWA/GATK/etc. against generated
-// FASTQ files and parses their exit codes. The values below are stand-ins;
-// replace with actual tool-runner calls when a reference environment is available.
+// Stub: no tool is run. It always records a 0.95 success rate with BWA,
+// GATK, BCFtools and SAMtools listed as compatible, so finalValidation's
+// downstream check does not test anything yet.
 func (vm *ValidationManager) RunDownstreamTesting() error {
 	log.Printf("Running downstream compatibility testing...")
 
@@ -542,7 +552,8 @@ func (vm *ValidationManager) RunDownstreamTesting() error {
 }
 
 // TestGenerationSpeed benchmarks sequence generation throughput using trained
-// HMM models when available, falling back to fixed values otherwise.
+// HMM models when available (100 sequences of 150 bases from the first
+// model), otherwise it stores fixed placeholder values.
 func (vm *ValidationManager) TestGenerationSpeed() error {
 	log.Printf("Testing generation speed...")
 
@@ -664,7 +675,7 @@ func (vm *ValidationManager) TestScalability() error {
 // AggregateResults aggregates all validation results
 func (vm *ValidationManager) AggregateResults() *ValidationResults {
 	log.Printf("Aggregating validation results...")
-	
+
 	// Calculate overall score; default to 0 so that missing data is conservative
 	overallScore := 0.0
 
@@ -685,12 +696,12 @@ func (vm *ValidationManager) AggregateResults() *ValidationResults {
 
 	vm.results.OverallScore = overallScore
 	vm.results.PassesValidation = vm.results.JSdivergenceResults != nil && overallScore >= 95.0
-	
+
 	if !vm.results.PassesValidation {
 		vm.results.Recommendations = append(vm.results.Recommendations,
 			"Overall score below threshold - review model parameters")
 	}
-	
+
 	return vm.results
 }
 
@@ -698,63 +709,63 @@ func (vm *ValidationManager) AggregateResults() *ValidationResults {
 func (p *TrainingPipeline) Execute() error {
 	p.logger.Info("Starting Genomics Authenticity Training Pipeline")
 	p.metrics.StartTime = time.Now()
-	
+
 	// Phase 1: Data Preparation
 	if err := p.prepareData(); err != nil {
 		return fmt.Errorf("data preparation failed: %w", err)
 	}
-	
+
 	// Phase 2: Model Training
 	if err := p.trainModels(); err != nil {
 		return fmt.Errorf("model training failed: %w", err)
 	}
-	
+
 	// Phase 3: Validation
 	if err := p.validateModels(); err != nil {
 		return fmt.Errorf("model validation failed: %w", err)
 	}
-	
+
 	// Phase 4: Performance Testing
 	if err := p.testPerformance(); err != nil {
 		return fmt.Errorf("performance testing failed: %w", err)
 	}
-	
+
 	// Phase 5: Final Validation
 	if err := p.finalValidation(); err != nil {
 		return fmt.Errorf("final validation failed: %w", err)
 	}
-	
+
 	p.metrics.TrainingDuration = time.Since(p.metrics.StartTime)
 	p.logger.Info("Training pipeline completed successfully")
-	
+
 	return nil
 }
 
 // prepareData loads and preprocesses all required data
 func (p *TrainingPipeline) prepareData() error {
 	p.logger.Info("Phase 1: Data Preparation")
-	
+
 	// Load reference genomes
 	for _, assembly := range []string{"GRCh38", "GRCh39"} {
 		if err := p.dataManager.LoadReferenceGenome(assembly); err != nil {
 			return fmt.Errorf("failed to load reference genome %s: %w", assembly, err)
 		}
 	}
-	
+
 	// Load population panels
 	for _, population := range p.config.Populations {
 		if err := p.dataManager.LoadPopulationPanel(population); err != nil {
 			return fmt.Errorf("failed to load population panel %s: %w", population, err)
 		}
 	}
-	
+
 	// Load validation datasets
 	for _, platform := range p.config.Platforms {
 		if err := p.dataManager.LoadValidationDataset(platform); err != nil {
 			return fmt.Errorf("failed to load validation dataset %s: %w", platform, err)
 		}
 	}
-	
+
 	p.logger.Info("Data preparation completed")
 	return nil
 }
@@ -762,7 +773,7 @@ func (p *TrainingPipeline) prepareData() error {
 // trainModels trains all model components
 func (p *TrainingPipeline) trainModels() error {
 	p.logger.Info("Phase 2: Model Training")
-	
+
 	// Train HMM k-mer models
 	for _, k := range p.config.KmerSizes {
 		for _, population := range p.config.Populations {
@@ -772,7 +783,7 @@ func (p *TrainingPipeline) trainModels() error {
 			p.metrics.ModelsTrained++
 		}
 	}
-	
+
 	// Train quality models
 	for _, platform := range p.config.Platforms {
 		if err := p.modelTrainer.TrainQualityModel(platform); err != nil {
@@ -780,7 +791,7 @@ func (p *TrainingPipeline) trainModels() error {
 		}
 		p.metrics.ModelsTrained++
 	}
-	
+
 	// Train population genetics models
 	for _, population := range p.config.Populations {
 		if err := p.modelTrainer.TrainPopulationModel(population); err != nil {
@@ -788,7 +799,7 @@ func (p *TrainingPipeline) trainModels() error {
 		}
 		p.metrics.ModelsTrained++
 	}
-	
+
 	// Wire trained HMM models into the validator so RunStatisticalValidation
 	// and the performance benchmarks can use real GenerateSequence calls.
 	hmmModels := p.modelTrainer.hmmTrainer.GetModels()
@@ -805,24 +816,24 @@ func (p *TrainingPipeline) trainModels() error {
 // validateModels performs comprehensive model validation
 func (p *TrainingPipeline) validateModels() error {
 	p.logger.Info("Phase 3: Model Validation")
-	
+
 	// Statistical validation
 	if err := p.validator.RunStatisticalValidation(); err != nil {
 		return fmt.Errorf("statistical validation failed: %w", err)
 	}
-	
+
 	// Expert testing (if enabled)
 	if p.config.ExpertAccuracyThreshold > 0 {
 		if err := p.validator.RunExpertTesting(); err != nil {
 			return fmt.Errorf("expert testing failed: %w", err)
 		}
 	}
-	
+
 	// Downstream compatibility testing
 	if err := p.validator.RunDownstreamTesting(); err != nil {
 		return fmt.Errorf("downstream testing failed: %w", err)
 	}
-	
+
 	p.logger.Info("Model validation completed")
 	return nil
 }
@@ -830,22 +841,22 @@ func (p *TrainingPipeline) validateModels() error {
 // testPerformance performs performance testing
 func (p *TrainingPipeline) testPerformance() error {
 	p.logger.Info("Phase 4: Performance Testing")
-	
+
 	// Generation speed testing
 	if err := p.validator.TestGenerationSpeed(); err != nil {
 		return fmt.Errorf("generation speed testing failed: %w", err)
 	}
-	
+
 	// Memory usage testing
 	if err := p.validator.TestMemoryUsage(); err != nil {
 		return fmt.Errorf("memory usage testing failed: %w", err)
 	}
-	
+
 	// Scalability testing
 	if err := p.validator.TestScalability(); err != nil {
 		return fmt.Errorf("scalability testing failed: %w", err)
 	}
-	
+
 	p.logger.Info("Performance testing completed")
 	return nil
 }
@@ -853,35 +864,35 @@ func (p *TrainingPipeline) testPerformance() error {
 // finalValidation performs final validation against all criteria
 func (p *TrainingPipeline) finalValidation() error {
 	p.logger.Info("Phase 5: Final Validation")
-	
+
 	// Aggregate all results
 	results := p.validator.AggregateResults()
-	
+
 	// Check against thresholds
 	if results.OverallScore < 95.0 {
 		return fmt.Errorf("overall authenticity score too low: %.2f", results.OverallScore)
 	}
-	
+
 	// Check JS divergence
 	for platform, jsDivergence := range results.JSdivergenceResults {
 		if jsDivergence > p.config.JSdivergenceThreshold {
 			return fmt.Errorf("JS divergence too high for %s: %.6f", platform, jsDivergence)
 		}
 	}
-	
+
 	// Check expert testing results
 	if results.ExpertTestResults != nil {
 		if results.ExpertTestResults.OverallAccuracy > p.config.ExpertAccuracyThreshold {
 			return fmt.Errorf("expert accuracy too high: %.3f", results.ExpertTestResults.OverallAccuracy)
 		}
 	}
-	
+
 	// Check downstream compatibility
 	if results.DownstreamResults.SuccessRate < p.config.DownstreamSuccessThreshold {
 		return fmt.Errorf("downstream success rate too low: %.3f", results.DownstreamResults.SuccessRate)
 	}
-	
-	p.logger.Info("Final validation passed - models are production ready")
+
+	p.logger.Info("Final validation thresholds met (downstream compatibility is a stub and was not tested)")
 	return nil
 }
 
@@ -921,37 +932,37 @@ func NewHMMTrainer(config *TrainingConfig) *HMMTrainer {
 func (t *HMMTrainer) TrainHMMModel(k int, population string) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	
+
 	modelKey := fmt.Sprintf("%dmer_%s", k, population)
-	
+
 	// Create model
 	model := authenticity.NewHMMKmerModel(k)
-	
+
 	// Load reference genome for population
 	refGenome, err := t.loadReferenceGenome(population)
 	if err != nil {
 		return err
 	}
-	
+
 	// Train model
 	if err := model.TrainFromReferenceGenome(refGenome); err != nil {
 		return err
 	}
-	
+
 	// Validate model
 	if err := model.ValidateModel(); err != nil {
 		return err
 	}
-	
+
 	// Store model
 	t.models[modelKey] = model
 	t.trainedModels[modelKey] = true
-	
+
 	// Save model to disk
 	if err := t.saveModel(model, modelKey); err != nil {
 		return err
 	}
-	
+
 	return nil
 }
 
@@ -1007,29 +1018,29 @@ func NewQualityTrainer(config *TrainingConfig) *QualityTrainer {
 func (t *QualityTrainer) TrainQualityModel(platform string) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	
+
 	// Create model
 	model := quality.NewGCbiasQualityModel(platform)
-	
+
 	// Load training data
 	trainingData, err := t.loadQualityTrainingData(platform)
 	if err != nil {
 		return err
 	}
-	
+
 	// Train model
 	if err := model.TrainFromRealData(trainingData); err != nil {
 		return err
 	}
-	
+
 	// Validate model
 	if err := model.ValidateModel(); err != nil {
 		return err
 	}
-	
+
 	// Store model
 	t.models[platform] = model
-	
+
 	return nil
 }
 
@@ -1079,33 +1090,33 @@ func NewPopulationTrainer(config *TrainingConfig) *PopulationTrainer {
 func (t *PopulationTrainer) TrainPopulationModel(populationName string) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	
+
 	// Get population parameters
 	params, err := t.getPopulationParameters(populationName)
 	if err != nil {
 		return err
 	}
-	
+
 	// Create simulator
 	simulator := population.NewCoalescentSimulator(
 		params.EffectivePopSize,
 		params.MutationRate,
 		params.RecombinationRate,
 	)
-	
+
 	// Add demographic events
 	for _, event := range params.DemographicEvents {
 		simulator.AddDemographicEvent(event)
 	}
-	
+
 	// Validate parameters
 	if err := simulator.ValidateParameters(); err != nil {
 		return err
 	}
-	
+
 	// Store model
 	t.models[populationName] = simulator
-	
+
 	return nil
 }
 
@@ -1133,9 +1144,9 @@ func (t *PopulationTrainer) getPopulationParameters(populationName string) (*Pop
 
 // PopulationParameters represents population-specific parameters
 type PopulationParameters struct {
-	EffectivePopSize  int                          `json:"effective_pop_size"`
-	MutationRate      float64                      `json:"mutation_rate"`
-	RecombinationRate float64                      `json:"recombination_rate"`
+	EffectivePopSize  int                           `json:"effective_pop_size"`
+	MutationRate      float64                       `json:"mutation_rate"`
+	RecombinationRate float64                       `json:"recombination_rate"`
 	DemographicEvents []population.DemographicEvent `json:"demographic_events,omitempty"`
 }
 
@@ -1153,7 +1164,7 @@ func NewPipelineLogger(outputPath string) *PipelineLogger {
 		log.Printf("Failed to open log file: %v", err)
 		return &PipelineLogger{}
 	}
-	
+
 	return &PipelineLogger{
 		logFile: logFile,
 	}
@@ -1163,10 +1174,10 @@ func NewPipelineLogger(outputPath string) *PipelineLogger {
 func (l *PipelineLogger) Info(message string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	
+
 	timestamp := time.Now().Format("2006-01-02 15:04:05")
 	logMessage := fmt.Sprintf("[INFO] %s: %s\n", timestamp, message)
-	
+
 	if l.logFile != nil {
 		l.logFile.WriteString(logMessage)
 	}
@@ -1177,10 +1188,10 @@ func (l *PipelineLogger) Info(message string) {
 func (l *PipelineLogger) Error(message string, err error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	
+
 	timestamp := time.Now().Format("2006-01-02 15:04:05")
 	logMessage := fmt.Sprintf("[ERROR] %s: %s: %v\n", timestamp, message, err)
-	
+
 	if l.logFile != nil {
 		l.logFile.WriteString(logMessage)
 	}
@@ -1192,7 +1203,7 @@ func NewTrainingMetrics() *TrainingMetrics {
 	return &TrainingMetrics{
 		ValidationScores:   make(map[string]float64),
 		PerformanceMetrics: make(map[string]float64),
-		ErrorLog:          make([]TrainingError, 0),
+		ErrorLog:           make([]TrainingError, 0),
 	}
 }
 
@@ -1200,13 +1211,13 @@ func NewTrainingMetrics() *TrainingMetrics {
 
 // PerformanceTester handles performance testing
 type PerformanceTester struct {
-	config *TrainingConfig
+	config  *TrainingConfig
 	results *PerformanceResults
 }
 
 // PerformanceResults stores performance test results
 type PerformanceResults struct {
-	GenerationSpeed   float64 // sequences/second
+	GenerationSpeed  float64 // bases/second
 	MemoryUsage      int64   // bytes
 	ScalabilityScore float64 // 0-100
 	Latency          time.Duration
@@ -1215,16 +1226,16 @@ type PerformanceResults struct {
 
 // DownstreamResults stores downstream compatibility test results
 type DownstreamResults struct {
-	SuccessRate      float64
-	CompatibleTools  []string
-	FailedTools      []string
-	ErrorAnalysis    map[string]string
+	SuccessRate     float64
+	CompatibleTools []string
+	FailedTools     []string
+	ErrorAnalysis   map[string]string
 }
 
 // NewPerformanceTester creates a new performance tester
 func NewPerformanceTester(config *TrainingConfig) *PerformanceTester {
 	return &PerformanceTester{
-		config: config,
+		config:  config,
 		results: &PerformanceResults{},
 	}
 }
@@ -1296,6 +1307,3 @@ func (c *ModelCheckpointer) loadModel(key string) (interface{}, error) {
 		return nil, fmt.Errorf("checkpointer: unknown model type %q", env.ModelType)
 	}
 }
-
-// This training pipeline provides the foundation for production-ready model training
-// Additional implementation details would depend on the specific data formats and requirements

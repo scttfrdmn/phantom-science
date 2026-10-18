@@ -8,23 +8,26 @@ import (
 	"github.com/scttfrdmn/phantom-science/internal/genomics/authenticity/kmer"
 )
 
-// ReferenceManager provides centralized management of reference genome data with lazy loading
+// ReferenceManager routes requests to named LazyReferenceLoaders and
+// aggregates their cache statistics. Because LazyReferenceLoader does not
+// read its file, sequence from a ReferenceManager is placeholder sequence,
+// not reference sequence.
 type ReferenceManager struct {
-	defaultLoader     *LazyReferenceLoader
-	customLoaders     map[string]*LazyReferenceLoader
-	loaderMutex       sync.RWMutex
-	
+	defaultLoader *LazyReferenceLoader
+	customLoaders map[string]*LazyReferenceLoader
+	loaderMutex   sync.RWMutex
+
 	// Performance optimization
 	enablePrefetching bool
 	prefetchWindow    int64
-	
+
 	// Statistics
-	totalRequests     int64
-	totalCacheHits    int64
-	totalLoadTime     int64
-	
+	totalRequests  int64
+	totalCacheHits int64
+	totalLoadTime  int64
+
 	// Configuration
-	config           ManagerConfig
+	config ManagerConfig
 }
 
 // ManagerConfig provides configuration for the reference manager
@@ -32,8 +35,8 @@ type ManagerConfig struct {
 	DefaultReferenceFile string
 	DefaultCacheSize     int64
 	EnablePrefetching    bool
-	PrefetchWindow       int64  // Bases to prefetch around requested region
-	MaxLoaders           int    // Maximum number of concurrent loaders
+	PrefetchWindow       int64 // Bases to prefetch around requested region
+	MaxLoaders           int   // Maximum number of concurrent loaders
 	CompressionLevel     int
 	EnablePackedArrays   bool
 }
@@ -53,14 +56,14 @@ func NewReferenceManager(config ManagerConfig) (*ReferenceManager, error) {
 	if config.CompressionLevel < 0 || config.CompressionLevel > 9 {
 		config.CompressionLevel = 6
 	}
-	
+
 	manager := &ReferenceManager{
 		customLoaders:     make(map[string]*LazyReferenceLoader),
 		enablePrefetching: config.EnablePrefetching,
 		prefetchWindow:    config.PrefetchWindow,
-		config:           config,
+		config:            config,
 	}
-	
+
 	// Create default loader if reference file specified
 	if config.DefaultReferenceFile != "" {
 		defaultConfig := LazyLoaderConfig{
@@ -69,14 +72,14 @@ func NewReferenceManager(config ManagerConfig) (*ReferenceManager, error) {
 			CompressionLevel:   config.CompressionLevel,
 			EnablePackedArrays: config.EnablePackedArrays,
 		}
-		
+
 		var err error
 		manager.defaultLoader, err = NewLazyReferenceLoader(defaultConfig)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create default reference loader: %w", err)
 		}
 	}
-	
+
 	return manager, nil
 }
 
@@ -84,28 +87,28 @@ func NewReferenceManager(config ManagerConfig) (*ReferenceManager, error) {
 func (rm *ReferenceManager) RegisterReferenceGenome(name, filepath string, cacheSize int64) error {
 	rm.loaderMutex.Lock()
 	defer rm.loaderMutex.Unlock()
-	
+
 	// Check loader limit
 	if len(rm.customLoaders) >= rm.config.MaxLoaders {
 		return fmt.Errorf("maximum number of loaders (%d) reached", rm.config.MaxLoaders)
 	}
-	
+
 	if cacheSize <= 0 {
 		cacheSize = rm.config.DefaultCacheSize / 2 // Smaller cache for custom loaders
 	}
-	
+
 	config := LazyLoaderConfig{
 		ReferenceFile:      filepath,
 		MaxCacheSize:       cacheSize,
 		CompressionLevel:   rm.config.CompressionLevel,
 		EnablePackedArrays: rm.config.EnablePackedArrays,
 	}
-	
+
 	loader, err := NewLazyReferenceLoader(config)
 	if err != nil {
 		return fmt.Errorf("failed to create reference loader for %s: %w", name, err)
 	}
-	
+
 	rm.customLoaders[name] = loader
 	return nil
 }
@@ -117,12 +120,12 @@ func (rm *ReferenceManager) GetSequence(chromosome string, start, end int64, ref
 		rm.totalRequests++
 		rm.totalLoadTime += time.Since(startTime).Nanoseconds()
 	}()
-	
+
 	loader := rm.getLoader(referenceName...)
 	if loader == nil {
 		return nil, fmt.Errorf("no reference loader available")
 	}
-	
+
 	// Apply prefetching if enabled
 	actualStart, actualEnd := start, end
 	if rm.enablePrefetching {
@@ -132,12 +135,12 @@ func (rm *ReferenceManager) GetSequence(chromosome string, start, end int64, ref
 			actualStart = 0
 		}
 	}
-	
+
 	sequence, err := loader.GetSequence(chromosome, actualStart, actualEnd)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	// Extract requested region if prefetching was applied
 	if rm.enablePrefetching {
 		prefetchOffset := start - actualStart
@@ -146,7 +149,7 @@ func (rm *ReferenceManager) GetSequence(chromosome string, start, end int64, ref
 			return sequence[prefetchOffset : prefetchOffset+requestedLength], nil
 		}
 	}
-	
+
 	return sequence, nil
 }
 
@@ -156,7 +159,7 @@ func (rm *ReferenceManager) GetKmerProfile(chromosome string, start, end int64, 
 	if loader == nil {
 		return nil, fmt.Errorf("no reference loader available")
 	}
-	
+
 	return loader.GetKmerProfile(chromosome, start, end, kmerSize)
 }
 
@@ -170,7 +173,7 @@ func (rm *ReferenceManager) getLoader(referenceName ...string) *LazyReferenceLoa
 			return loader
 		}
 	}
-	
+
 	return rm.defaultLoader
 }
 
@@ -180,7 +183,7 @@ func (rm *ReferenceManager) WarmupReference(regions []GenomicRegion, kmerSize in
 	if loader == nil {
 		return fmt.Errorf("no reference loader available for warmup")
 	}
-	
+
 	return loader.WarmupCache(regions, kmerSize)
 }
 
@@ -188,17 +191,17 @@ func (rm *ReferenceManager) WarmupReference(regions []GenomicRegion, kmerSize in
 func (rm *ReferenceManager) GetCombinedStatistics() CombinedCacheStatistics {
 	rm.loaderMutex.RLock()
 	defer rm.loaderMutex.RUnlock()
-	
+
 	stats := CombinedCacheStatistics{
 		TotalRequests: rm.totalRequests,
 		AvgLoadTime:   0,
 		LoaderStats:   make(map[string]CacheStatistics),
 	}
-	
+
 	if rm.totalRequests > 0 {
 		stats.AvgLoadTime = float64(rm.totalLoadTime) / float64(rm.totalRequests)
 	}
-	
+
 	// Collect statistics from default loader
 	if rm.defaultLoader != nil {
 		defaultStats := rm.defaultLoader.GetCacheStatistics()
@@ -208,7 +211,7 @@ func (rm *ReferenceManager) GetCombinedStatistics() CombinedCacheStatistics {
 		stats.TotalCacheSize += defaultStats.CacheSize
 		stats.TotalCachedRegions += defaultStats.CachedRegions
 	}
-	
+
 	// Collect statistics from custom loaders
 	for name, loader := range rm.customLoaders {
 		loaderStats := loader.GetCacheStatistics()
@@ -218,42 +221,43 @@ func (rm *ReferenceManager) GetCombinedStatistics() CombinedCacheStatistics {
 		stats.TotalCacheSize += loaderStats.CacheSize
 		stats.TotalCachedRegions += loaderStats.CachedRegions
 	}
-	
+
 	// Calculate overall hit ratio
 	totalRequests := stats.TotalCacheHits + stats.TotalCacheMisses
 	if totalRequests > 0 {
 		stats.OverallHitRatio = float64(stats.TotalCacheHits) / float64(totalRequests)
 	}
-	
+
 	return stats
 }
 
 // CombinedCacheStatistics contains aggregate statistics from all reference loaders
 type CombinedCacheStatistics struct {
-	TotalRequests       int64
-	TotalCacheHits      int64
-	TotalCacheMisses    int64
-	OverallHitRatio     float64
-	TotalCachedRegions  int64
-	TotalCacheSize      int64
-	AvgLoadTime         float64
-	LoaderStats         map[string]CacheStatistics
+	TotalRequests      int64
+	TotalCacheHits     int64
+	TotalCacheMisses   int64
+	OverallHitRatio    float64
+	TotalCachedRegions int64
+	TotalCacheSize     int64
+	AvgLoadTime        float64
+	LoaderStats        map[string]CacheStatistics
 }
 
-// OptimizeCache performs cache optimization across all loaders
+// OptimizeCache prints cache-size suggestions to stdout when the hit ratio
+// is below 0.8 or a loader is over 95% full. It changes nothing.
 func (rm *ReferenceManager) OptimizeCache() {
 	rm.loaderMutex.RLock()
 	defer rm.loaderMutex.RUnlock()
-	
+
 	// Get current statistics
 	stats := rm.GetCombinedStatistics()
-	
+
 	// If overall hit ratio is low, suggest cache size increases
 	if stats.OverallHitRatio < 0.8 {
-		fmt.Printf("Cache optimization: Hit ratio %.1f%% is below target. Consider increasing cache sizes.\n", 
+		fmt.Printf("Cache optimization: Hit ratio %.1f%% is below target. Consider increasing cache sizes.\n",
 			stats.OverallHitRatio*100)
 	}
-	
+
 	// Check individual loader performance
 	for name, loaderStats := range stats.LoaderStats {
 		if loaderStats.CacheUtilization > 0.95 {
@@ -267,15 +271,15 @@ func (rm *ReferenceManager) OptimizeCache() {
 func (rm *ReferenceManager) ClearAllCaches() {
 	rm.loaderMutex.RLock()
 	defer rm.loaderMutex.RUnlock()
-	
+
 	if rm.defaultLoader != nil {
 		rm.defaultLoader.ClearCache()
 	}
-	
+
 	for _, loader := range rm.customLoaders {
 		loader.ClearCache()
 	}
-	
+
 	// Reset manager statistics
 	rm.totalRequests = 0
 	rm.totalCacheHits = 0
@@ -286,32 +290,32 @@ func (rm *ReferenceManager) ClearAllCaches() {
 func (rm *ReferenceManager) Close() error {
 	rm.loaderMutex.Lock()
 	defer rm.loaderMutex.Unlock()
-	
+
 	var errors []error
-	
+
 	// Close default loader
 	if rm.defaultLoader != nil {
 		if err := rm.defaultLoader.Close(); err != nil {
 			errors = append(errors, fmt.Errorf("failed to close default loader: %w", err))
 		}
 	}
-	
+
 	// Close custom loaders
 	for name, loader := range rm.customLoaders {
 		if err := loader.Close(); err != nil {
 			errors = append(errors, fmt.Errorf("failed to close loader %s: %w", name, err))
 		}
 	}
-	
+
 	// Clear loader maps
 	rm.customLoaders = make(map[string]*LazyReferenceLoader)
 	rm.defaultLoader = nil
-	
+
 	// Return first error if any occurred
 	if len(errors) > 0 {
 		return errors[0]
 	}
-	
+
 	return nil
 }
 
@@ -319,40 +323,42 @@ func (rm *ReferenceManager) Close() error {
 func (rm *ReferenceManager) GetReferenceInfo() ReferenceInfo {
 	rm.loaderMutex.RLock()
 	defer rm.loaderMutex.RUnlock()
-	
+
 	info := ReferenceInfo{
-		HasDefault:        rm.defaultLoader != nil,
-		CustomReferences:  make([]string, 0, len(rm.customLoaders)),
-		TotalLoaders:      len(rm.customLoaders),
-		MaxLoaders:        rm.config.MaxLoaders,
+		HasDefault:       rm.defaultLoader != nil,
+		CustomReferences: make([]string, 0, len(rm.customLoaders)),
+		TotalLoaders:     len(rm.customLoaders),
+		MaxLoaders:       rm.config.MaxLoaders,
 	}
-	
+
 	for name := range rm.customLoaders {
 		info.CustomReferences = append(info.CustomReferences, name)
 	}
-	
+
 	if rm.defaultLoader != nil {
 		info.TotalLoaders++
 	}
-	
+
 	return info
 }
 
 // ReferenceInfo contains information about available reference genomes
 type ReferenceInfo struct {
-	HasDefault        bool
-	CustomReferences  []string
-	TotalLoaders      int
-	MaxLoaders        int
+	HasDefault       bool
+	CustomReferences []string
+	TotalLoaders     int
+	MaxLoaders       int
 }
 
-// GetOptimalRegionSize calculates optimal region size based on access patterns
+// GetOptimalRegionSize returns 0.5, 1 or 2 MiB depending on whether the
+// overall hit ratio is above 0.9, between 0.7 and 0.9, or below 0.7. The
+// thresholds are fixed heuristics.
 func (rm *ReferenceManager) GetOptimalRegionSize() int64 {
 	stats := rm.GetCombinedStatistics()
-	
+
 	// Base calculation on cache hit ratio and average access patterns
 	baseSize := int64(1024 * 1024) // 1MB base
-	
+
 	if stats.OverallHitRatio > 0.9 {
 		// High hit ratio - can afford smaller regions
 		return baseSize / 2
@@ -360,7 +366,7 @@ func (rm *ReferenceManager) GetOptimalRegionSize() int64 {
 		// Low hit ratio - need larger regions
 		return baseSize * 2
 	}
-	
+
 	return baseSize
 }
 
@@ -370,19 +376,19 @@ func (rm *ReferenceManager) PrefetchRegions(regions []GenomicRegion, kmerSize in
 	if loader == nil {
 		return fmt.Errorf("no reference loader available for prefetching")
 	}
-	
+
 	// Load regions asynchronously in background
 	go func() {
 		for _, region := range regions {
 			// Load sequence
 			_, _ = loader.GetSequence(region.Chromosome, region.Start, region.End)
-			
+
 			// Load k-mer profile if specified
 			if kmerSize > 0 {
 				_, _ = loader.GetKmerProfile(region.Chromosome, region.Start, region.End, kmerSize)
 			}
 		}
 	}()
-	
+
 	return nil
 }

@@ -5,44 +5,46 @@ import (
 	"path/filepath"
 )
 
-// AuthenticityConfig represents configuration for statistical authenticity engine
+// AuthenticityConfig is a configuration schema with validation and presets.
+// Nothing outside this file consumes it; the generation code in this package
+// is configured through Config instead.
 type AuthenticityConfig struct {
-	Enabled                bool     `json:"enabled"`
-	ReferenceGenome        string   `json:"reference_genome"`         // "GRCh38", "GRCh39"
-	ReferenceGenomePath    string   `json:"reference_genome_path"`    // Path to FASTA file
-	Population             string   `json:"population"`               // "EUR", "AFR", "EAS", "SAS", "AMR"
-	KmerModelSizes         []int    `json:"kmer_model_sizes"`         // [2, 4, 6, 8]
-	JSdivergenceThreshold  float64  `json:"js_divergence_threshold"`  // 0.01
-	QualityRealism         string   `json:"quality_realism"`          // "basic", "enhanced", "expert"
-	ValidationLevel        string   `json:"validation_level"`         // "basic", "comprehensive", "expert"
-	EnablePopulationGenetics bool   `json:"enable_population_genetics"`
-	EnableQualityPatterns   bool    `json:"enable_quality_patterns"`
-	EnableGenomicFeatures   bool    `json:"enable_genomic_features"`
-	CacheDirectory         string   `json:"cache_directory"`
-	MaxMemoryUsage         int64    `json:"max_memory_usage"`         // Bytes
-	ParallelProcessing     bool     `json:"parallel_processing"`
-	NumWorkers             int      `json:"num_workers"`
+	Enabled                  bool    `json:"enabled"`
+	ReferenceGenome          string  `json:"reference_genome"`        // "GRCh38", "GRCh39"
+	ReferenceGenomePath      string  `json:"reference_genome_path"`   // Path to FASTA file
+	Population               string  `json:"population"`              // "EUR", "AFR", "EAS", "SAS", "AMR"
+	KmerModelSizes           []int   `json:"kmer_model_sizes"`        // [2, 4, 6, 8]
+	JSdivergenceThreshold    float64 `json:"js_divergence_threshold"` // 0.01
+	QualityRealism           string  `json:"quality_realism"`         // "basic", "enhanced", "expert"
+	ValidationLevel          string  `json:"validation_level"`        // "basic", "comprehensive", "expert"
+	EnablePopulationGenetics bool    `json:"enable_population_genetics"`
+	EnableQualityPatterns    bool    `json:"enable_quality_patterns"`
+	EnableGenomicFeatures    bool    `json:"enable_genomic_features"`
+	CacheDirectory           string  `json:"cache_directory"`
+	MaxMemoryUsage           int64   `json:"max_memory_usage"` // Bytes
+	ParallelProcessing       bool    `json:"parallel_processing"`
+	NumWorkers               int     `json:"num_workers"`
 }
 
 // PopulationConfig represents population genetics configuration
 type PopulationConfig struct {
-	PopulationName     string  `json:"population_name"`
-	EffectivePopSize   int     `json:"effective_pop_size"`
-	MutationRate       float64 `json:"mutation_rate"`
-	RecombinationRate  float64 `json:"recombination_rate"`
-	TajimaDTarget      float64 `json:"tajima_d_target"`
+	PopulationName      string  `json:"population_name"`
+	EffectivePopSize    int     `json:"effective_pop_size"`
+	MutationRate        float64 `json:"mutation_rate"`
+	RecombinationRate   float64 `json:"recombination_rate"`
+	TajimaDTarget       float64 `json:"tajima_d_target"`
 	NucleotideDiversity float64 `json:"nucleotide_diversity"`
 }
 
 // QualityConfig represents quality pattern configuration
 type QualityConfig struct {
-	Platform              string  `json:"platform"`               // "illumina", "pacbio", "nanopore"
-	EnableGCBias          bool    `json:"enable_gc_bias"`
-	EnableHomopolymerErrors bool  `json:"enable_homopolymer_errors"`
-	EnableContextEffects   bool   `json:"enable_context_effects"`
-	BaseQuality           float64 `json:"base_quality"`
-	QualityDecay          float64 `json:"quality_decay"`
-	ErrorRate             float64 `json:"error_rate"`
+	Platform                string  `json:"platform"` // "illumina", "pacbio", "nanopore"
+	EnableGCBias            bool    `json:"enable_gc_bias"`
+	EnableHomopolymerErrors bool    `json:"enable_homopolymer_errors"`
+	EnableContextEffects    bool    `json:"enable_context_effects"`
+	BaseQuality             float64 `json:"base_quality"`
+	QualityDecay            float64 `json:"quality_decay"`
+	ErrorRate               float64 `json:"error_rate"`
 }
 
 // ValidationConfig represents validation configuration
@@ -52,8 +54,8 @@ type ValidationConfig struct {
 	EnableWassersteinDist bool    `json:"enable_wasserstein_dist"`
 	EnableCramerVonMises  bool    `json:"enable_cramer_von_mises"`
 	EnableExpertTesting   bool    `json:"enable_expert_testing"`
-	SampleSize           int     `json:"sample_size"`
-	ConfidenceLevel      float64 `json:"confidence_level"`
+	SampleSize            int     `json:"sample_size"`
+	ConfidenceLevel       float64 `json:"confidence_level"`
 }
 
 // DefaultAuthenticityConfig returns a default configuration
@@ -77,7 +79,9 @@ func DefaultAuthenticityConfig() *AuthenticityConfig {
 	}
 }
 
-// EnhancedAuthenticityConfig returns an enhanced configuration
+// EnhancedAuthenticityConfig returns DefaultAuthenticityConfig with more
+// k-mer sizes, the "enhanced"/"comprehensive" levels and more memory and
+// workers.
 func EnhancedAuthenticityConfig() *AuthenticityConfig {
 	config := DefaultAuthenticityConfig()
 	config.KmerModelSizes = []int{2, 4, 6}
@@ -90,7 +94,8 @@ func EnhancedAuthenticityConfig() *AuthenticityConfig {
 	return config
 }
 
-// ExpertAuthenticityConfig returns an expert-level configuration
+// ExpertAuthenticityConfig returns EnhancedAuthenticityConfig with k up to 8,
+// the "expert" levels and a tighter JS threshold.
 func ExpertAuthenticityConfig() *AuthenticityConfig {
 	config := EnhancedAuthenticityConfig()
 	config.KmerModelSizes = []int{2, 4, 6, 8}
@@ -102,47 +107,49 @@ func ExpertAuthenticityConfig() *AuthenticityConfig {
 	return config
 }
 
-// GetPopulationConfig returns population configuration for the specified population
+// GetPopulationConfig returns hard-coded parameters for the configured
+// super-population (EUR if unknown). The values have no cited source and
+// are not used by any model.
 func (c *AuthenticityConfig) GetPopulationConfig() *PopulationConfig {
 	configs := map[string]*PopulationConfig{
 		"EUR": {
-			PopulationName:     "European",
-			EffectivePopSize:   10000,
-			MutationRate:       2.3e-8,
-			RecombinationRate:  1.2e-8,
-			TajimaDTarget:      0.0,
+			PopulationName:      "European",
+			EffectivePopSize:    10000,
+			MutationRate:        2.3e-8,
+			RecombinationRate:   1.2e-8,
+			TajimaDTarget:       0.0,
 			NucleotideDiversity: 0.001,
 		},
 		"AFR": {
-			PopulationName:     "African",
-			EffectivePopSize:   12000,
-			MutationRate:       2.3e-8,
-			RecombinationRate:  1.2e-8,
-			TajimaDTarget:      0.2,
+			PopulationName:      "African",
+			EffectivePopSize:    12000,
+			MutationRate:        2.3e-8,
+			RecombinationRate:   1.2e-8,
+			TajimaDTarget:       0.2,
 			NucleotideDiversity: 0.0015,
 		},
 		"EAS": {
-			PopulationName:     "East Asian",
-			EffectivePopSize:   8000,
-			MutationRate:       2.3e-8,
-			RecombinationRate:  1.2e-8,
-			TajimaDTarget:      -0.3,
+			PopulationName:      "East Asian",
+			EffectivePopSize:    8000,
+			MutationRate:        2.3e-8,
+			RecombinationRate:   1.2e-8,
+			TajimaDTarget:       -0.3,
 			NucleotideDiversity: 0.0008,
 		},
 		"SAS": {
-			PopulationName:     "South Asian",
-			EffectivePopSize:   9000,
-			MutationRate:       2.3e-8,
-			RecombinationRate:  1.2e-8,
-			TajimaDTarget:      -0.1,
+			PopulationName:      "South Asian",
+			EffectivePopSize:    9000,
+			MutationRate:        2.3e-8,
+			RecombinationRate:   1.2e-8,
+			TajimaDTarget:       -0.1,
 			NucleotideDiversity: 0.0009,
 		},
 		"AMR": {
-			PopulationName:     "Admixed American",
-			EffectivePopSize:   7000,
-			MutationRate:       2.3e-8,
-			RecombinationRate:  1.2e-8,
-			TajimaDTarget:      -0.2,
+			PopulationName:      "Admixed American",
+			EffectivePopSize:    7000,
+			MutationRate:        2.3e-8,
+			RecombinationRate:   1.2e-8,
+			TajimaDTarget:       -0.2,
 			NucleotideDiversity: 0.0012,
 		},
 	}
@@ -159,31 +166,31 @@ func (c *AuthenticityConfig) GetPopulationConfig() *PopulationConfig {
 func (c *AuthenticityConfig) GetQualityConfig(platform string) *QualityConfig {
 	configs := map[string]*QualityConfig{
 		"illumina": {
-			Platform:              "illumina",
-			EnableGCBias:          true,
+			Platform:                "illumina",
+			EnableGCBias:            true,
 			EnableHomopolymerErrors: false,
-			EnableContextEffects:   true,
-			BaseQuality:           30.0,
-			QualityDecay:          0.1,
-			ErrorRate:             0.001,
+			EnableContextEffects:    true,
+			BaseQuality:             30.0,
+			QualityDecay:            0.1,
+			ErrorRate:               0.001,
 		},
 		"pacbio": {
-			Platform:              "pacbio",
-			EnableGCBias:          false,
+			Platform:                "pacbio",
+			EnableGCBias:            false,
 			EnableHomopolymerErrors: true,
-			EnableContextEffects:   true,
-			BaseQuality:           20.0,
-			QualityDecay:          0.05,
-			ErrorRate:             0.01,
+			EnableContextEffects:    true,
+			BaseQuality:             20.0,
+			QualityDecay:            0.05,
+			ErrorRate:               0.01,
 		},
 		"nanopore": {
-			Platform:              "nanopore",
-			EnableGCBias:          false,
+			Platform:                "nanopore",
+			EnableGCBias:            false,
 			EnableHomopolymerErrors: true,
-			EnableContextEffects:   true,
-			BaseQuality:           10.0,
-			QualityDecay:          0.2,
-			ErrorRate:             0.05,
+			EnableContextEffects:    true,
+			BaseQuality:             10.0,
+			QualityDecay:            0.2,
+			ErrorRate:               0.05,
 		},
 	}
 
@@ -204,8 +211,8 @@ func (c *AuthenticityConfig) GetValidationConfig() *ValidationConfig {
 			EnableWassersteinDist: false,
 			EnableCramerVonMises:  false,
 			EnableExpertTesting:   false,
-			SampleSize:           1000,
-			ConfidenceLevel:      0.95,
+			SampleSize:            1000,
+			ConfidenceLevel:       0.95,
 		},
 		"comprehensive": {
 			EnableJSdivergence:    true,
@@ -213,8 +220,8 @@ func (c *AuthenticityConfig) GetValidationConfig() *ValidationConfig {
 			EnableWassersteinDist: true,
 			EnableCramerVonMises:  true,
 			EnableExpertTesting:   false,
-			SampleSize:           5000,
-			ConfidenceLevel:      0.95,
+			SampleSize:            5000,
+			ConfidenceLevel:       0.95,
 		},
 		"expert": {
 			EnableJSdivergence:    true,
@@ -222,8 +229,8 @@ func (c *AuthenticityConfig) GetValidationConfig() *ValidationConfig {
 			EnableWassersteinDist: true,
 			EnableCramerVonMises:  true,
 			EnableExpertTesting:   true,
-			SampleSize:           10000,
-			ConfidenceLevel:      0.99,
+			SampleSize:            10000,
+			ConfidenceLevel:       0.99,
 		},
 	}
 
@@ -340,7 +347,8 @@ func (c *AuthenticityConfig) IsHighMemoryMode() bool {
 	return c.MaxMemoryUsage > 2*1024*1024*1024 // > 2GB
 }
 
-// IsHighPerformanceMode returns true if configuration is optimized for performance
+// IsHighPerformanceMode reports whether parallel processing is on with at
+// least 8 workers.
 func (c *AuthenticityConfig) IsHighPerformanceMode() bool {
 	return c.ParallelProcessing && c.NumWorkers >= 8
 }
@@ -361,7 +369,7 @@ func (c *AuthenticityConfig) GetMinKmerSize() int {
 	if len(c.KmerModelSizes) == 0 {
 		return 2
 	}
-	
+
 	minK := c.KmerModelSizes[0]
 	for _, k := range c.KmerModelSizes {
 		if k < minK {

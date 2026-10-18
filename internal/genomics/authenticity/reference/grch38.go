@@ -1,3 +1,8 @@
+// Package reference loads GRCh38 chromosomes from a directory of per-chromosome
+// FASTA files (chr1.fa ... chrX.fa, chrY.fa, chrM.fa), computes their GC
+// content and N gaps, and keeps a bounded number in memory with
+// LazyLoadingManager. It does not read repeat or CpG-island annotations; the
+// RepeatElement and CpGIsland types are not populated here.
 package reference
 
 import (
@@ -7,23 +12,24 @@ import (
 	"strings"
 )
 
-// GRCh38 represents the GRCh38 reference genome assembly
+// GRCh38 loads chromosomes from per-chromosome FASTA files under BasePath.
+// It does not check that the files are actually GRCh38.
 type GRCh38 struct {
-	Assembly     string
-	Chromosomes  map[string]*Chromosome
-	BasePath     string
-	IsLoaded     bool
+	Assembly    string
+	Chromosomes map[string]*Chromosome
+	BasePath    string
+	IsLoaded    bool
 }
 
 // Chromosome represents a single chromosome from the reference genome
 type Chromosome struct {
-	Name           string
-	Sequence       []byte
-	Length         int
-	GCContent      float64
-	NRegions       []NRegion
-	IsLoaded       bool
-	FilePath       string
+	Name      string
+	Sequence  []byte
+	Length    int
+	GCContent float64
+	NRegions  []NRegion
+	IsLoaded  bool
+	FilePath  string
 }
 
 // NRegion represents a region of N bases (gaps) in the chromosome
@@ -77,9 +83,9 @@ func (g *GRCh38) LoadChromosome(chrName string) (*Chromosome, error) {
 	} else if chrName == "MT" || chrName == "M" {
 		chrFile = "chrM.fa"
 	}
-	
+
 	filePath := fmt.Sprintf("%s/%s", g.BasePath, chrFile)
-	
+
 	chr := &Chromosome{
 		Name:     chrName,
 		FilePath: filePath,
@@ -118,14 +124,14 @@ func (g *GRCh38) loadFASTASequence(filePath string) ([]byte, error) {
 
 	var sequence []byte
 	scanner := bufio.NewScanner(file)
-	
+
 	// Skip header line(s) starting with '>'
 	for scanner.Scan() {
 		line := scanner.Text()
 		if strings.HasPrefix(line, ">") {
 			continue
 		}
-		
+
 		// Append sequence line, converting to uppercase
 		sequence = append(sequence, []byte(strings.ToUpper(line))...)
 	}
@@ -157,7 +163,7 @@ func (g *GRCh38) calculateGCContent(sequence []byte) float64 {
 			totalCount++
 		case 'A', 'T':
 			totalCount++
-		// Skip 'N' bases from GC calculation
+			// Skip 'N' bases from GC calculation
 		}
 	}
 
@@ -214,7 +220,7 @@ func (g *GRCh38) GetSequence(chrName string, start, end int) ([]byte, error) {
 		return nil, fmt.Errorf("invalid coordinates: start=%d, end=%d, chromosome length=%d", start, end, chr.Length)
 	}
 
-	return chr.Sequence[start:end+1], nil
+	return chr.Sequence[start : end+1], nil
 }
 
 // GetChromosomeNames returns a list of available chromosome names
@@ -299,7 +305,8 @@ func (g *GRCh38) Close() error {
 	return nil
 }
 
-// LazyLoadingManager manages lazy loading of chromosome data
+// LazyLoadingManager keeps at most MaxLoadedChromosomes chromosome sequences
+// in memory, unloading the earliest loaded first.
 type LazyLoadingManager struct {
 	MaxLoadedChromosomes int
 	LoadedChromosomes    []string

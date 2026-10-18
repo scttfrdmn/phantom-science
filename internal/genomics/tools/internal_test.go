@@ -707,8 +707,7 @@ func TestGenerateRecommendations_AllPassed(t *testing.T) {
 	}
 	recs := gev.generateRecommendations(report)
 	assert.NotEmpty(t, recs)
-	// Should say system is ready
-	assert.Contains(t, recs[0], "production")
+	assert.Contains(t, recs[0], "passed")
 }
 
 func TestGenerateRecommendations_NoCloudConfig(t *testing.T) {
@@ -777,8 +776,8 @@ func TestGenerateOverallAssessment_NeedsImprovement(t *testing.T) {
 		performanceMetrics: NewEcosystemMetrics(),
 	}
 	report := &EcosystemValidationReport{
-		ToolResults:     map[string]*ToolValidationResult{},
-		CloudResults:    &CloudValidationResult{Status: "skipped"},
+		ToolResults:  map[string]*ToolValidationResult{},
+		CloudResults: &CloudValidationResult{Status: "skipped"},
 	}
 	assessment := gev.generateOverallAssessment(report)
 	require.NotNil(t, assessment)

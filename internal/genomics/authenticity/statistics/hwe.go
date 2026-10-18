@@ -34,8 +34,10 @@ type HWEResult struct {
 // Returns an error for monomorphic sites (p̂ = 0 or 1) to guard against
 // division by zero in the expected-count calculation.
 //
-// Reference: Wigginton, J.E., Cutler, D.J. & Abecasis, G.R. (2005). A note on
-// exact tests of Hardy-Weinberg equilibrium. Am. J. Hum. Genet. 76, 887-893.
+// This is the asymptotic chi-square test, not the exact test described by
+// Wigginton, Cutler & Abecasis (2005), A note on exact tests of
+// Hardy-Weinberg equilibrium, Am. J. Hum. Genet. 76, 887-893, which they
+// recommend over chi-square for small samples and rare alleles.
 func TestHWE(nHomRef, nHet, nHomAlt int) (HWEResult, error) {
 	if nHomRef < 0 || nHet < 0 || nHomAlt < 0 {
 		return HWEResult{}, fmt.Errorf("genotype counts must be non-negative")

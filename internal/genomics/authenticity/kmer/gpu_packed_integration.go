@@ -5,14 +5,17 @@ import (
 	"runtime"
 )
 
-// GPUPackedProcessor provides GPU-accelerated k-mer processing with packed array output
+// GPUPackedProcessor counts k-mers into a PackedFrequencyTable. Its Metal
+// and CUDA processor fields are never set by this package, so every
+// extraction runs on the CPU via PackedFrequencyExtractor, even when the
+// selected backend reports Metal or CUDA.
 type GPUPackedProcessor struct {
-	k                 int
-	gpuBackend        GPUBackend
-	metalProcessor    MetalProcessor   // Interface to Metal GPU processor
-	cudaProcessor     CudaProcessor    // Interface to CUDA GPU processor
-	usePackedOutput   bool
-	isInitialized     bool
+	k               int
+	gpuBackend      GPUBackend
+	metalProcessor  MetalProcessor // Interface to Metal GPU processor
+	cudaProcessor   CudaProcessor  // Interface to CUDA GPU processor
+	usePackedOutput bool
+	isInitialized   bool
 }
 
 // GPUBackend represents the available GPU backends
@@ -39,7 +42,9 @@ type CudaProcessor interface {
 	Close() error
 }
 
-// NewGPUPackedProcessor creates a new GPU-accelerated processor with packed output
+// NewGPUPackedProcessor creates a processor for k-mer size k. With
+// GPUBackendAuto it selects Metal on any macOS host (see isMetalAvailable);
+// no GPU work is done regardless of the backend.
 func NewGPUPackedProcessor(k int, backend GPUBackend) (*GPUPackedProcessor, error) {
 	if k <= 0 || k > 16 {
 		return nil, fmt.Errorf("k must be between 1 and 16, got %d", k)
@@ -93,14 +98,14 @@ func (gpp *GPUPackedProcessor) initializeGPUProcessors() error {
 		if !gpp.isMetalAvailable() {
 			return fmt.Errorf("Metal GPU not available")
 		}
-		// Initialize Metal processor (would integrate with existing Metal implementation)
+		// Stub: no Metal processor is created or attached
 		return nil
 
 	case GPUBackendCUDA:
 		if !gpp.isCudaAvailable() {
 			return fmt.Errorf("CUDA GPU not available")
 		}
-		// Initialize CUDA processor (would integrate with existing CUDA implementation)
+		// Stub: no CUDA processor is created or attached
 		return nil
 
 	case GPUBackendCPU:
@@ -112,7 +117,9 @@ func (gpp *GPUPackedProcessor) initializeGPUProcessors() error {
 	}
 }
 
-// ExtractKmerFrequenciesGPUPacked extracts k-mer frequencies using GPU with packed output
+// ExtractKmerFrequenciesGPUPacked counts k-mers with an attached GPU
+// processor if there is one; since none is ever attached, it falls back to
+// the CPU packed extractor.
 func (gpp *GPUPackedProcessor) ExtractKmerFrequenciesGPUPacked(sequences [][]byte) (*PackedFrequencyTable, error) {
 	if !gpp.isInitialized {
 		return nil, fmt.Errorf("GPU processor not initialized")
@@ -154,10 +161,9 @@ func (gpp *GPUPackedProcessor) extractWithCPUFallback(sequences [][]byte) (*Pack
 	return extractor.ExtractFromMultipleSequences(sequences)
 }
 
-// isMetalAvailable checks if Metal GPU is available (placeholder)
+// isMetalAvailable is a stub that reports true on any macOS host without
+// checking for a Metal device.
 func (gpp *GPUPackedProcessor) isMetalAvailable() bool {
-	// This would call the actual Metal availability check
-	// return metal.IsAvailable()
 	return runtime.GOOS == "darwin"
 }
 
@@ -171,7 +177,8 @@ func (gpp *GPUPackedProcessor) isCudaAvailable() bool {
 	return gpp.cudaProcessor.IsAvailable()
 }
 
-// ExtractKmerFrequenciesGPUPackedBatch processes sequences in batches with GPU acceleration
+// ExtractKmerFrequenciesGPUPackedBatch counts k-mers batch by batch with
+// ExtractKmerFrequenciesGPUPacked and merges the results.
 func (gpp *GPUPackedProcessor) ExtractKmerFrequenciesGPUPackedBatch(sequences [][]byte, batchSize int) (*PackedFrequencyTable, error) {
 	if len(sequences) == 0 {
 		return nil, fmt.Errorf("no sequences provided")
@@ -209,7 +216,8 @@ func (gpp *GPUPackedProcessor) ExtractKmerFrequenciesGPUPackedBatch(sequences []
 	return resultTable, nil
 }
 
-// calculateOptimalBatchSize determines optimal batch size for GPU processing
+// calculateOptimalBatchSize derives a batch size from fixed per-backend
+// memory assumptions (8, 4 or 2 GB), clamped to [100, 50000].
 func (gpp *GPUPackedProcessor) calculateOptimalBatchSize(sequences [][]byte) int {
 	if len(sequences) == 0 {
 		return 1000
@@ -318,7 +326,9 @@ func (gpp *GPUPackedProcessor) Close() error {
 	return nil
 }
 
-// BenchmarkGPUPackedPerformance compares GPU and CPU performance with packed output
+// BenchmarkGPUPackedPerformance runs the "GPU" path and the CPU path and
+// compares their memory use and results. It records no timings, and the
+// "GPU" path also runs on the CPU (see GPUPackedProcessor).
 func (gpp *GPUPackedProcessor) BenchmarkGPUPackedPerformance(testSequences [][]byte) (*PackedBenchmarkResults, error) {
 	if !gpp.isInitialized {
 		return nil, fmt.Errorf("GPU processor not initialized")
@@ -381,69 +391,69 @@ func (gpp *GPUPackedProcessor) comparePackedTables(table1, table2 *PackedFrequen
 
 // PackedBenchmarkResults contains benchmark results for packed GPU processing
 type PackedBenchmarkResults struct {
-	K                     int
-	TestSequences         int
-	Backend               GPUBackend
-	GPUResult             *PackedFrequencyTable
-	CPUResult             *PackedFrequencyTable
-	GPUMemoryUsage        int64
-	CPUMemoryUsage        int64
-	GPUCompressionRatio   float64
-	CPUCompressionRatio   float64
-	MemoryEfficiency      float64
-	ResultsMatch          bool
-	GPUError              string
-	CPUError              string
+	K                   int
+	TestSequences       int
+	Backend             GPUBackend
+	GPUResult           *PackedFrequencyTable
+	CPUResult           *PackedFrequencyTable
+	GPUMemoryUsage      int64
+	CPUMemoryUsage      int64
+	GPUCompressionRatio float64
+	CPUCompressionRatio float64
+	MemoryEfficiency    float64
+	ResultsMatch        bool
+	GPUError            string
+	CPUError            string
 }
 
 // GetPackedArrayStatistics returns detailed statistics about packed array usage
 func (gpp *GPUPackedProcessor) GetPackedArrayStatistics(table *PackedFrequencyTable) PackedArrayStatistics {
 	stats := table.GetStatistics()
-	
+
 	return PackedArrayStatistics{
-		K:                 stats.K,
-		MaxKmers:          stats.MaxKmers,
-		NonZeroKmers:      stats.NonZeroKmers,
-		TotalCount:        stats.TotalCount,
-		MemoryUsage:       stats.MemoryUsage,
-		CompressionRatio:  stats.CompressionRatio,
-		BitsPerItem:       stats.BitsPerItem,
-		PackedArraySize:   stats.PackedArraySize,
-		MaxFrequency:      stats.MaxFrequency,
-		Sparsity:          stats.Sparsity,
-		Backend:           gpp.gpuBackend,
-		EstimatedSpeedup:  gpp.getEstimatedSpeedup(),
+		K:                stats.K,
+		MaxKmers:         stats.MaxKmers,
+		NonZeroKmers:     stats.NonZeroKmers,
+		TotalCount:       stats.TotalCount,
+		MemoryUsage:      stats.MemoryUsage,
+		CompressionRatio: stats.CompressionRatio,
+		BitsPerItem:      stats.BitsPerItem,
+		PackedArraySize:  stats.PackedArraySize,
+		MaxFrequency:     stats.MaxFrequency,
+		Sparsity:         stats.Sparsity,
+		Backend:          gpp.gpuBackend,
+		EstimatedSpeedup: gpp.getEstimatedSpeedup(),
 	}
 }
 
-// getEstimatedSpeedup estimates the speedup from using packed arrays
+// getEstimatedSpeedup returns hard-coded, unmeasured numbers (3, 24 or 45 by
+// backend). They are not backed by any benchmark, and no GPU work is done.
 func (gpp *GPUPackedProcessor) getEstimatedSpeedup() float64 {
-	// Base speedup from packed arrays (memory efficiency)
 	baseSpeedup := 3.0
 
-	// Additional speedup from GPU acceleration
 	switch gpp.gpuBackend {
 	case GPUBackendMetal:
-		return baseSpeedup * 8.0 // Metal GPU speedup
+		return baseSpeedup * 8.0
 	case GPUBackendCUDA:
-		return baseSpeedup * 15.0 // CUDA GPU speedup
+		return baseSpeedup * 15.0
 	default:
-		return baseSpeedup // CPU packed arrays only
+		return baseSpeedup
 	}
 }
 
-// PackedArrayStatistics contains comprehensive statistics about packed array performance
+// PackedArrayStatistics summarizes a packed table. EstimatedSpeedup is the
+// unmeasured value from getEstimatedSpeedup.
 type PackedArrayStatistics struct {
-	K                 int
-	MaxKmers          int
-	NonZeroKmers      int
-	TotalCount        int
-	MemoryUsage       int64
-	CompressionRatio  float64
-	BitsPerItem       int
-	PackedArraySize   int
-	MaxFrequency      int
-	Sparsity          float64
-	Backend           GPUBackend
-	EstimatedSpeedup  float64
+	K                int
+	MaxKmers         int
+	NonZeroKmers     int
+	TotalCount       int
+	MemoryUsage      int64
+	CompressionRatio float64
+	BitsPerItem      int
+	PackedArraySize  int
+	MaxFrequency     int
+	Sparsity         float64
+	Backend          GPUBackend
+	EstimatedSpeedup float64
 }
