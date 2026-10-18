@@ -82,24 +82,6 @@ func TestLegacyEngine_Close(t *testing.T) {
 
 // --- LegacyVerifier tests ---
 
-func TestNewVerifier(t *testing.T) {
-	v := fingerprinting.NewVerifier()
-	require.NotNil(t, v)
-}
-
-func TestLegacyVerifier_Verify(t *testing.T) {
-	v := fingerprinting.NewVerifier()
-	ok, customerID, err := v.Verify("/some/file.fastq")
-	require.NoError(t, err)
-	assert.True(t, ok)
-	assert.NotEmpty(t, customerID)
-}
-
-func TestLegacyVerifier_ValidateFile(t *testing.T) {
-	v := fingerprinting.NewVerifier()
-	assert.True(t, v.ValidateFile("/any/file.fastq"))
-}
-
 // --- Error types tests ---
 
 func TestFingerprintingError_Error(t *testing.T) {

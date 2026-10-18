@@ -374,19 +374,6 @@ func TestValidateConfigVersion_AllCases(t *testing.T) {
 	}
 }
 
-func TestAppValidate_ValidationDisabled(t *testing.T) {
-	tmpDir := t.TempDir()
-	configPath := cliTestSeqJSON(t, tmpDir, "NovaSeq 6000", 150)
-	phantomPath := cliTestPhantomConfig(t, tmpDir, "NOVALIDATE", false, false)
-	app, err := cli.NewApp(configPath, phantomPath, false)
-	if err != nil {
-		t.Fatalf("NewApp failed: %v", err)
-	}
-	if err := app.Validate(); err != nil {
-		t.Errorf("Validate with validation disabled failed: %v", err)
-	}
-}
-
 func cliTestSeqJSON(t *testing.T, tmpDir, model string, readLength int) string {
 	t.Helper()
 	return cliTestSeqJSONWithOutput(t, tmpDir, model, readLength, "./test_output")

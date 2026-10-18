@@ -11,10 +11,12 @@ type Engine interface {
 	Close()
 }
 
-// Verifier interface for file verification operations
+// Verifier checks files for an embedded fingerprint.
 type Verifier interface {
-	Verify(filePath string) (bool, string, error)
-	ValidateFile(filePath string) bool
+	// Verify reports whether the FASTQ file at path carries a fingerprint and
+	// returns it. A readable file without one gives (false, "", nil); err is
+	// non-nil only when the file cannot be checked.
+	Verify(path string) (found bool, fingerprint string, err error)
 }
 
 // FileFingerprinter embeds and extracts fingerprints in whole FASTQ files.

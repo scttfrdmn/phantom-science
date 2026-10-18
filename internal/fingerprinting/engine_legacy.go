@@ -68,20 +68,3 @@ func (e *LegacyEngine) ExtractFingerprint(qualities []byte) (string, error) {
 func (e *LegacyEngine) Close() {
 	// Cleanup if needed
 }
-
-// LegacyVerifier provides the original verifier implementation
-type LegacyVerifier struct{}
-
-func NewVerifier() Verifier {
-	return &LegacyVerifier{}
-}
-
-func (v *LegacyVerifier) Verify(filePath string) (bool, string, error) {
-	// This would implement fingerprint extraction and verification
-	return true, "phantom-science", nil
-}
-
-func (v *LegacyVerifier) ValidateFile(filePath string) bool {
-	// Mock implementation for testing
-	return true
-}

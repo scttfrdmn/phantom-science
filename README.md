@@ -94,14 +94,16 @@ With CGO enabled (the default on macOS and Linux), `go install` fails to link un
 
 ```bash
 # Generate FASTQ files directly
-./phantom-science --config sequencer.json --command generate
+./phantom-science generate --config sequencer.json [--phantom phantom.json]
 
-# Validate generated data
-./phantom-science --config sequencer.json --phantom phantom.json --command validate
+# Validate FASTQ files (built-in suite, or the phantom config's validation tests)
+./phantom-science validate output/*.fastq [--phantom phantom.json]
 
-# Verify fingerprints
-./phantom-science --config sequencer.json --phantom phantom.json --command verify
+# Verify fingerprints, optionally requiring a customer and dataset
+./phantom-science verify output/*.fastq [--customer ACME --dataset ds-42]
 ```
+
+`validate` and `verify` exit non-zero if any file fails. `verify` reports each file's customer, dataset and creation time, and needs a build with the stegano library. When a phantom config enables validation, `generate` also validates every file it writes; if no tests are listed, the built-in suite runs.
 
 ## Clinical Scenario Generation
 

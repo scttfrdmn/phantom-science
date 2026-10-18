@@ -18,3 +18,9 @@ func New(customerID string) Engine {
 	}
 	return engine
 }
+
+// NewVerifier returns a Verifier backed by the stegano library, or an error
+// when the build has no stegano support (CGO disabled).
+func NewVerifier() (Verifier, error) {
+	return newDefaultVerifier()
+}

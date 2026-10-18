@@ -14,3 +14,10 @@ func New(customerID string) Engine {
 	log.Printf("Using legacy fingerprinting engine for release build")
 	return NewLegacy(customerID)
 }
+
+// NewVerifier reports that verification is unavailable in release builds,
+// which do not link the stegano library.
+func NewVerifier() (Verifier, error) {
+	return nil, NewFingerprintingError("verify", ErrLibraryNotAvailable, ErrorCodeSystem).
+		WithContext("reason", "release build")
+}

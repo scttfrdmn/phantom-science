@@ -6,6 +6,8 @@ package fingerprinting
 import (
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"runtime/debug"
 	"strings"
 	"testing"
@@ -256,4 +258,33 @@ func TestSteganoEngine_CleanSAMHasNoFingerprint(t *testing.T) {
 	requireCode(t, err, ErrorCodeValidation)
 	_, err = e.EmbedInSAMRecords(samRecords(50), "")
 	requireCode(t, err, ErrorCodeValidation)
+}
+
+func TestVerifier(t *testing.T) {
+	v, err := NewVerifier()
+	require.NoError(t, err)
+	e := newTestEngine(t)
+	dir := t.TempDir()
+
+	clean := filepath.Join(dir, "clean.fastq")
+	require.NoError(t, os.WriteFile(clean, fastqRecords(50, 150, func(_, _ int) byte { return 'F' }), 0o600))
+	marked := filepath.Join(dir, "marked.fastq")
+	fp, err := e.GenerateFingerprint("dataset-001")
+	require.NoError(t, err)
+	require.NoError(t, e.EmbedInFASTQFile(clean, marked, fp))
+
+	found, got, err := v.Verify(marked)
+	require.NoError(t, err)
+	assert.True(t, found)
+	assert.Equal(t, fp, got)
+
+	// A readable file without a fingerprint is a negative result, not an error.
+	found, got, err = v.Verify(clean)
+	require.NoError(t, err)
+	assert.False(t, found)
+	assert.Empty(t, got)
+
+	// A missing file cannot be checked.
+	_, _, err = v.Verify(filepath.Join(dir, "missing.fastq"))
+	assert.ErrorIs(t, err, os.ErrNotExist)
 }

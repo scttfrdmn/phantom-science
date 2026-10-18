@@ -73,11 +73,11 @@ Copyright 2025-2026 Scott Friedman`,
 				log.Fatalf("Generation failed: %v", err)
 			}
 		case "validate":
-			if err := app.Validate(); err != nil {
+			if err := app.Validate(args); err != nil {
 				log.Fatalf("Validation failed: %v", err)
 			}
 		case "verify":
-			if err := app.Verify(); err != nil {
+			if err := app.Verify(args, cli.VerifyExpectation{}); err != nil {
 				log.Fatalf("Verification failed: %v", err)
 			}
 		default:
@@ -95,6 +95,9 @@ func Execute() {
 }
 
 func init() {
+	// Execute prints the returned error; without this cobra prints it as well.
+	rootCmd.SilenceErrors = true
+
 	// Global flags
 	rootCmd.PersistentFlags().StringP("config", "c", "", "Sequencer configuration file path")
 	rootCmd.PersistentFlags().StringP("phantom", "p", "", "Phantom Science configuration file path (optional)")

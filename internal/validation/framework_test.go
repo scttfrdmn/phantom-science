@@ -181,6 +181,11 @@ func TestEmptyTestConfiguration(t *testing.T) {
 	if results.Summary == "" {
 		t.Error("Expected summary even with no tests")
 	}
+
+	// Running no tests must not count as passing.
+	if results.OverallPass || results.AcademicReady {
+		t.Errorf("empty configuration reported OverallPass=%v AcademicReady=%v, want false", results.OverallPass, results.AcademicReady)
+	}
 }
 
 func TestUnknownTestType(t *testing.T) {

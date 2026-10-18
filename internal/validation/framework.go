@@ -97,7 +97,12 @@ func (f *Framework) RunValidation(data interface{}) types.ValidationResults {
     }
     
     // Update summary based on results
-    if results.OverallPass {
+    if len(results.Tests) == 0 {
+        results.OverallPass = false
+        results.AcademicReady = false
+        results.RegulatoryReady = false
+        results.Summary = "No validation tests configured"
+    } else if results.OverallPass {
         results.Summary = fmt.Sprintf("All %d validation tests passed", len(results.Tests))
     } else {
         failedTests := 0

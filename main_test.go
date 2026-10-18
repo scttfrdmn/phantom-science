@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -185,66 +186,68 @@ func TestMainWithPhantomConfig(t *testing.T) {
 
 func TestMainValidateCommand(t *testing.T) {
 	tmpDir := t.TempDir()
-	
-	sequencerConfig := `{
+	outDir := filepath.Join(tmpDir, "out")
+
+	sequencerConfig := fmt.Sprintf(`{
   "sequencer_model": "MiSeq",
   "sample_name": "Test_Sample",
   "lane": 1,
-  "output_dir": "./test_output",
+  "output_dir": %q,
   "read_length": 150,
   "reads_per_batch": 100,
   "total_batches": 1,
   "paired_end": true,
   "base_quality": 30,
-  "quality_decay": 0.1,
-  "q30_percentage": 85.0
-}`
+  "quality_decay": 0.1
+}`, outDir)
 
 	phantomConfig := `{
-  "enterprise": {
-    "customer_id": "VALIDATE_TEST",
-    "fingerprinting": {
-      "enable": false
-    }
-  },
+  "enterprise": {"customer_id": "VALIDATE_TEST", "fingerprinting": {"enable": false}},
   "validation": {
     "enable": true,
-    "statistical_tests": ["hardy_weinberg"]
+    "statistical_tests": ["format_compliance", "read_length_consistency"],
+    "pipeline_compatibility_tests": ["fastq_parsing", "quality_encoding"]
   }
 }`
-	
+
 	sequencerPath := filepath.Join(tmpDir, "sequencer.json")
 	phantomPath := filepath.Join(tmpDir, "phantom.json")
-	
-	err := os.WriteFile(sequencerPath, []byte(sequencerConfig), 0600)
-	if err != nil {
+	if err := os.WriteFile(sequencerPath, []byte(sequencerConfig), 0600); err != nil {
 		t.Fatalf("Failed to create sequencer config: %v", err)
 	}
-	
-	err = os.WriteFile(phantomPath, []byte(phantomConfig), 0600)
-	if err != nil {
+	if err := os.WriteFile(phantomPath, []byte(phantomConfig), 0600); err != nil {
 		t.Fatalf("Failed to create phantom config: %v", err)
 	}
-	
-	// Build binary
+
 	binaryPath := filepath.Join(tmpDir, "phantom-science-test")
-	cmd := exec.Command("go", "build", "-o", binaryPath, ".")
-	err = cmd.Run()
-	if err != nil {
+	if err := exec.Command("go", "build", "-o", binaryPath, ".").Run(); err != nil {
 		t.Fatalf("Failed to build binary: %v", err)
 	}
-	
-	// Test validate command
-	cmd = exec.Command(binaryPath, "--config", sequencerPath, "--phantom", phantomPath, "--command", "validate")
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Logf("Command output: %s", string(output))
-		t.Fatalf("Expected validate command to succeed: %v", err)
+
+	if out, err := exec.Command(binaryPath, "generate", "--config", sequencerPath).CombinedOutput(); err != nil {
+		t.Fatalf("generate failed: %v\n%s", err, out)
 	}
-	
-	outputStr := string(output)
-	if !strings.Contains(outputStr, "Running validation framework") {
-		t.Errorf("Expected validation message, got: %s", outputStr)
+	files, _ := filepath.Glob(filepath.Join(outDir, "*.fastq"))
+	if len(files) != 2 {
+		t.Fatalf("want 2 generated files, got %v", files)
+	}
+
+	// validate checks every file with the phantom config's tests.
+	out, err := exec.Command(binaryPath, append([]string{"validate", "--phantom", phantomPath}, files...)...).CombinedOutput()
+	if err != nil {
+		t.Fatalf("validate failed on generated files: %v\n%s", err, out)
+	}
+	if got := strings.Count(string(out), "All 4 validation tests passed"); got != 2 {
+		t.Errorf("want both files to pass 4 tests, report:\n%s", out)
+	}
+
+	// The legacy --command validate cannot take files and must not report success.
+	out, err = exec.Command(binaryPath, "--config", sequencerPath, "--phantom", phantomPath, "--command", "validate").CombinedOutput()
+	if err == nil {
+		t.Fatalf("--command validate without files succeeded:\n%s", out)
+	}
+	if !strings.Contains(string(out), "usage: phantom-science validate FILE") {
+		t.Errorf("missing usage hint:\n%s", out)
 	}
 }
 

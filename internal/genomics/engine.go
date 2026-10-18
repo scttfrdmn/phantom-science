@@ -22,6 +22,10 @@ type Engine struct {
     fingerprintingEngine fingerprinting.Engine
     hmmModel             authenticity.SequenceGenerator // nil = use crypto/rand
 
+    // Files written by Generate and GenerateFASTQFile, in order.
+    filesMu sync.Mutex
+    files   []string
+
     // One fingerprint per engine, shared by every file it writes.
     fingerprintOnce sync.Once
     fingerprint     string
@@ -228,9 +232,21 @@ func (e *Engine) generateFASTQFile(filename string, batch, read int) error {
         return fmt.Errorf("closing %s: %w", filepath.Base(filename), err)
     }
     if e.qualityFingerprintingEnabled() {
-        return e.embedFileFingerprint(filename)
+        if err := e.embedFileFingerprint(filename); err != nil {
+            return err
+        }
     }
+    e.filesMu.Lock()
+    e.files = append(e.files, filename)
+    e.filesMu.Unlock()
     return nil
+}
+
+// GeneratedFiles returns the FASTQ files this engine has written, in order.
+func (e *Engine) GeneratedFiles() []string {
+    e.filesMu.Lock()
+    defer e.filesMu.Unlock()
+    return append([]string(nil), e.files...)
 }
 
 // writeFASTQRecords writes one batch of FASTQ records to w.

@@ -7,7 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `phantom-science verify FILE...` extracts and reports each FASTQ file's fingerprint (customer, dataset, creation time, stegano version). `--customer` and `--dataset` require specific values. It exits non-zero if any file has no fingerprint, a mismatched one, or cannot be read (#2).
+- `phantom-science validate FILE...` runs the validation framework on FASTQ files: the phantom config's tests, or a built-in suite of nine format, quality and composition checks (#2).
+- `fingerprinting.ParseFingerprint` and `FormatFingerprint`.
+
 ### Changed
+- `fingerprinting.NewVerifier` returns `(Verifier, error)`: a stegano-backed verifier, or an error in builds without stegano. `Verifier.ValidateFile` is removed (#2).
+- A phantom config that enables validation without listing tests runs the built-in suite (#2).
 - Quality-score fingerprinting is now controlled by the `quality_scores` entry in `steganography_layers`; enabling fingerprinting without that layer only tags read IDs (#1).
 - When `quality_scores` is requested, generation fails instead of writing unmarked files:
   - without the stegano library (`CGO_ENABLED=0` or release builds), before any file is written
@@ -19,6 +26,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Rust pre-commit hooks and Makefile steps for the removed `crypto-engine/` crate.
 
 ### Fixed
+- `--command verify` printed "Verification completed" without checking anything, and `NewVerifier` returned a mock that reported every file as verified (#2).
+- Validation never saw any data:
+  - `--command validate` and generation's built-in validation passed `nil` to the validation framework. With no tests configured this reported success, and with tests configured every test failed with "invalid data type".
+  - `--command validate` also returned success when validation failed.
+  - Generation now validates the files it wrote, and running zero tests no longer counts as a pass (#2).
+- Errors from subcommands were printed twice.
 - Generated FASTQ files contained no steganographic fingerprint (#1):
   - The generator passed each read's quality string to the fingerprinting engine, which rejected it as not FASTQ and far too small, and the error was discarded.
   - Each finished file is now fingerprinted once with stegano's streaming `EmbedFile`, with one fingerprint per run, and the file keeps its permissions.

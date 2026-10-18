@@ -36,6 +36,33 @@ func newDefaultEngine(customerID string) (Engine, error) {
 	return NewSteganoEngine(customerID)
 }
 
+// newDefaultVerifier returns the stegano-backed Verifier used by NewVerifier.
+func newDefaultVerifier() (Verifier, error) {
+	return steganoVerifier{engine: &SteganoEngine{}}, nil
+}
+
+// steganoVerifier implements Verifier with ExtractFromFASTQFile.
+type steganoVerifier struct {
+	engine *SteganoEngine
+}
+
+// Verify extracts the fingerprint from the FASTQ file at path. Missing or
+// unreadable files are errors; a readable file with no fingerprint is not.
+func (v steganoVerifier) Verify(path string) (bool, string, error) {
+	if _, err := os.Stat(path); err != nil {
+		return false, "", err
+	}
+	fp, err := v.engine.ExtractFromFASTQFile(path)
+	if err != nil {
+		var fe *FingerprintingError
+		if errors.As(err, &fe) && fe.Code == ErrorCodeCorruption {
+			return false, "", nil
+		}
+		return false, "", err
+	}
+	return true, fp, nil
+}
+
 // LibraryVersion returns the version of the linked stegano library.
 func LibraryVersion() string {
 	return stegano.Version()
@@ -43,8 +70,7 @@ func LibraryVersion() string {
 
 // GenerateFingerprint creates a fingerprint payload for a dataset.
 func (e *SteganoEngine) GenerateFingerprint(datasetID string) (string, error) {
-	return fmt.Sprintf("%s:%s:stegano-%s:ts-%d",
-		e.customerID, datasetID, stegano.Version(), time.Now().Unix()), nil
+	return FormatFingerprint(e.customerID, datasetID, stegano.Version(), time.Now()), nil
 }
 
 // EmbedInQualities embeds fingerprint in the quality scores of fastqData,

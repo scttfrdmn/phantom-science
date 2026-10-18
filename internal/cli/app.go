@@ -2,10 +2,9 @@ package cli
 
 import (
     "fmt"
+    "os"
 
     "github.com/scttfrdmn/phantom-science/internal/genomics"
-    "github.com/scttfrdmn/phantom-science/internal/validation"
-    "github.com/scttfrdmn/phantom-science/internal/fingerprinting"
     "github.com/scttfrdmn/phantom-science/pkg/types"
 )
 
@@ -49,9 +48,6 @@ func NewApp(configPath string, phantomPath string, verbose bool) (*App, error) {
 func (a *App) Generate() error {
     fmt.Println("🧬 Starting Phantom Science genomic data generation...")
     
-    // Initialize validation framework
-    validator := validation.NewFramework(a.phantomConfig.Validation)
-    
     // Initialize genomics engine with the effective fingerprinting settings
     config := *a.config
     config.ResolveFingerprinting(a.phantomConfig)
@@ -63,55 +59,35 @@ func (a *App) Generate() error {
         return fmt.Errorf("generation failed: %w", err)
     }
     
-    // Run validation if enabled
-    if a.phantomConfig.Validation.Enable {
-        results := validator.RunValidation(nil) // Would pass generated data
-        if !results.OverallPass {
-            return fmt.Errorf("validation failed: %s", results.Summary)
+    // Validate the generated files if the phantom config enables validation
+    if cfg, ok := EffectiveValidation(a.phantomConfig.Validation); ok {
+        if err := ValidateFiles(os.Stdout, engine.GeneratedFiles(), cfg); err != nil {
+            return fmt.Errorf("validation failed: %w", err)
         }
-        fmt.Printf("✅ Validation passed (academic ready: %t, regulatory ready: %t)\n", 
-            results.AcademicReady, results.RegulatoryReady)
     }
     
     fmt.Println("✅ Generation completed successfully")
     return nil
 }
 
-func (a *App) Validate() error {
+// Validate runs the validation framework on each FASTQ file in paths, using
+// the phantom config's validation tests (see EffectiveValidation) and
+// DefaultValidationTests when the phantom config does not enable validation.
+func (a *App) Validate(paths []string) error {
     fmt.Println("🔍 Running validation framework...")
-    
-    validator := validation.NewFramework(a.phantomConfig.Validation)
-    results := validator.RunValidation(nil)
-    
-    // Output results
-    fmt.Printf("Validation Results:\n")
-    fmt.Printf("  Overall Pass: %t\n", results.OverallPass)
-    fmt.Printf("  Academic Ready: %t\n", results.AcademicReady)
-    fmt.Printf("  Regulatory Ready: %t\n", results.RegulatoryReady)
-    
-    for _, test := range results.Tests {
-        status := "❌"
-        if test.Passed {
-            status = "✅"
+    cfg := DefaultValidationTests
+    if a.phantomConfig != nil {
+        if effective, ok := EffectiveValidation(a.phantomConfig.Validation); ok {
+            cfg = effective
         }
-        fmt.Printf("  %s %s (confidence: %.2f)\n", status, test.TestName, test.Confidence)
     }
-    
-    return nil
+    return ValidateFiles(os.Stdout, paths, cfg)
 }
 
-func (a *App) Verify() error {
+// Verify checks each FASTQ file in paths for a steganographic fingerprint.
+func (a *App) Verify(paths []string, expect VerifyExpectation) error {
     fmt.Println("🔐 Running fingerprint verification...")
-    
-    if !a.phantomConfig.Enterprise.Fingerprinting.Enable {
-        return fmt.Errorf("fingerprinting not enabled in configuration")
-    }
-    
-    _ = fingerprinting.NewVerifier()
-    
-    // This would verify specific files passed as arguments
-    fmt.Println("✅ Verification completed")
-    return nil
+    return VerifyFiles(os.Stdout, paths, expect)
 }
 
 // GetConfig returns the sequencer configuration
