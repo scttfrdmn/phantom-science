@@ -23,6 +23,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `testing.GCSkewed` positive-control helper (#7). `E2EFramework.WriteSAM` and `testing.ErrBAMUnsupported` (#18).
 - Container image `deploy/production/docker/Dockerfile` (Debian bookworm, stegano built at the go.mod version, non-root user 65532) and `.dockerignore` (#4).
 - CI jobs for `go vet`, `govulncheck`, the full test suite with and without CGO, a `-tags release` build, and a Docker image build with a smoke test (#9).
+- Read-length distributions for generation (#10): `lognormal` (from N50 and median, or mean and SD), `gamma` (shape and scale, or mean and SD), `empirical` (a `length<TAB>count` histogram), each with optional min/max truncation and reproducible from the seed. New package `internal/genomics/readlen`.
+- ONT error and quality model (#11): `--basecaller-tier` / `error_model.tier` (`sup`, `hac`, `fast`) applies per-base substitutions, insertions and deletions (sup 0.8% / 0.8% / 1.0%), a homopolymer deletion excess that grows with run length, and per-tier qualities (modal read Q20 / Q15 / Q10, ONT mean-Q definition). New package `internal/genomics/nanopore/errmodel`.
+- ONT output (#12): `platform: ont` writes MinKNOW-style headers (UUID4 read IDs, runid, read, ch, start_time, flow_cell_id, protocol_group_id, sample_id) from a per-channel timing model, plus a PycoQC-compatible `sequencing_summary.txt`. Run metadata defaults derive from the seed (2675 PromethION channels, 400 b/s).
+- `output.compression: gzip` / `--compress gzip` writes `.fastq.gz`; quality-score fingerprints are embedded before compression, and `verify` and `validate` read `.gz` files (#12).
+- `output.file_pattern` with `{sample_name}`, `{flowcell_id}`, `{run_id}`, `{file_number}`, `{barcode}`, `{lane}` and `{mate}` (#12).
+- v2 sequencer templates (`configs/sequencers/*.yaml`) load for Oxford Nanopore, with an optional `run:` section for run settings (#12).
+- `validation.WithReadLengths` and `cli.ReadLengthValidation`: generated reads are checked against the configured distribution (bounds and a 4σ mean check) (#10).
 
 ### Changed
 - **BREAKING:** the `quality_scores` steganography layer requires an encryption key and refuses to run without one, unless `plaintext: true` is set. Generation checks the key before writing anything (#3).
@@ -45,6 +52,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The e2e benchmark enforces absolute throughput, latency and CPU thresholds only with `PHANTOM_PERF_STRICT=1`, since they depend on the machine and its load (#7).
 - `run_workflow_tests` and the workflow integration tests run Cromwell, Nextflow and Snakemake for real and pass a workflow only when its outputs check out; missing engines are reported as skipped (#18).
 - `deploy/production/README.md` documents only the container image and real commands (#4).
+- **BREAKING (paths):** 59 one-off programs moved from `cmd/<name>` to `cmd/experiments/<name>`; build them with `go build ./cmd/experiments/<name>`. Only the `phantom-science` CLI, `cmd/run_e2e_tests` and `cmd/run_workflow_tests` stay where they were (#19).
+- **BREAKING:** a YAML config with no recognised settings is now an error instead of loading as all zeros; flat YAML configs use the JSON key names; non-ONT v2 templates (PacBio, Element, MGI) fail with an explicit error (#12).
+- `phantom-science validate` reports variable read lengths (count, min, max, mean, N50) instead of failing on them; after generation, lengths are checked against the configured distribution (#10).
+- With a read-length distribution, an indel variant changes the read length by exactly the indel size (#10).
+- `ont_promethion24.yaml`: 2675 channels, 400 b/s, and error rates and SUP accuracy (0.974) consistent with the generator's tier table (#12).
 
 ### Removed
 - Unused "business" Prometheus metrics in `internal/monitoring` (`phantom_customers_active`, `phantom_datasets_processed_total`, `phantom_revenue_generated_total`, `phantom_sla_compliance_percent`, `phantom_customer_satisfaction_score`). Nothing recorded values to them.
@@ -82,6 +94,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `run_e2e_tests` silently skipped platforms whose generation or training failed (#7).
 - `stream_vcf` printed "NOT ACHIEVED" in its summary regardless of the result (#7).
 - `go vet` lock-copy findings in `internal/gpu` (#8).
+- `HomopolymerErrorModel` chose error types in random map order, so results were not reproducible from the seed (#11).
+- `scripts/release.sh` built the nonexistent `./cmd/phantom-science`; `Makefile.memory`, `Makefile.reference` and `Makefile.streaming` passed `cmd/<name>` without `./`, which `go build` reads as a standard-library path (#19).
+- `.gitignore` entries matched directories as well as root binaries.
+- `read_length_consistency` counted a trailing CR in CRLF files (#10).
+- The Metal GPU backend's Objective-C compiled on Linux CGO builds; it is now macOS-only (#9).
 
 ## [0.7.0] - 2026-10-17
 
