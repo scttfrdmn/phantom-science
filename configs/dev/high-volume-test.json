@@ -9,46 +9,13 @@
   "paired_end": true,
   "base_quality": 38,
   "quality_decay": 0.2,
-  
   "enterprise": {
     "customer_id": "VOLUME_TEST_001",
-    "license_key": "dev-license-key",
-    "compliance_level": "basic",
-    "audit_logging": {
-      "enable": false,
-      "log_level": "error",
-      "retention_days": 7,
-      "compliance_format": "basic",
-      "export_endpoint": ""
-    },
     "fingerprinting": {
       "enable": false,
       "customer_fingerprint": false,
       "dataset_fingerprint": false,
-      "steganography_layers": [],
-      "cryptographic_signing": false,
-      "tamper_detection": false
-    },
-    "validation_level": "none",
-    "service_tier": "test"
-  },
-  
-  "validation": {
-    "enable": false,
-    "statistical_tests": [],
-    "population_genetics_tests": [],
-    "pipeline_compatibility_tests": [],
-    "regulatory_compliance": {
-      "fda_compliance": false,
-      "ema_compliance": false,
-      "validation_studies": [],
-      "quality_metrics": []
-    },
-    "academic_validation": {
-      "peer_review_ready": false,
-      "publication_format": "none",
-      "benchmark_datasets": [],
-      "statistical_power": 0.0
+      "steganography_layers": []
     }
   }
 }

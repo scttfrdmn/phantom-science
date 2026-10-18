@@ -1,7 +1,19 @@
 version 1.0
 
-# Phantom Science Genomic Analysis Workflow
-# A comprehensive WDL workflow for FASTQ validation, steganographic analysis, and performance evaluation
+# Phantom Science FASTQ report workflow
+#
+# A WDL demonstration that reads FASTQ files written by `phantom-science
+# generate` and writes text, HTML and JSON reports: line-count and N-content
+# checks, quality-character counts, and file sizes and read counts.
+#
+# It does not detect or verify fingerprints (use `phantom-science verify`),
+# and it does not measure performance: the "estimated processing time" assumes
+# a fixed 50 MB/s. customer_id, analysis_type, min_quality_score,
+# fingerprint_strategy, enable_steganography and batch_size are only echoed
+# into the reports; memory_limit_gb and cpu_cores set the runtime of the
+# PerformanceAnalysis task.
+#
+# Checked with `womtool validate`; see README.md for what has been run.
 
 workflow PhantomAnalysis {
     input {
@@ -114,12 +126,11 @@ task BatchValidation {
                 continue
             fi
             
-            # Quality score validation
-            quality_lines=$($cat_cmd "$fastq" | awk 'NR%4==0' | head -1000)
-            echo "  Quality scores: OK" >> ~{output_dir}/validation/validation_report.txt
+            # Quality scores are not checked (min_quality_score is not used)
+            echo "  Quality scores: not checked" >> ~{output_dir}/validation/validation_report.txt
             
             # N percentage check
-            sequences=$($cat_cmd "$fastq" | awk 'NR%4==2' | head -1000)
+            sequences=$($cat_cmd "$fastq" | awk 'NR%4==2 && NR<=4000')
             n_count=$(echo "$sequences" | tr -cd 'N' | wc -c)
             total_bases=$(echo "$sequences" | tr -d '\n' | wc -c)
             
@@ -132,7 +143,7 @@ task BatchValidation {
                 fi
             fi
             
-            echo "  Status: VALIDATED" >> ~{output_dir}/validation/validation_report.txt
+            echo "  Status: checked (line count; N content of the first 1000 reads)" >> ~{output_dir}/validation/validation_report.txt
             echo "" >> ~{output_dir}/validation/validation_report.txt
         done
         
@@ -152,7 +163,8 @@ task BatchValidation {
     }
 }
 
-# Task: Analyze steganographic fingerprints in FASTQ files
+# Task: Count quality characters. This task does not read fingerprints; it
+# reports the quality-string statistics and points to `phantom-science verify`.
 task FingerprintAnalysis {
     input {
         Array[File] fastq_files
@@ -170,16 +182,16 @@ task FingerprintAnalysis {
         mkdir -p ~{output_dir}/fingerprinting
         
         # Initialize fingerprint report
-        echo "# Steganographic Fingerprint Analysis Report" > ~{output_dir}/fingerprinting/fingerprint_report.txt
+        echo "# Quality Character Report" > ~{output_dir}/fingerprinting/fingerprint_report.txt
         echo "Generated: $(date)" >> ~{output_dir}/fingerprinting/fingerprint_report.txt
         echo "Strategy: ~{strategy}" >> ~{output_dir}/fingerprinting/fingerprint_report.txt
         echo "Customer ID: ~{customer_id}" >> ~{output_dir}/fingerprinting/fingerprint_report.txt
         echo "Steganography Enabled: ~{enable_steganography}" >> ~{output_dir}/fingerprinting/fingerprint_report.txt
         echo "" >> ~{output_dir}/fingerprinting/fingerprint_report.txt
         
-        # Analyze each FASTQ file for steganographic content
+        # Count quality characters in each FASTQ file
         for fastq in ~{sep=' ' fastq_files}; do
-            echo "Analyzing fingerprints in: $fastq" >> ~{output_dir}/fingerprinting/fingerprint_report.txt
+            echo "Counting quality characters in: $fastq" >> ~{output_dir}/fingerprinting/fingerprint_report.txt
             
             # Check file format
             if [[ "$fastq" == *.gz ]]; then
@@ -188,8 +200,8 @@ task FingerprintAnalysis {
                 cat_cmd="cat"
             fi
             
-            # Analyze quality score patterns for steganographic content
-            quality_lines=$($cat_cmd "$fastq" | awk 'NR%4==0' | head -1000)
+            # Quality lines of the first 1000 reads
+            quality_lines=$($cat_cmd "$fastq" | awk 'NR%4==0 && NR<=4000')
             
             # Calculate quality score statistics
             total_qualities=$(echo "$quality_lines" | tr -d '\n' | wc -c)
@@ -198,36 +210,15 @@ task FingerprintAnalysis {
             echo "  Total quality characters: $total_qualities" >> ~{output_dir}/fingerprinting/fingerprint_report.txt
             echo "  Unique quality characters: $unique_qualities" >> ~{output_dir}/fingerprinting/fingerprint_report.txt
             
-            # Simulate steganographic analysis
-            if [[ "~{enable_steganography}" == "true" ]]; then
-                # Calculate embedding capacity based on strategy
-                case "~{strategy}" in
-                    "conservative")
-                        capacity_bits=$((total_qualities * 1))
-                        ;;
-                    "balanced")
-                        capacity_bits=$((total_qualities * 2))
-                        ;;
-                    "aggressive")
-                        capacity_bits=$((total_qualities * 3))
-                        ;;
-                    *)
-                        capacity_bits=$((total_qualities * 2))
-                        ;;
-                esac
-                
-                echo "  Embedding capacity: $capacity_bits bits" >> ~{output_dir}/fingerprinting/fingerprint_report.txt
-                echo "  Fingerprint detected: YES" >> ~{output_dir}/fingerprinting/fingerprint_report.txt
-                echo "  Customer fingerprint: ~{customer_id}" >> ~{output_dir}/fingerprinting/fingerprint_report.txt
-            else
-                echo "  Steganographic analysis: SKIPPED" >> ~{output_dir}/fingerprinting/fingerprint_report.txt
-            fi
+            # Fingerprints are encrypted and can only be extracted with the
+            # stegano library and the key; this workflow does neither.
+            echo "  Fingerprint: not checked (run phantom-science verify --key-file KEY FILE)" >> ~{output_dir}/fingerprinting/fingerprint_report.txt
             
-            echo "  Status: ANALYZED" >> ~{output_dir}/fingerprinting/fingerprint_report.txt
+            echo "  Status: counted" >> ~{output_dir}/fingerprinting/fingerprint_report.txt
             echo "" >> ~{output_dir}/fingerprinting/fingerprint_report.txt
         done
         
-        echo "Fingerprint analysis completed: $(date)" >> ~{output_dir}/fingerprinting/fingerprint_report.txt
+        echo "Quality character report completed: $(date)" >> ~{output_dir}/fingerprinting/fingerprint_report.txt
     >>>
     
     output {
@@ -243,7 +234,8 @@ task FingerprintAnalysis {
     }
 }
 
-# Task: Analyze performance metrics for FASTQ processing
+# Task: Report file sizes and read counts. The processing time and throughput
+# are computed from an assumed 50 MB/s, not measured.
 task PerformanceAnalysis {
     input {
         Array[File] fastq_files
@@ -295,12 +287,12 @@ task PerformanceAnalysis {
             
             echo "  File size: ${file_size_mb} MB" >> ~{output_dir}/performance/performance_report.txt
             echo "  Read count: $read_count" >> ~{output_dir}/performance/performance_report.txt
-            echo "  Estimated processing time: ${processing_time} seconds" >> ~{output_dir}/performance/performance_report.txt
+            echo "  Estimated processing time at an assumed 50 MB/s: ${processing_time} seconds" >> ~{output_dir}/performance/performance_report.txt
             
             # Throughput calculation
             if (( $(awk "BEGIN {print ($processing_time > 0)}") )); then
                 throughput=$(awk "BEGIN {printf \"%.2f\", $read_count / $processing_time}")
-                echo "  Throughput: ${throughput} reads/second" >> ~{output_dir}/performance/performance_report.txt
+                echo "  Throughput at the assumed rate: ${throughput} reads/second" >> ~{output_dir}/performance/performance_report.txt
             fi
             
             echo "  Status: ANALYZED" >> ~{output_dir}/performance/performance_report.txt
@@ -340,7 +332,7 @@ task PerformanceAnalysis {
     }
 }
 
-# Task: Generate comprehensive HTML report
+# Task: Combine the reports into HTML and JSON
 task GenerateReport {
     input {
         File validation_report
@@ -394,7 +386,7 @@ EOF
     </div>
     
     <div class="section">
-        <h2>🔍 Fingerprint Analysis</h2>
+        <h2>Quality characters</h2>
         <pre>
 EOF
         
@@ -419,12 +411,11 @@ EOF
     
     <div class="section">
         <h2>📋 Summary</h2>
-        <p>This comprehensive analysis report includes:</p>
+        <p>This report includes:</p>
         <ul>
-            <li>✅ FASTQ file validation and quality assessment</li>
-            <li>🔍 Steganographic fingerprint analysis</li>
-            <li>⚡ Performance metrics and throughput analysis</li>
-            <li>📊 Statistical summaries and recommendations</li>
+            <li>FASTQ line-count and N-content checks</li>
+            <li>Quality-character counts (fingerprints are not checked; use phantom-science verify)</li>
+            <li>File sizes, read counts and an estimate at an assumed 50 MB/s</li>
         </ul>
         <p><em>Generated by Phantom Science Cromwell Workflow</em></p>
     </div>

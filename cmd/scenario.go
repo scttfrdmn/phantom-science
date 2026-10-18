@@ -17,12 +17,16 @@ var scenarioCmd = &cobra.Command{
 	Short: "Generate clinical scenario FASTQ with planted variants and ground truth manifest",
 	Long: `Generate synthetic FASTQ reads for a clinical demonstration scenario.
 
-The scenario is specified in a YAML file that maps HPO terms to a gene and exact
-variant coordinates (or an explicit planted_variant). Reads covering the target
-locus carry the ALT allele at the expected VAF. A machine-readable ground truth
-manifest records what was planted.
+The scenario is a YAML file listing HPO terms, which a built-in catalog maps to a
+gene and variant (SLC2A1 for HP:0001250 + HP:0001253, PAH for HP:0001360, CFTR
+for HP:0002837; other terms fall back to a ClinVar web query), or an explicit
+phenotype.planted_variant. Reads are placed in a
+50 kb window around the variant at the requested coverage, and reads covering it
+carry the ALT allele at the expected VAF. Read bases are synthetic, not taken
+from a reference genome. A JSON ground-truth manifest records what was planted.
+--population is used only by trio scenarios (trio.generate and trio.de_novo).
 
-Example:
+Example, with glut1_scenario.yaml containing the spec below:
   phantom-science scenario --spec glut1_scenario.yaml --population CEU
 
 The YAML spec format:

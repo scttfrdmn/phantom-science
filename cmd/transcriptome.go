@@ -30,8 +30,8 @@ Inputs (one of):
                                    and quantify with Bambu.
 
 Expression: by default a Zipf rank-abundance model with log-normal scatter
-(log TPM = c - alpha*log(rank) + sigma*Z; alpha=1, sigma=0.5: a few hundred
-transcripts carry half the reads). --expression-profile loads a table instead:
+(log TPM = c - alpha*log(rank) + sigma*Z; with alpha=1 and sigma=0.5 over
+GENCODE's ~250,000 transcripts, a few hundred carry half the reads). --expression-profile loads a table instead:
 "transcript_id<TAB>tpm" (header optional), a table with a TPM column (salmon
 quant.sf), or Bambu counts_transcript.txt (TXNAME GENEID samples...; samples
 summed). Values are rescaled to sum to 1e6; IDs match with or without version.
@@ -52,7 +52,7 @@ novel_isoforms.gtf when exon coordinates are known.
 --seed makes a run reproducible (byte-identical output); without it a seed is
 drawn and logged to stderr.
 
-Example:
+Example (GRCh38.fa and gencode.gtf are your own downloads, e.g. from GENCODE):
   phantom-science transcriptome --genome GRCh38.fa --gtf gencode.gtf \
       --reads 1000000 --out sim --seed 1 --compress gzip`,
 	RunE: func(cmd *cobra.Command, args []string) error {

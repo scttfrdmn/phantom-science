@@ -1,97 +1,51 @@
-# Phantom Science Enterprise Configuration v1.0
-# Advanced enterprise features for synthetic genomic data generation
+# Phantom Science configuration (v1.0): fingerprinting and validation
+#
+# Pass with -p to generate (or --phantom-config to tui):
+#
+#   openssl rand -base64 32 > fingerprint.key && chmod 600 fingerprint.key
+#   export PHANTOM_FINGERPRINT_KEY="$(cat fingerprint.key)"   # or set key_file below
+#   phantom-science generate --config configs/sequencer/simple-run.json \
+#       -p configs/phantom/v1.0/enterprise-settings.yaml --total-reads 1000 --seed 1
+#   phantom-science verify sequencer_output/*.fastq
+#
+# Quality-score fingerprints need a build with the stegano library
+# (`make stegano && make build`); without it generation fails before writing
+# anything. The fingerprint is encrypted with the key; generation refuses to
+# embed without one unless `plaintext: true` is set.
+#
+# Only the keys below are read. Earlier versions of this file listed audit
+# logging, regulatory compliance, academic validation and security sections;
+# the generator never read them, so they were removed.
 
 schema_version: "1.0"
-last_updated: "2024-07-03"
+last_updated: "2026-10-18"
 config_type: "phantom_enterprise"
 
-# Enterprise Customer Information
 enterprise:
-  customer_id: "CUST_001"
-  license_key: "REPLACE_WITH_LICENSE_KEY"
-  organization: "Example Genomics Corp"
-  service_tier: "enterprise"              # basic, academic, regulatory, enterprise
-  compliance_level: "hipaa_gdpr"          # none, basic, hipaa_gdpr, fda_gcp
+  customer_id: "CUST_001"                # written into the fingerprint
 
-# Steganographic Fingerprinting
 fingerprinting:
   enable: true
-  customer_fingerprint: true              # Embed customer ID
-  dataset_fingerprint: true               # Embed dataset metadata
+  customer_fingerprint: true             # also tag each read ID with the customer ID
+  dataset_fingerprint: false             # tag read IDs with dataset_id (set in the sequencer config)
   steganography_layers:
-    - "quality_scores"                    # LSB embedding in Phred scores
-    - "read_ids"                          # Watermark in read identifiers
-    - "synonymous_mutations"              # Use wobble positions for DNA watermarks
-  cryptographic_signing: true            # Digital signatures for tamper detection
-  tamper_detection: true                 # Verify data integrity
+    - "quality_scores"                   # embed the encrypted fingerprint in the quality scores of each file
+  # key_file: "fingerprint.key"          # chmod 600; otherwise $PHANTOM_FINGERPRINT_KEY is used
+  # plaintext: true                      # embed a readable fingerprint without a key
 
-# Audit and Compliance Logging  
-audit_logging:
-  enable: true
-  log_level: "info"                      # error, warn, info, debug
-  retention_days: 2555                   # 7 years for regulatory compliance
-  compliance_format: "hipaa"             # hipaa, gdpr, fda, custom
-  export_endpoint: "s3://audit-logs/"    # Secure audit log storage
-  encryption: "AES-256"                  # Encrypt all audit logs
-
-# Validation Framework
+# Validation of the generated files. With enable: true and no test lists, the
+# built-in suite runs (the same nine checks as `phantom-science validate`).
 validation:
   enable: true
-  validation_level: "regulatory"         # basic, academic, regulatory
-  
-  # Statistical Tests
   statistical_tests:
-    - "hardy_weinberg_equilibrium"        # Population genetics validation
-    - "linkage_disequilibrium"            # LD structure validation  
-    - "population_structure"              # FST, ancestry validation
-    - "allele_frequency_spectrum"         # SFS validation
-    - "variant_calling_concordance"       # Pipeline validation
-
-  # Population Genetics Tests
+    - "format_compliance"
+    - "quality_distribution"
+    - "sequence_complexity"
+    - "read_length_consistency"
   population_genetics_tests:
-    - "admixture_analysis"                # Population admixture
-    - "kinship_coefficient"               # Relatedness validation
-    - "inbreeding_coefficient"            # F-statistics
-    - "effective_population_size"         # Ne estimation
-
-  # Pipeline Compatibility
+    - "base_composition"
+    - "gc_content"
   pipeline_compatibility_tests:
-    - "gatk_best_practices"               # GATK validation
-    - "bwa_mem_alignment"                 # BWA-MEM compatibility
-    - "variant_effect_predictor"          # VEP annotation
-    - "bcftools_stats"                    # BCFtools validation
-
-# Regulatory Compliance
-regulatory_compliance:
-  fda_compliance: true                   # FDA validation standards
-  ema_compliance: true                   # European Medicines Agency
-  gcp_compliance: true                   # Good Clinical Practice
-  validation_studies:
-    - "analytical_validation"             # Method validation
-    - "clinical_validation"               # Clinical utility
-    - "bridging_studies"                  # Cross-platform validation
-  quality_metrics:
-    - "precision_recall"                  # Variant calling metrics
-    - "sensitivity_specificity"           # Diagnostic accuracy
-    - "concordance_correlation"           # Inter-platform agreement
-
-# Academic Validation
-academic_validation:
-  peer_review_ready: true                # Publication-ready validation
-  publication_format: "nature_genetics"  # Journal-specific formatting
-  benchmark_datasets:
-    - "genome_in_a_bottle"                # GIAB truth sets
-    - "1000_genomes_project"              # Population reference
-    - "gnomad_v4"                         # Variant frequency reference
-  statistical_power: 0.8                 # Minimum power for studies
-  effect_size_reporting: true            # Report effect sizes
-  multiple_testing_correction: "bonferroni" # FDR, bonferroni, holm
-
-# Enterprise Security Features
-security:
-  data_encryption: "AES-256-GCM"         # Encryption standard
-  key_management: "aws_kms"              # Key management service
-  access_control: "rbac"                 # Role-based access control
-  network_security: "tls_1_3"           # Network encryption
-  data_masking: true                     # Mask sensitive identifiers
-  zero_trust_architecture: true         # Zero trust security model
+    - "fastq_parsing"
+    - "quality_encoding"
+    - "header_format"

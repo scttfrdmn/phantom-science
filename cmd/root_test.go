@@ -19,7 +19,7 @@ func TestRootCommand(t *testing.T) {
 		t.Errorf("Expected Use to be 'phantom-science', got %s", rootCmd.Use)
 	}
 
-	if rootCmd.Short != "Scientific Simulation Platform" {
+	if rootCmd.Short != "Synthetic sequencing data generator" {
 		t.Errorf("Expected Short description, got %s", rootCmd.Short)
 	}
 
@@ -155,8 +155,8 @@ func TestRootCommandStructure(t *testing.T) {
 		t.Error("Root command should have a long description")
 	}
 	
-	if !strings.Contains(rootCmd.Long, "Enterprise") {
-		t.Error("Root command description should mention Enterprise features")
+	if !strings.Contains(rootCmd.Long, "fingerprint") {
+		t.Error("Root command description should mention fingerprinting")
 	}
 	
 	if !strings.Contains(rootCmd.Long, "FASTQ") {
@@ -310,8 +310,10 @@ func TestCommandUsage(t *testing.T) {
 	}
 	
 	// Test that help mentions key features
-	if !strings.Contains(helpText, "Enterprise") {
-		t.Error("Help should mention Enterprise features")
+	for _, banned := range []string{"enterprise-grade", "production-ready", "Enterprise"} {
+		if strings.Contains(helpText, banned) {
+			t.Errorf("Help should not claim %q", banned)
+		}
 	}
 	
 	if !strings.Contains(helpText, "FASTQ") {

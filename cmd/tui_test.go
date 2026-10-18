@@ -189,7 +189,7 @@ func TestTUICommandDescription(t *testing.T) {
 		t.Error("TUI description should mention sample sheets")
 	}
 	
-	if !strings.Contains(tuiCmd.Long, "Time compression") {
+	if !strings.Contains(tuiCmd.Long, "time compression") {
 		t.Error("TUI description should mention time compression")
 	}
 	

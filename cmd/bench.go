@@ -27,12 +27,12 @@ var benchCmd = &cobra.Command{
 once per worker count and report reads/s, bases/s and MB/s for each.
 
 The scenario is a sequencer config (--config) or a built-in one for --platform
-(illumina: 150 bp reads; ont: lognormal lengths, N50 15 kb), adjusted by the
+(illumina: 150 bp reads; ont: lognormal lengths, N50 15 kb, median 8 kb), adjusted by the
 same flags as generate. Every run uses the same seed, so all runs produce
 identical data (the report checks that the manifests match). With --out the
 data of each run is kept under <out>/workers-<n>/ with its phantom-manifest.json,
-and the report is written to <out>/bench.json, so a cost-per-result harness
-can consume identical, reproducible, licence-free inputs on every platform.
+and the report is written to <out>/bench.json, so another benchmark can reuse
+the same reproducible inputs. Throughput depends on the machine and its load.
 
   phantom-science bench --platform ont --basecaller-tier hac --total-bases 500M --workers 1,4,8`,
 	RunE: func(cmd *cobra.Command, args []string) error {

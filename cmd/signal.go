@@ -75,11 +75,12 @@ Outputs in --out: the BLOW5 files, truth.fa and phantom-manifest.json
 Output is a pure function of the inputs, flags and --seed: byte-identical
 for any --workers.
 
-Example:
+Example (from the repository root; the last step needs Dorado, blue-crab,
+minimap2 and samtools, see scripts/acceptance/README.md):
   phantom-science generate --platform ont --config configs/sequencers/ont_promethion24.yaml \
       --total-bases 5M --seed 1 --output reads
   model=$(scripts/fetch-pore-model.sh dna_r10.4.1_e8.2_400bps)
-  phantom-science signal --input reads/*.fastq --out sig --pore-model "$model" --seed 1
+  phantom-science signal --input reads/*.fastq.gz --out sig --pore-model "$model" --seed 1
   scripts/acceptance/dorado_identity.sh --blow5 sig/*_0.blow5 --truth sig/truth.fa`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runSignal(cmd, cmd.OutOrStdout(), cmd.ErrOrStderr())

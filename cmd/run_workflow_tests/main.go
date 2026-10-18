@@ -118,7 +118,7 @@ func parseCommandLineArgs() *CommandLineArgs {
 	flag.BoolVar(&args.skipUnavailable, "skip-unavailable", true, 
 		"Skip tests for unavailable workflow engines")
 	flag.BoolVar(&args.generateReport, "report", true, 
-		"Generate comprehensive HTML and JSON reports")
+		"Write HTML, JSON and CSV reports")
 	flag.BoolVar(&args.help, "help", false, 
 		"Show this help message")
 	
@@ -133,9 +133,9 @@ func printUsage() {
 
 Usage: run_workflow_tests [OPTIONS]
 
-This tool tests the integration of synthetic genomic data with popular workflow
-engines including Cromwell (WDL), Nextflow, and Snakemake across multiple
-sequencing platforms.
+This tool runs synthetic reads through Cromwell (WDL), Nextflow and Snakemake
+for each selected platform profile and checks the engines' output (see WHAT IS
+EXECUTED below).
 
 OPTIONS:`)
 	flag.PrintDefaults()
@@ -143,37 +143,38 @@ OPTIONS:`)
 	fmt.Print(`
 
 WORKFLOW ENGINE OPTIONS:
-  all       - All supported engines (Cromwell, Nextflow, Snakemake)
-  cromwell  - Cromwell workflow engine with WDL workflows
-  nextflow  - Nextflow workflow engine including nf-core pipelines
-  snakemake - Snakemake workflow management system
+  all       - Cromwell, Nextflow and Snakemake
+  cromwell  - Cromwell (WDL)
+  nextflow  - Nextflow
+  snakemake - Snakemake
 
 PLATFORM OPTIONS:
-  all       - All 7 supported platforms
-  major     - Major platforms (NovaSeq, PacBio, ONT)
+  all       - All 7 platform profiles of the E2E framework
+  major     - NovaSeq, PacBio and ONT
   illumina  - All Illumina platforms (NovaSeq, NextSeq, MiSeq)
   longread  - Long-read platforms (PacBio, ONT)
   novaseq   - Illumina NovaSeq 6000 only
   pacbio    - PacBio Revio only
   ont       - Oxford Nanopore PromethION only
 
-WORKFLOW TYPE OPTIONS:
-  all       - All supported workflow types
-  basic     - Basic compatibility workflows
-  gatk      - GATK variant calling workflows
-  assembly  - Genome assembly workflows
-  variants  - Variant calling and annotation workflows
-  qc        - Quality control workflows
-  population- Population genomics workflows
+WORKFLOW TYPE OPTIONS (names only: every type runs the same read-count
+pipeline, see WHAT IS EXECUTED):
+  all       - basic, gatk, assembly, variants, qc and population
+  basic     - basic
+  gatk      - gatk_germline, gatk_somatic
+  assembly  - pacbio_assembly, ont_assembly
+  variants  - variant_calling, variant_annotation
+  qc        - quality_control, multiqc
+  population- population_genomics, admixture
 
 EXAMPLES:
   # Test all engines with major platforms
   ./run_workflow_tests -engines=all -platforms=major
 
-  # Test Nextflow with nf-core pipelines on Illumina platforms
-  ./run_workflow_tests -engines=nextflow -platforms=illumina -workflows=gatk
+  # Test Nextflow on the Illumina platform profiles
+  ./run_workflow_tests -engines=nextflow -platforms=illumina
 
-  # Comprehensive workflow testing with reporting
+  # Every engine, platform and workflow name, with reports
   ./run_workflow_tests -engines=all -platforms=all -workflows=all -report
 
   # Dry run to check configuration
@@ -189,6 +190,10 @@ WHAT IS EXECUTED:
   exits successfully and the reported read count matches the reads written.
   Every workflow type currently uses this same read-count pipeline; the type
   only selects names and grouping.
+
+  The "accuracy", memory and CPU figures in the reports, and the scores
+  computed from them, are fixed per-platform estimates, not measurements;
+  only pass/fail and data integrity come from the engine runs.
 
   Engines that are not installed are reported as SKIPPED, never as passed
   (with -skip-unavailable=false they are reported as FAILED). The command

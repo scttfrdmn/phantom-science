@@ -1,6 +1,12 @@
 # Element Biosciences AVITI Sequencer Configuration
 # High-accuracy short-read sequencing platform using Sequencing-by-Binding (SBB)
 # Technical specifications based on 2024 Element Biosciences documentation
+#
+# Platform description only: phantom-science cannot generate from this
+# template. Loading it (generate --config) fails with "only Oxford Nanopore
+# templates are supported"; use a v1 or JSON config for short reads. None of
+# the values below are read by the generator, and the vendor figures have not
+# been checked against current specifications.
 
 version: "2.0"
 platform: "element_aviti"
@@ -133,42 +139,6 @@ error_patterns:
   homopolymer_error_reduction: 0.97  # 97% better than SBS
   systematic_error_reduction: 0.9    # 90% lower error rate overall
   rna_seq_error_reduction: 0.325     # 32.5% lower error rate for RNA
-
-# Steganographic fingerprinting compatibility
-steganography:
-  compatible: true
-  strategy: "balanced"       # Use balanced approach for high-quality data
-  embedding_positions: "quality_scores"
-  capacity_estimate: "high"  # High quality scores provide good capacity
-
-# Validation parameters
-validation:
-  statistical_tests:
-    - "read_length_distribution"
-    - "quality_score_distribution"
-    - "base_composition"
-    - "error_rate_analysis"
-    - "homopolymer_performance"
-  
-  expected_metrics:
-    q40_percentage: 90.0
-    q30_percentage: 96.2
-    peak_quality: 44
-    gc_content_range: [35, 65]  # Depends on sample
-    error_rate_max: 0.007      # <0.7% error rate
-
-# Workflow integration
-workflows:
-  cromwell: true
-  nextflow: true
-  snakemake: true
-  
-  # Standard genomics workflows
-  whole_genome_sequencing: true
-  exome_sequencing: true
-  rna_sequencing: true
-  targeted_sequencing: true
-  metagenomics: true
 
 # Unique AVITI characteristics for simulation
 aviti_specific:

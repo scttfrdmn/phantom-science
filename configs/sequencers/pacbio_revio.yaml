@@ -1,6 +1,12 @@
 # PacBio Revio Sequencer Configuration
 # Ultra-high throughput HiFi long-read sequencing platform
 # Technical specifications based on 2024 PacBio documentation
+#
+# Platform description only: phantom-science cannot generate from this
+# template. Loading it (generate --config) fails with "only Oxford Nanopore
+# templates are supported"; use a v1 or JSON config for short reads. None of
+# the values below are read by the generator, and the vendor figures have not
+# been checked against current specifications.
 
 version: "2.0"
 platform: "pacbio_revio"
@@ -107,39 +113,6 @@ error_patterns:
   homopolymer_errors: true
   homopolymer_error_rate: 0.005  # Slightly higher in homopolymer regions
   systematic_errors: false       # HiFi reduces systematic errors
-
-# Steganographic fingerprinting compatibility
-steganography:
-  compatible: true
-  strategy: "conservative"     # Use conservative approach for high-quality data
-  embedding_positions: "quality_scores"
-  capacity_estimate: "high"    # Long reads provide good capacity
-
-# Validation parameters
-validation:
-  statistical_tests:
-    - "read_length_distribution"
-    - "quality_score_distribution" 
-    - "base_composition"
-    - "hifi_accuracy_metrics"
-  
-  expected_metrics:
-    mean_read_length: 17500
-    median_quality: 30
-    q30_percentage: 90.0
-    gc_content_range: [35, 65]  # Depends on sample
-
-# Workflow integration
-workflows:
-  cromwell: true
-  nextflow: true
-  snakemake: true
-  
-  # PacBio-specific workflows
-  hifi_assembly: true
-  structural_variant_calling: true
-  methylation_analysis: true
-  isoform_sequencing: true
 
 # Notes for implementation
 notes: |

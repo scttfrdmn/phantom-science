@@ -17,16 +17,28 @@ const (
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
 	Use:   "phantom-science",
-	Short: "Scientific Simulation Platform",
-	Long: `Phantom Science is an enterprise-grade scientific simulation platform that generates
-realistic synthetic FASTQ files for testing, validation, and development purposes.
+	Short: "Synthetic sequencing data generator",
+	Long: `Phantom Science generates synthetic sequencing data (FASTQ files, ONT cDNA
+reads and raw nanopore signal) for testing sequencer pipelines and tools.
 
 Features:
-- Realistic sequencer simulation (NovaSeq 6000, NextSeq 2000, MiSeq)
-- Enterprise fingerprinting and steganographic marking
-- Statistical validation frameworks
-- Time compression for accelerated testing
-- Interactive Terminal User Interface (TUI)
+- Illumina-style FASTQ (single or paired end) and Oxford Nanopore FASTQ with
+  MinKNOW headers, a sequencing summary, basecaller error tiers and read-length
+  distributions (generate)
+- Bases from an HMM model trained on VCF data (train), or uniform random bases
+  when no model is given
+- Byte-reproducible output from --seed, and a phantom-manifest.json for each
+  run written to files
+- Steganographic fingerprints in quality scores, encrypted with a key, and
+  their extraction (verify); needs a build with the stegano library
+- Format, quality and composition checks on FASTQ files (validate)
+- ONT cDNA reads with expression and isoform ground truth (transcriptome) and
+  raw signal as BLOW5 (signal)
+- Clinical scenarios with planted variants (scenario), throughput benchmarks
+  (bench), and an interactive terminal interface for timed sequencer runs (tui)
+
+Running phantom-science with --config and no subcommand runs the legacy
+--command (generate, validate or verify).
 
 Copyright 2025-2026 Scott Friedman`,
 	Run: func(cmd *cobra.Command, args []string) {
@@ -115,7 +127,7 @@ func init() {
 		version, _ := cmd.Flags().GetBool("version")
 		if version {
 			fmt.Printf("Phantom Science v%s (built: %s)\n", Version, BuildDate)
-			fmt.Println("Scientific Simulation Platform")
+			fmt.Println("Synthetic sequencing data generator")
 			fmt.Println("Copyright 2025-2026 Scott Friedman")
 			os.Exit(0)
 		}

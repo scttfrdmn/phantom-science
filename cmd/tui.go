@@ -15,19 +15,28 @@ import (
 var tuiCmd = &cobra.Command{
 	Use:   "tui",
 	Short: "Launch Terminal User Interface for sequencer simulation",
-	Long: `Launch an interactive Terminal User Interface (TUI) for configuring and running
-realistic sequencer simulations. The TUI provides an intuitive interface for:
+	Long: `Launch an interactive Terminal User Interface (TUI) that runs a timed
+sequencer simulation and writes FASTQ files as the run progresses.
 
-- Selecting sequencer models (NovaSeq 6000, NextSeq 2000, MiSeq)
-- Managing sample sheets with real-time editing
-- Configuring run parameters and output settings
-- Monitoring simulation progress with realistic timing
-- Time compression for faster testing (1x, 10x, 100x, 1000x)
+What it does:
+- Selecting sequencer models (NovaSeq 6000, NextSeq 2000, MiSeq) with the arrow
+  keys; the choice replaces sequencer_model and flow_cell_type from --config
+- Starting and stopping a run from the Actions panel (Tab moves between panels).
+  Files are written on the instrument's simulated schedule at 100x time
+  compression, one batch per sample-sheet row, into output_dir
+- Fingerprinting settings from --config and --phantom-config (the TUI does
+  not run validation)
+
+Not implemented yet: editing the sample sheets (they hold two demo samples),
+changing the time compression (the 1x, 10x, 100x and 1000x options are shown
+but cannot be selected), the parameter toggles, and live progress (the
+progress panel shows the run as complete only when it ends). --enterprise has
+no effect, and the global -p flag is not read; use --phantom-config.
 
 Example usage:
-  phantom-science tui                                    # Start with default configuration
-  phantom-science tui --config sequencer.yaml          # Load specific sequencer config
-  phantom-science tui --phantom-config phantom.yaml    # Load enterprise features`,
+  phantom-science tui                                                # MiSeq defaults, ./sequencer_output
+  phantom-science tui --config configs/sequencer/v1.0/miseq-v3.yaml  # load a sequencer config
+  phantom-science tui --phantom-config configs/phantom/v1.0/enterprise-settings.yaml`,
 	Run: runTUI,
 }
 
@@ -36,7 +45,7 @@ func init() {
 	
 	tuiCmd.Flags().String("config", "", "Path to sequencer configuration file (YAML or JSON)")
 	tuiCmd.Flags().String("phantom-config", "", "Path to Phantom Science configuration file (YAML or JSON)")
-	tuiCmd.Flags().Bool("enterprise", false, "Enable enterprise features")
+	tuiCmd.Flags().Bool("enterprise", false, "No effect (kept for compatibility)")
 }
 
 func runTUI(cmd *cobra.Command, args []string) {

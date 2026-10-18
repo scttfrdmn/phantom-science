@@ -35,7 +35,7 @@ func TestMainVersionFlag(t *testing.T) {
 		t.Errorf("Expected version output to contain %q, got: %s", want, outputStr)
 	}
 
-	if !strings.Contains(outputStr, "Scientific Simulation Platform") {
+	if !strings.Contains(outputStr, "Synthetic sequencing data generator") {
 		t.Errorf("Expected version output to contain platform description, got: %s", outputStr)
 	}
 

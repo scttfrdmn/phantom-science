@@ -13,7 +13,9 @@
 # Run settings come from the optional `run:` section at the end (same keys as
 # a JSON sequencer config); unset ones default to sample_name "sample",
 # output_dir "output", reads_per_batch 4000, total_batches 1. Command-line
-# flags override both.
+# flags override both. Every other key is descriptive: the generator does not
+# read it, and the vendor figures have not been checked against current
+# specifications.
 
 version: "2.0"
 platform: "ont_promethion24"
@@ -198,42 +200,6 @@ error_patterns:
   reduced_homopolymer_errors: true
   improved_consensus: true
   better_discrimination: true
-
-# Steganographic fingerprinting compatibility
-steganography:
-  compatible: true
-  strategy: "aggressive"     # Can use more aggressive embedding due to error tolerance
-  embedding_positions: "quality_scores"
-  capacity_estimate: "very_high"  # Very long reads provide excellent capacity
-  nanopore_specific: true    # Nanopore-optimized embedding strategies
-
-# Validation parameters
-validation:
-  statistical_tests:
-    - "read_length_distribution"
-    - "quality_score_distribution"
-    - "error_rate_analysis"
-    - "homopolymer_performance"
-    - "real_time_characteristics"
-  
-  expected_metrics:
-    n50_min: 30000          # Minimum N50 of 30 kb
-    modal_accuracy: 0.99
-    q20_percentage: 85.0
-    deletion_rate_max: 0.02  # Maximum 2% deletion rate (SUP)
-
-# Workflow integration
-workflows:
-  cromwell: true
-  nextflow: true
-  snakemake: true
-  
-  # Nanopore-specific workflows
-  de_novo_assembly: true
-  structural_variant_calling: true
-  methylation_detection: true
-  real_time_analysis: true
-  adaptive_sampling: true
 
 # Nanopore-specific features
 nanopore_specific:

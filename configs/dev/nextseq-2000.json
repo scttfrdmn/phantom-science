@@ -1,38 +1,20 @@
 {
-  "sample_name": "Research_Library_A", 
+  "sequencer_model": "NextSeq 2000",
+  "flow_cell_type": "P2",
+  "sample_name": "Research_Library_A",
   "lane": 1,
   "output_dir": "./nextseq_output",
   "read_length": 100,
   "reads_per_batch": 10000000,
-  "batch_interval": "45m", 
+  "batch_interval": "45m",
   "total_batches": 1,
   "paired_end": true,
   "base_quality": 32,
   "quality_decay": 0.08,
-  
-  "sequencer_settings": {
-    "platform": "NextSeq 2000",
-    "flowcell": "P2",  
-    "chemistry": "v3",
-    "cluster_density": 650000,
-    "lanes_total": 1,
-    "run_cycles": 200,
-    "expected_yield_gb": 90
-  },
-  
-  "library_prep": {
-    "protocol": "TruSeq DNA PCR-Free",
-    "insert_size": 350,
-    "adapter_r1": "AGATCGGAAGAGCACACGTCTGAACTCCAGTCA",
-    "adapter_r2": "AGATCGGAAGAGCGTCGTGTAGGGAAAGAGTGT",
-    "index_length": 8
-  },
-  
   "enterprise": {
     "customer_id": "RESEARCH_INST_001",
-    "fingerprinting": { "enable": false },
-    "validation_level": "none"
-  },
-  
-  "validation": { "enable": false }
+    "fingerprinting": {
+      "enable": false
+    }
+  }
 }

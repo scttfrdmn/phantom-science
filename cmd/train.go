@@ -15,19 +15,23 @@ var trainCmd = &cobra.Command{
 	Use:   "train",
 	Short: "Train an HMM model from VCF data and export to .hmm.json",
 	Long: `Train a Hidden Markov Model (HMM) from VCF variant call data and save it as a
-.hmm.json file for use with --hmm-model-path.
+.hmm.json file for use with --hmm-model-path (or --model-dir and --population).
+
+The training sequence is the REF allele and first ALT allele of every VCF record,
+concatenated in file order; positions, genotypes and allele frequencies are not
+used. --population is printed but not stored in the model: to select a model by
+population, name it <population>.hmm.json in the --model-dir directory.
 
 Model types:
-  adaptive  Stream VCF sequences through an AdaptiveHMMModel in 100 KB chunks.
-            Default — well-suited for large files and population-specific training.
-  kmer      Accumulate all VCF sequences before training an HMMKmerModel.
-            Best for small to medium VCF datasets.
+  adaptive  Stream VCF sequences through an AdaptiveHMMModel in 100 KB chunks
+            (default).
+  kmer      Accumulate all VCF sequences in memory, then train an HMMKmerModel.
 
-Example usage:
+Example usage (the VCF files are your own input, e.g. 1000 Genomes VCFs):
   phantom-science train --vcf variants.vcf.gz --out YRI.hmm.json
   phantom-science train --vcf YRI.vcf.gz --vcf YRI_chr2.vcf.gz --out YRI.hmm.json
   phantom-science train --vcf variants.vcf --out model.hmm.json --model-type kmer --kmer-size 6
-  phantom-science train --vcf variants.vcf.gz --out models/CEU.hmm.json --population CEU`,
+  phantom-science train --vcf variants.vcf.gz --out models/CEU.hmm.json`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		vcfFiles, _ := cmd.Flags().GetStringArray("vcf")
 		outPath, _ := cmd.Flags().GetString("out")

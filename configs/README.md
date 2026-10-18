@@ -1,201 +1,116 @@
-# Configuration System
+# Configuration files
 
-Phantom Science uses a versioned configuration system supporting both JSON and YAML formats.
+Two kinds of configuration are passed to `phantom-science`:
 
-## Configuration Versions
+- a **sequencer config** (`--config`), which says what to generate: sample name,
+  read length, paired or single end, reads per file, number of files, output
+  directory, and so on;
+- an optional **phantom config** (`-p` for `generate`, `validate` and the root
+  command; `--phantom-config` for `tui`), which turns on fingerprinting and
+  validation of the generated files.
 
-### v1.0 (Current)
-- **Location**: `configs/sequencer/v1.0/` and `configs/phantom/v1.0/`
-- **Format**: YAML (recommended) or JSON
-- **Features**: Full sequencer device specifications with vendor-validated parameters
+Every sequencer config listed here was run with
+`phantom-science generate --config FILE --total-reads 20 --seed 1 --output DIR`
+and loads and generates, except the three v2 templates marked "description
+only", which fail with an explicit error.
 
-## File Formats
+## Sequencer configs
 
-### YAML (Recommended)
-- **Extension**: `.yaml` or `.yml`
-- **Benefits**: Comments, better readability, industry standard in bioinformatics
-- **Schema validation**: Built-in version validation
+The loader (`internal/cli/config_loader.go`) recognises four layouts:
 
-### JSON (Legacy Support)
-- **Extension**: `.json`
-- **Benefits**: Compact, programmatic generation
-- **Compatibility**: Backward compatible with existing configs
+| Layout | How it is recognised | Example |
+|---|---|---|
+| JSON | `.json` extension; keys are the JSON field names of `types.SequencerConfig` (`pkg/types/config.go`) | `configs/sequencer/simple-run.json` |
+| Flat YAML | `.yaml`/`.yml` with the same keys as JSON | `examples/pacbio_revio_example.yaml` |
+| v1 YAML | top-level `schema_version` | `configs/sequencer/v1.0/*.yaml` |
+| v2 platform template | top-level `version: "2.x"` and a `specifications` section | `configs/sequencers/*.yaml` |
 
-## Configuration Types
+A file that sets none of the recognised keys is an error rather than an empty
+config.
 
-### Sequencer Configurations
-Located in `configs/sequencer/v1.0/`
+### Files
 
-#### Available Platforms
-- **`novaseq-6000-s2.yaml`**: High-throughput WGS (3TB output, 36h runtime)
-- **`nextseq-2000-p3.yaml`**: Mid-throughput applications (120GB output, 18h runtime)  
-- **`miseq-v3.yaml`**: Long-read amplicon sequencing (15GB output, 65h runtime, 300bp reads)
+| File | Layout | Notes |
+|---|---|---|
+| `sequencer/simple-run.json` | JSON | 2×150, 10 files of 1M read pairs |
+| `sequencer/miseq-v3.json`, `nextseq-2000-p3.json`, `novaseq-6000-s2.json` | JSON | instrument-named runs; see `sequencer/README.md` |
+| `sequencer/v1.0/miseq-v3.yaml`, `nextseq-2000-p3.yaml`, `novaseq-6000-s2.yaml` | v1 YAML | the same runs in the v1 layout |
+| `sequencers/ont_promethion24.yaml` | v2 template | Oxford Nanopore output (`platform: ont`): lognormal read lengths, SUP error model, MinKNOW headers, `sequencing_summary.txt`, gzip |
+| `sequencers/pacbio_revio.yaml`, `element_aviti.yaml`, `mgi_dnbseq_t20x2.yaml` | v2 template | description only: loading fails with "only Oxford Nanopore templates are supported" |
+| `dev/config.json` | JSON | 3 files of 10,000 read pairs with plaintext quality-score fingerprints (needs a stegano build) |
+| `dev/fast-test.json` | JSON | 50 bp single end, 10,000 files of 100 reads |
+| `dev/high-volume-test.json` | JSON | 1,000 files of 1,000 read pairs |
+| `dev/million-files.json` | JSON | 500,000 files of 100 read pairs (one million files) |
+| `dev/illumina-miseq.json`, `illumina-novaseq.json`, `nextseq-2000.json` | JSON | one large file pair each (2.5M, 50M and 10M read pairs) |
 
-#### Schema Structure
-```yaml
-schema_version: "1.0"
-last_updated: "2024-07-03"
-validated_against: "Illumina [Platform] Specifications"
-config_type: "sequencer"
+Use `--total-reads`, `--total-bases` or `--output` to override the size or
+location without editing a file.
 
-sequencer:
-  model: "NovaSeq 6000"
-  flow_cell_type: "S2"
-  # ... hardware specifications
+### Which fields have an effect
 
-sample:
-  name: "Sample_001" 
-  # ... sample configuration
+`generate` reads: `sample_name`, `lane`, `output_dir`, `read_length`,
+`reads_per_batch` (reads or read pairs per file), `total_batches` (number of
+files), `paired_end`, `base_quality`, `quality_decay`, `dataset_id`,
+`run_id`, `flowcell_id`, `max_output_gb`/`max_output_tb` (a cap on the bases
+of each flow cell), `enterprise.customer_id`, `fingerprinting` or
+`enterprise.fingerprinting`, `hmm_model_path`, `population`, `model_dir`,
+`platform`, `seed`, `read_length_distribution`, `error_model`, `ont`,
+`output`, `total_bases`, `total_reads`, `flow_cells` and `workers`.
 
-reads:
-  length: 150
-  # ... read parameters
+`sequencer_model` and `flow_cell_type` are used only by `tui` (run timing).
+`batch_interval`, `q30_percentage`, `chemistry_version`, `instrument_id`,
+`cluster_density_k_per_mm2`, `loading_concentration_pm`,
+`phix_spike_in_percent`, `run_time_hours`, `max_cycles` and the
+`*_channel_chemistry` flags are accepted but not read by the generator; they
+describe the instrument. The vendor figures in these files have not been
+checked against current specifications.
 
-quality:
-  base_quality: 35
-  # ... quality metrics
+The v1 YAML layout maps only the older fields (see the comment at the top of
+each `v1.0` file). For `seed`, `platform`, `read_length_distribution`,
+`output` and the other newer settings, use JSON or flat YAML, or the
+matching `generate` flags.
 
-performance:
-  run_time_hours: 36
-  # ... performance specifications
+## Phantom configs
 
-technology:
-  sbs_version: "v1.5"
-  # ... technology features
-```
+| File | Notes |
+|---|---|
+| `phantom/v1.0/enterprise-settings.yaml` | encrypted quality-score fingerprints, read-ID customer tags, and the built-in validation checks |
 
-### Phantom Science Configurations  
-Located in `configs/phantom/v1.0/`
+A phantom config is read for:
 
-#### Available Configurations
-- **`enterprise-settings.yaml`**: Full enterprise features with compliance
-- **`volume-testing.yaml`**: Optimized for generating millions of files
+- `enterprise.customer_id` and `fingerprinting` (`enable`,
+  `customer_fingerprint`, `dataset_fingerprint`, `steganography_layers`,
+  `key_file`, `plaintext`). `quality_scores` is the only steganography layer
+  that embeds a fingerprint; it needs the stegano library and an encryption
+  key (from `key_file`, mode 600, or `PHANTOM_FINGERPRINT_KEY`) unless
+  `plaintext: true` is set.
+- `validation` (`enable` and the three test lists). Valid test names are
+  `format_compliance`, `quality_distribution`, `sequence_complexity`,
+  `read_length_consistency`, `hardy_weinberg`, `base_composition`,
+  `gc_content`, `fastq_parsing`, `quality_encoding` and `header_format`;
+  unknown names fail. With `enable: true` and no lists, the built-in suite of
+  nine checks runs.
 
-#### Schema Structure
-```yaml
-schema_version: "1.0"
-config_type: "phantom_enterprise"
+Other v1 keys (`audit_logging`, `regulatory_compliance`,
+`academic_validation`, `security`, `cryptographic_signing`,
+`tamper_detection`, `service_tier`, `compliance_level`, ...) are parsed but
+have no effect, and phantom-science makes no compliance claims based on them.
 
-enterprise:
-  customer_id: "CUST_001"
-  # ... customer information
+## Usage
 
-fingerprinting:
-  enable: true
-  # ... steganography settings
-
-audit_logging:
-  enable: true
-  # ... compliance logging
-
-validation:
-  enable: true
-  # ... statistical validation
-
-regulatory_compliance:
-  fda_compliance: true
-  # ... regulatory settings
-```
-
-## Parameter Validation
-
-All configurations are validated against vendor specifications:
-
-### NovaSeq 6000 Specifications
-- **Read Lengths**: 50, 100, 150, 250bp
-- **Q30**: ≥90% guaranteed
-- **Run Times**: 13-44 hours depending on read length
-- **Output**: Up to 6TB per run
-- **Chemistry**: SBS v1.5
-
-### NextSeq 2000 Specifications  
-- **Read Lengths**: 1×50 to 2×300bp (14 configurations)
-- **Q30**: ≥90% for shorter reads
-- **Chemistry**: XLEAP-SBS (2-channel)
-- **Output**: Variable by flow cell (P1-P4)
-
-### MiSeq Specifications
-- **Read Lengths**: Up to 2×300bp (longest Illumina reads)
-- **Q30**: ≥80% typical for 300bp
-- **Chemistry**: v3 (4-channel)
-- **Output**: Up to 15GB per run
-
-## Usage Examples
-
-### Basic Sequencer Simulation
 ```bash
-# YAML format (recommended)
-./phantom-science -config configs/sequencer/v1.0/miseq-v3.yaml
+# Generate from a sequencer config
+phantom-science generate --config configs/sequencer/v1.0/miseq-v3.yaml --total-reads 1000 --seed 1
 
-# JSON format (legacy)
-./phantom-science -config configs/sequencer/simple-run.json
+# Oxford Nanopore reads
+phantom-science generate --config configs/sequencers/ont_promethion24.yaml --total-bases 5M --seed 1
+
+# With fingerprinting and validation (needs a stegano build and a key)
+export PHANTOM_FINGERPRINT_KEY="$(openssl rand -base64 32)"
+phantom-science generate --config configs/sequencer/simple-run.json \
+  -p configs/phantom/v1.0/enterprise-settings.yaml --total-reads 1000 --seed 1
 ```
 
-### Enterprise Features
-```bash
-# Full enterprise configuration
-./phantom-science \
-  -config configs/sequencer/v1.0/novaseq-6000-s2.yaml \
-  -phantom configs/phantom/v1.0/enterprise-settings.yaml
-
-# Volume testing (optimized for speed)
-./phantom-science \
-  -config configs/sequencer/v1.0/nextseq-2000-p3.yaml \
-  -phantom configs/phantom/v1.0/volume-testing.yaml
-```
-
-## Migration Guide
-
-### From JSON to YAML
-The system automatically detects and loads both formats. To migrate:
-
-1. **Copy existing JSON config**
-2. **Convert to YAML format** with schema version
-3. **Add comments** documenting parameter sources
-4. **Validate** against vendor specifications
-
-### Version Compatibility
-- **v1.0 configs**: Full feature support
-- **Legacy configs**: Automatically converted to v1.0 internally
-- **Mixed usage**: JSON and YAML can be used together
-
-## Adding New Sequencer Models
-
-To add a new sequencer model:
-
-1. **Research vendor specifications**
-2. **Create new YAML config** in `configs/sequencer/v1.0/`
-3. **Document parameter sources** in comments
-4. **Validate against official specs**
-5. **Test with actual generation**
-
-Example template:
-```yaml
-# [Platform] Configuration
-# Based on [Vendor] [Platform] Specifications ([Year])
-# Spec Reference: [URL]
-
-schema_version: "1.0"
-last_updated: "[DATE]"
-validated_against: "[VENDOR SPEC]"
-config_type: "sequencer"
-
-# Add platform-specific configurations following the schema
-```
-
-## Best Practices
-
-### Configuration Comments
-- **Document parameter sources**: Reference vendor specification sheets
-- **Explain non-obvious values**: Loading concentrations, PhiX percentages
-- **Note technology differences**: 2-channel vs 4-channel chemistry
-
-### Version Management
-- **Always specify schema_version**: Enables proper validation
-- **Update last_updated field**: Track configuration changes
-- **Validate against vendor specs**: Ensure parameter accuracy
-
-### File Organization
-- **Use descriptive names**: `novaseq-6000-s2.yaml` vs `config1.yaml`
-- **Separate by version**: Keep different schema versions in separate directories
-- **Group by type**: Sequencer vs Phantom configurations
+`internal/cli/config_loader_v2_test.go` checks that every
+`configs/sequencers/*.yaml` and `configs/sequencer/v1.0/*.yaml` file either
+loads or fails with an explicit error.

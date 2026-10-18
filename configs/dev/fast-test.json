@@ -9,16 +9,10 @@
   "paired_end": false,
   "base_quality": 30,
   "quality_decay": 0.1,
-  
   "enterprise": {
     "customer_id": "FAST_TEST_001",
-    "license_key": "dev-license-key",
-    "compliance_level": "none",
-    "audit_logging": { "enable": false },
-    "fingerprinting": { "enable": false },
-    "validation_level": "none",
-    "service_tier": "test"
-  },
-  
-  "validation": { "enable": false }
+    "fingerprinting": {
+      "enable": false
+    }
+  }
 }

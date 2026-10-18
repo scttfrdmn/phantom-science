@@ -20,21 +20,26 @@ import (
 var generateCmd = &cobra.Command{
 	Use:   "generate",
 	Short: "Generate synthetic FASTQ reads, optionally streaming to stdout",
-	Long: `Generate synthetic FASTQ reads using an HMM model trained with the train subcommand.
+	Long: `Generate synthetic FASTQ reads from a sequencer config (--config; see configs/).
 
-Without --stdout, reads are written to the OutputDir specified in --config (default behaviour).
-With --stdout, reads are streamed to stdout for direct piping into an aligner:
+Bases come from an HMM model when one is configured (--hmm-model-path, hmm_model_path,
+or --model-dir with --population; train one with the train subcommand) and are
+otherwise uniform random. Without --stdout, reads are written to output_dir from the
+config (or --output). With --stdout, reads are streamed to stdout (paired-end mates
+interleaved) for piping into another tool:
 
-  phantom-science generate --config seq.yaml --stdout \
-    --variants controlled.vcf --sample-id tumor | \
-    bwa mem -C ref.fa - | \
-    bamq write --stdin s3://bucket/bams/tumor.bam
+  phantom-science generate --config configs/sequencer/simple-run.json --stdout \
+    --total-reads 1000 --variants controlled.vcf --sample-id tumor > tumor.fastq
+
+(controlled.vcf is your own VCF.)
 
 --variants injects known variants at their allele frequencies (AF= from INFO; default 0.5).
 Variants with a CHROM/POS are written at their exact coordinates: reads are placed in
 --region chr:start-end (1-based, inclusive), or, without --region, in the span of the
 variants plus one read length on each side (all variants must then be on one chromosome).
---sample-id appends RG:Z:<id> to every read header; BWA -C copies this into the SAM RG tag.
+Read bases are generated per read, not copied from a reference genome, so an aligner
+will not place the reads at these coordinates in a real reference.
+--sample-id appends RG:Z:<id> to every read header; bwa mem -C copies this into the SAM RG tag.
 
 --seed makes a run reproducible: the same seed and config give byte-identical output.
 Without --seed a random seed is drawn and logged to stderr. Diagnostics always go to

@@ -1,4 +1,6 @@
 {
+  "sequencer_model": "NovaSeq 6000",
+  "flow_cell_type": "S4",
   "sample_name": "Sample_001",
   "lane": 1,
   "output_dir": "./novaseq_output",
@@ -9,22 +11,10 @@
   "paired_end": true,
   "base_quality": 30,
   "quality_decay": 0.1,
-  
-  "sequencer_settings": {
-    "platform": "NovaSeq 6000",
-    "flowcell": "S4",
-    "chemistry": "v1.5",
-    "cluster_density": 200000,
-    "lanes_total": 2,
-    "run_cycles": 300,
-    "expected_yield_gb": 800
-  },
-  
   "enterprise": {
     "customer_id": "REAL_LAB_001",
-    "fingerprinting": { "enable": false },
-    "validation_level": "none"
-  },
-  
-  "validation": { "enable": false }
+    "fingerprinting": {
+      "enable": false
+    }
+  }
 }

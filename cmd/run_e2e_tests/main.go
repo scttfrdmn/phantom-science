@@ -101,7 +101,7 @@ func parseCommandLineArgs() *CommandLineArgs {
 	flag.BoolVar(&args.benchmark, "benchmark", true, 
 		"Include performance benchmarking")
 	flag.BoolVar(&args.report, "report", true, 
-		"Generate comprehensive HTML and JSON reports")
+		"Write HTML and JSON reports")
 	flag.BoolVar(&args.authenticity, "authenticity", true, 
 		"Include the ML classifier calibration (null comparison plus GC-skewed positive control)")
 	flag.BoolVar(&args.help, "help", false, 
@@ -118,15 +118,16 @@ func printUsage() {
 
 Usage: run_e2e_tests [OPTIONS]
 
-This tool runs comprehensive end-to-end testing of the Phantom Science genomics
-authenticity engine across multiple sequencing platforms and global populations.
+This tool runs end-to-end tests of the internal/testing E2E framework: it
+generates synthetic reads for each platform and population label, scores them,
+optionally benchmarks generation, and runs an ML calibration (see below).
 
 OPTIONS:`)
 	flag.PrintDefaults()
 	
 	fmt.Print(`
 PLATFORM OPTIONS:
-  all       - All 7 supported platforms
+  all       - All 7 platform profiles of the E2E framework
   illumina  - All Illumina platforms (NovaSeq, NextSeq, MiSeq)
   longread  - Long-read platforms (PacBio, ONT)
   pacbio    - PacBio Revio only
@@ -139,8 +140,9 @@ PLATFORM OPTIONS:
   dnbseq    - MGI DNBSEQ-T20×2 only
   aviti     - Element AVITI only
 
-POPULATION OPTIONS:
-  all       - All 11 supported populations
+POPULATION OPTIONS (labels only: they set descriptive metadata in the E2E
+framework, and the generated reads do not depend on them):
+  all       - All 11 population codes
   major     - Major populations (YRI, CEU, CHB, MXL, JPT)
   african   - African populations (YRI, LWK, GWD)
   european  - European populations (CEU, GBR, TSI)
@@ -157,7 +159,7 @@ EXAMPLES:
   # Quick benchmark test of long-read platforms
   ./run_e2e_tests -platforms=longread -populations=major -quick -benchmark
 
-  # Comprehensive authenticity validation
+  # ML calibration on every platform, with reports
   ./run_e2e_tests -platforms=all -populations=all -authenticity -report
 
 ML CALIBRATION (-authenticity):
@@ -172,6 +174,12 @@ ML CALIBRATION (-authenticity):
                       when holdout accuracy exceeds 0.9, which shows the
                       classifier can detect a real difference.
   The command exits non-zero if any platform fails either check.
+
+AUTHENTICITY SCORES:
+  The per-platform "authenticity" columns are a heuristic from the E2E
+  framework (distance of mean quality and base composition from fixed
+  targets, plus platform and population metadata). They are not a comparison
+  with real sequencing reads.
 `)
 }
 
@@ -181,7 +189,7 @@ func printBanner() {
 ╔══════════════════════════════════════════════════════════════════════════════╗
 ║                   🧬 PHANTOM SCIENCE E2E TESTING SUITE 🧬                    ║
 ║                                                                              ║
-║              Comprehensive End-to-End Platform Validation                   ║
+║                       End-to-End Platform Tests                              ║
 ║          ML calibration: null comparison and GC-skew positive control        ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 `)
@@ -478,7 +486,7 @@ func runComprehensiveTests(framework *testing.E2EFramework, platforms []testing.
 	
 	// Run authenticity validation
 	if args.authenticity {
-		log.Printf("🎯 Running statistical authenticity validation...")
+		log.Printf("🎯 Running ML calibration (null comparison and GC-skew positive control)...")
 		results.AuthenticityResults = runAuthenticityValidation(framework, platforms, populations, args)
 	}
 	
