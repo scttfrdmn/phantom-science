@@ -1,0 +1,15 @@
+##description: hand-checked fixture for transcriptome tests
+chr1	test	gene	1	50	.	+	.	gene_id "G1";
+chr1	test	transcript	1	50	.	+	.	gene_id "G1"; transcript_id "TXA";
+chr1	test	exon	21	30	.	+	.	gene_id "G1"; transcript_id "TXA"; exon_number 2;
+chr1	test	exon	1	10	.	+	.	gene_id "G1"; transcript_id "TXA"; exon_number 1;
+chr1	test	exon	41	50	.	+	.	gene_id "G1"; transcript_id "TXA"; exon_number 3;
+chr1	test	exon	1	10	.	+	.	gene_id "G1"; transcript_id "TXC";
+chr1	test	exon	41	50	.	+	.	gene_id "G1"; transcript_id "TXC";
+chr1	test	exon	43	49	.	-	.	gene_id "G2"; transcript_id "TXB"; exon_number 1;
+chr1	test	CDS	43	49	.	-	0	gene_id "G2"; transcript_id "TXB";
+chr1	test	exon	22	28	.	-	.	gene_id "G2"; transcript_id "TXB"; exon_number 2;
+chr1	test	exon	3	8	.	-	.	gene_id "G2"; transcript_id "TXB"; exon_number 3;
+chr2	test	exon	5	64	.	-	.	gene_id "G3"; transcript_id "TXD";
+chr3	test	exon	1	100	.	+	.	gene_id "G4"; transcript_id "TXE";
+chr1	test	exon	1	5	.	.	.	gene_id "G5"; transcript_id "TXU";
