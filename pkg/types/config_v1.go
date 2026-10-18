@@ -159,6 +159,8 @@ type FingerprintConfigV1 struct {
 	CustomerFingerprint   bool     `yaml:"customer_fingerprint" json:"customer_fingerprint"`
 	DatasetFingerprint    bool     `yaml:"dataset_fingerprint" json:"dataset_fingerprint"`
 	SteganographyLayers   []string `yaml:"steganography_layers" json:"steganography_layers"`
+	KeyFile               string   `yaml:"key_file,omitempty" json:"key_file,omitempty"`
+	Plaintext             bool     `yaml:"plaintext,omitempty" json:"plaintext,omitempty"`
 	CryptographicSigning  bool     `yaml:"cryptographic_signing" json:"cryptographic_signing"`
 	TamperDetection       bool     `yaml:"tamper_detection" json:"tamper_detection"`
 }

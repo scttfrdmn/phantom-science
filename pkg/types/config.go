@@ -128,6 +128,11 @@ type FingerprintConfig struct {
     CustomerFingerprint bool     `json:"customer_fingerprint"`
     DatasetFingerprint  bool     `json:"dataset_fingerprint"`
     SteganographyLayers []string `json:"steganography_layers"`
+    // KeyFile holds the key that encrypts quality-score fingerprints; when
+    // empty the PHANTOM_FINGERPRINT_KEY environment variable is used.
+    KeyFile             string   `json:"key_file,omitempty"`
+    // Plaintext allows unencrypted quality-score fingerprints when no key is set.
+    Plaintext           bool     `json:"plaintext,omitempty"`
     CryptographicSigning bool    `json:"cryptographic_signing"`
     TamperDetection     bool     `json:"tamper_detection"`
 }

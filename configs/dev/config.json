@@ -26,6 +26,7 @@
       "customer_fingerprint": true,
       "dataset_fingerprint": true,
       "steganography_layers": ["quality_scores"],
+      "plaintext": true,
       "cryptographic_signing": false,
       "tamper_detection": true
     },

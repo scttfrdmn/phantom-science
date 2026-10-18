@@ -133,6 +133,8 @@ fingerprinting:
   steganography_layers:
     - "quality_scores"
     - "read_ids"
+  key_file: "/etc/phantom/fingerprint.key"
+  plaintext: true
   cryptographic_signing: true
   tamper_detection: true
 
@@ -172,6 +174,12 @@ validation:
 	}
 	if len(config.Enterprise.Fingerprinting.SteganographyLayers) != 2 {
 		t.Errorf("Expected 2 steganography layers, got %d", len(config.Enterprise.Fingerprinting.SteganographyLayers))
+	}
+	if got := config.Enterprise.Fingerprinting.KeyFile; got != "/etc/phantom/fingerprint.key" {
+		t.Errorf("key_file not mapped from v1 YAML: got %q", got)
+	}
+	if !config.Enterprise.Fingerprinting.Plaintext {
+		t.Error("plaintext not mapped from v1 YAML")
 	}
 }
 

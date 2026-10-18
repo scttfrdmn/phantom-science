@@ -227,6 +227,8 @@ func (cl *ConfigLoader) convertPhantomV1ToLegacy(v1 *types.PhantomConfigV1) *typ
 				CustomerFingerprint: v1.Fingerprinting.CustomerFingerprint,
 				DatasetFingerprint:  v1.Fingerprinting.DatasetFingerprint,
 				SteganographyLayers: v1.Fingerprinting.SteganographyLayers,
+				KeyFile:             v1.Fingerprinting.KeyFile,
+				Plaintext:           v1.Fingerprinting.Plaintext,
 				CryptographicSigning: v1.Fingerprinting.CryptographicSigning,
 				TamperDetection:     v1.Fingerprinting.TamperDetection,
 			},

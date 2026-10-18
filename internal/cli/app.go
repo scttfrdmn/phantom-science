@@ -85,9 +85,9 @@ func (a *App) Validate(paths []string) error {
 }
 
 // Verify checks each FASTQ file in paths for a steganographic fingerprint.
-func (a *App) Verify(paths []string, expect VerifyExpectation) error {
+func (a *App) Verify(paths []string, opts VerifyOptions) error {
     fmt.Println("🔐 Running fingerprint verification...")
-    return VerifyFiles(os.Stdout, paths, expect)
+    return VerifyFiles(os.Stdout, paths, opts)
 }
 
 // GetConfig returns the sequencer configuration

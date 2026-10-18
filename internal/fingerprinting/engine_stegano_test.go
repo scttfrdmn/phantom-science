@@ -4,6 +4,7 @@
 package fingerprinting
 
 import (
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -260,31 +261,81 @@ func TestSteganoEngine_CleanSAMHasNoFingerprint(t *testing.T) {
 	requireCode(t, err, ErrorCodeValidation)
 }
 
-func TestVerifier(t *testing.T) {
-	v, err := NewVerifier()
-	require.NoError(t, err)
-	e := newTestEngine(t)
-	dir := t.TempDir()
+const testKey = "test-fingerprint-key-0123456789"
 
+func TestVerifier(t *testing.T) {
+	dir := t.TempDir()
 	clean := filepath.Join(dir, "clean.fastq")
 	require.NoError(t, os.WriteFile(clean, fastqRecords(50, 150, func(_, _ int) byte { return 'F' }), 0o600))
-	marked := filepath.Join(dir, "marked.fastq")
-	fp, err := e.GenerateFingerprint("dataset-001")
-	require.NoError(t, err)
-	require.NoError(t, e.EmbedInFASTQFile(clean, marked, fp))
 
-	found, got, err := v.Verify(marked)
+	plainEngine := newTestEngine(t)
+	keyedEngine, err := NewSteganoEngine("customer-123", WithKey([]byte(testKey)))
 	require.NoError(t, err)
-	assert.True(t, found)
+
+	fp, err := plainEngine.GenerateFingerprint("dataset-001")
+	require.NoError(t, err)
+	plain := filepath.Join(dir, "plain.fastq")
+	require.NoError(t, plainEngine.EmbedInFASTQFile(clean, plain, fp))
+	encrypted := filepath.Join(dir, "encrypted.fastq")
+	require.NoError(t, keyedEngine.EmbedInFASTQFile(clean, encrypted, fp))
+
+	keyless, err := NewVerifier()
+	require.NoError(t, err)
+	keyed, err := NewVerifier(WithKey([]byte(testKey)))
+	require.NoError(t, err)
+	wrongKey, err := NewVerifier(WithKey([]byte("another-key-of-sufficient-length")))
+	require.NoError(t, err)
+
+	for _, tc := range []struct {
+		name     string
+		verifier Verifier
+		path     string
+		want     VerifyResult
+		wantErr  error
+	}{
+		{"plaintext, no key", keyless, plain, VerifyResult{Found: true, Fingerprint: fp}, nil},
+		{"plaintext, key given", keyed, plain, VerifyResult{Found: true, Fingerprint: fp}, nil},
+		{"encrypted, right key", keyed, encrypted, VerifyResult{Found: true, Fingerprint: fp, Encrypted: true}, nil},
+		{"encrypted, no key", keyless, encrypted, VerifyResult{}, ErrKeyRequired},
+		{"encrypted, wrong key", wrongKey, encrypted, VerifyResult{}, ErrWrongKey},
+		{"unmarked, no key", keyless, clean, VerifyResult{}, nil},
+		{"unmarked, key given", keyed, clean, VerifyResult{}, nil},
+		{"missing file", keyed, filepath.Join(dir, "missing.fastq"), VerifyResult{}, os.ErrNotExist},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := tc.verifier.Verify(tc.path)
+			if tc.wantErr != nil {
+				assert.ErrorIs(t, err, tc.wantErr)
+			} else {
+				assert.NoError(t, err)
+			}
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
+// The issue that motivated encryption: a plaintext SAM tag shows the
+// customer and dataset IDs as hex. Encrypted, the tag must not reveal them,
+// and the payload must still round-trip with the key.
+func TestSteganoEngine_EncryptedSAMHidesPayload(t *testing.T) {
+	const fp = "ACME:ds-001:stegano-0.8.0:ts-1792288985"
+	visible := hex.EncodeToString([]byte("ACME:ds-001"))
+
+	plainOut, err := newTestEngine(t).EmbedInSAMRecords(samRecords(50), fp)
+	require.NoError(t, err)
+	require.Contains(t, string(plainOut), visible, "plaintext baseline should expose the IDs")
+
+	e, err := NewSteganoEngine("ACME", WithKey([]byte(testKey)))
+	require.NoError(t, err)
+	out, err := e.EmbedInSAMRecords(samRecords(50), fp)
+	require.NoError(t, err)
+	assert.NotContains(t, string(out), visible)
+	assert.NotContains(t, string(out), "ACME:ds-001")
+
+	got, err := e.ExtractFromSAMRecords(out)
+	require.NoError(t, err)
 	assert.Equal(t, fp, got)
 
-	// A readable file without a fingerprint is a negative result, not an error.
-	found, got, err = v.Verify(clean)
-	require.NoError(t, err)
-	assert.False(t, found)
-	assert.Empty(t, got)
-
-	// A missing file cannot be checked.
-	_, _, err = v.Verify(filepath.Join(dir, "missing.fastq"))
-	assert.ErrorIs(t, err, os.ErrNotExist)
+	_, err = newTestEngine(t).ExtractFromSAMRecords(out)
+	assert.ErrorIs(t, err, ErrKeyRequired)
 }

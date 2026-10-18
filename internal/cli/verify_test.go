@@ -85,7 +85,7 @@ func TestValidateAndVerifyRequireFiles(t *testing.T) {
 	if err := ValidateFiles(&bytes.Buffer{}, nil, DefaultValidationTests); err == nil {
 		t.Error("ValidateFiles with no files succeeded")
 	}
-	if err := VerifyFiles(&bytes.Buffer{}, nil, VerifyExpectation{}); err == nil {
+	if err := VerifyFiles(&bytes.Buffer{}, nil, VerifyOptions{}); err == nil {
 		t.Error("VerifyFiles with no files succeeded")
 	}
 }

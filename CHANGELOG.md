@@ -8,11 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Fingerprint encryption (#3).
+  - Quality-score and SAM fingerprints are encrypted with a key using stegano's Argon2id plus AES-256-GCM.
+  - The key comes from `fingerprinting.key_file` or the `PHANTOM_FINGERPRINT_KEY` environment variable. Key files must be `chmod 600`, and keys must be text of at least 16 bytes.
+  - `verify --key-file` decrypts encrypted fingerprints and reports whether each file's fingerprint was encrypted.
+  - New `fingerprinting.WithKey`, `ResolveKey`, `LoadKeyFile`, `ErrKeyRequired` and `ErrWrongKey`.
 - `phantom-science verify FILE...` extracts and reports each FASTQ file's fingerprint (customer, dataset, creation time, stegano version). `--customer` and `--dataset` require specific values. It exits non-zero if any file has no fingerprint, a mismatched one, or cannot be read (#2).
 - `phantom-science validate FILE...` runs the validation framework on FASTQ files: the phantom config's tests, or a built-in suite of nine format, quality and composition checks (#2).
 - `fingerprinting.ParseFingerprint` and `FormatFingerprint`.
 
 ### Changed
+- **BREAKING:** the `quality_scores` steganography layer requires an encryption key and refuses to run without one, unless `plaintext: true` is set. Generation checks the key before writing anything (#3).
+- `Verifier.Verify` returns a `VerifyResult` (`Found`, `Fingerprint`, `Encrypted`) (#3).
+- `configs/dev/config.json` sets `plaintext: true`.
 - `fingerprinting.NewVerifier` returns `(Verifier, error)`: a stegano-backed verifier, or an error in builds without stegano. `Verifier.ValidateFile` is removed (#2).
 - A phantom config that enables validation without listing tests runs the built-in suite (#2).
 - Quality-score fingerprinting is now controlled by the `quality_scores` entry in `steganography_layers`; enabling fingerprinting without that layer only tags read IDs (#1).

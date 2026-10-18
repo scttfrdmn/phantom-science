@@ -26,6 +26,11 @@ type Engine struct {
     filesMu sync.Mutex
     files   []string
 
+    // keyErr records a fingerprint key that could not be loaded; encrypted
+    // reports whether quality-score fingerprints are encrypted with a key.
+    keyErr    error
+    encrypted bool
+
     // One fingerprint per engine, shared by every file it writes.
     fingerprintOnce sync.Once
     fingerprint     string
@@ -58,6 +63,22 @@ func (e *Engine) fileFingerprinter() (fingerprinting.FileFingerprinter, error) {
         return ff, nil
     }
     return nil, fmt.Errorf("steganography layer %q needs the stegano library: build with CGO after `make stegano`, or remove %q from steganography_layers", qualityLayer, qualityLayer)
+}
+
+// checkQualityFingerprinting reports why quality-score fingerprints cannot be
+// written, or nil when they can: the stegano library must be available, and
+// the fingerprint must be encrypted with a key unless plaintext is allowed.
+func (e *Engine) checkQualityFingerprinting() error {
+    if _, err := e.fileFingerprinter(); err != nil {
+        return err
+    }
+    if e.keyErr != nil {
+        return e.keyErr
+    }
+    if !e.encrypted && !e.config.Fingerprinting.Plaintext {
+        return fmt.Errorf("steganography layer %q needs an encryption key: set fingerprinting.key_file or %s, or set plaintext: true to embed readable fingerprints", qualityLayer, fingerprinting.KeyEnvVar)
+    }
+    return nil
 }
 
 // runFingerprint returns the fingerprint for this engine's run, generating it
@@ -94,10 +115,18 @@ func NewEngine(config types.SequencerConfig) *Engine {
         customerID = config.Enterprise.CustomerID
     }
 
-    e := &Engine{
-        config:               config,
-        fingerprintingEngine: fingerprinting.New(customerID),
+    e := &Engine{config: config}
+    var fpOpts []fingerprinting.Option
+    if config.Fingerprinting.Enable {
+        key, err := fingerprinting.ResolveKey(config.Fingerprinting.KeyFile)
+        if err != nil {
+            e.keyErr = err
+        } else if key != nil {
+            fpOpts = append(fpOpts, fingerprinting.WithKey(key))
+            e.encrypted = true
+        }
     }
+    e.fingerprintingEngine = fingerprinting.New(customerID, fpOpts...)
     if modelPath := resolveModelPath(config); modelPath != "" {
         m, err := authenticity.LoadModel(modelPath)
         if err != nil {
@@ -144,7 +173,7 @@ func (e *Engine) Generate() error {
         return fmt.Errorf("output directory cannot be empty")
     }
     if e.qualityFingerprintingEnabled() {
-        if _, err := e.fileFingerprinter(); err != nil {
+        if err := e.checkQualityFingerprinting(); err != nil {
             return err
         }
     }
@@ -214,7 +243,7 @@ func (e *Engine) generateFASTQFile(filename string, batch, read int) error {
     }
     
     if e.qualityFingerprintingEnabled() {
-        if _, err := e.fileFingerprinter(); err != nil {
+        if err := e.checkQualityFingerprinting(); err != nil {
             return err
         }
     }

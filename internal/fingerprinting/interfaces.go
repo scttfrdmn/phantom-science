@@ -11,12 +11,20 @@ type Engine interface {
 	Close()
 }
 
+// VerifyResult is the outcome of checking one file for a fingerprint.
+type VerifyResult struct {
+	Found       bool   // a fingerprint was extracted
+	Fingerprint string // the extracted payload
+	Encrypted   bool   // the payload was encrypted and decrypted with the verifier's key
+}
+
 // Verifier checks files for an embedded fingerprint.
 type Verifier interface {
-	// Verify reports whether the FASTQ file at path carries a fingerprint and
-	// returns it. A readable file without one gives (false, "", nil); err is
-	// non-nil only when the file cannot be checked.
-	Verify(path string) (found bool, fingerprint string, err error)
+	// Verify checks the FASTQ file at path. A readable file without a
+	// fingerprint gives a zero VerifyResult and no error. err is non-nil when
+	// the file cannot be checked, including ErrKeyRequired for an encrypted
+	// fingerprint without a key and ErrWrongKey when the key does not match.
+	Verify(path string) (VerifyResult, error)
 }
 
 // FileFingerprinter embeds and extracts fingerprints in whole FASTQ files.

@@ -16,56 +16,78 @@ import (
 // SteganoEngine implements Engine and SAMFingerprintingEngine on top of the
 // stegano library (github.com/scttfrdmn/stegano/go).
 //
-// Payloads are embedded unencrypted, so anyone with the library can read a
-// fingerprint back. Payloads written by stegano 0.5.x and earlier use an
+// With WithKey, payloads are encrypted (Argon2id key derivation and an AEAD
+// cipher, as implemented by stegano) and can only be read back with the same
+// key. Without a key they are embedded in plaintext and anyone with the
+// library can read them. Payloads written by stegano 0.5.x and earlier use an
 // older wire format and cannot be extracted.
 type SteganoEngine struct {
 	customerID string
+	key        []byte // nil: plaintext payloads
 }
 
 // NewSteganoEngine creates an engine backed by the stegano library.
-func NewSteganoEngine(customerID string) (*SteganoEngine, error) {
+func NewSteganoEngine(customerID string, opts ...Option) (*SteganoEngine, error) {
 	if customerID == "" {
 		return nil, NewFingerprintingError("new_engine", errors.New("customer ID is required"), ErrorCodeValidation)
 	}
-	return &SteganoEngine{customerID: customerID}, nil
+	return &SteganoEngine{customerID: customerID, key: applyOptions(opts).key}, nil
 }
 
 // newDefaultEngine returns the stegano-backed engine used by New.
-func newDefaultEngine(customerID string) (Engine, error) {
-	return NewSteganoEngine(customerID)
+func newDefaultEngine(customerID string, opts []Option) (Engine, error) {
+	return NewSteganoEngine(customerID, opts...)
 }
 
 // newDefaultVerifier returns the stegano-backed Verifier used by NewVerifier.
-func newDefaultVerifier() (Verifier, error) {
-	return steganoVerifier{engine: &SteganoEngine{}}, nil
+func newDefaultVerifier(opts []Option) (Verifier, error) {
+	return steganoVerifier{key: applyOptions(opts).key}, nil
 }
 
 // steganoVerifier implements Verifier with ExtractFromFASTQFile.
 type steganoVerifier struct {
-	engine *SteganoEngine
+	key []byte // nil: plaintext fingerprints only
 }
 
 // Verify extracts the fingerprint from the FASTQ file at path. Missing or
 // unreadable files are errors; a readable file with no fingerprint is not.
-func (v steganoVerifier) Verify(path string) (bool, string, error) {
+//
+// stegano reports the same cryptographic error for a wrong key, a missing key
+// and a key supplied for a plaintext payload, so a failed keyed extraction is
+// retried without the key to tell a plaintext fingerprint from a wrong key.
+func (v steganoVerifier) Verify(path string) (VerifyResult, error) {
 	if _, err := os.Stat(path); err != nil {
-		return false, "", err
+		return VerifyResult{}, err
 	}
-	fp, err := v.engine.ExtractFromFASTQFile(path)
-	if err != nil {
-		var fe *FingerprintingError
-		if errors.As(err, &fe) && fe.Code == ErrorCodeCorruption {
-			return false, "", nil
+	keyed := &SteganoEngine{key: v.key}
+	fp, err := keyed.ExtractFromFASTQFile(path)
+	if err == nil {
+		return VerifyResult{Found: true, Fingerprint: fp, Encrypted: v.key != nil}, nil
+	}
+	if errors.Is(err, ErrWrongKey) {
+		if fp, plainErr := (&SteganoEngine{}).ExtractFromFASTQFile(path); plainErr == nil {
+			return VerifyResult{Found: true, Fingerprint: fp}, nil
 		}
-		return false, "", err
+		return VerifyResult{}, err
 	}
-	return true, fp, nil
+	var fe *FingerprintingError
+	if errors.As(err, &fe) && fe.Code == ErrorCodeCorruption {
+		return VerifyResult{}, nil
+	}
+	return VerifyResult{}, err
 }
 
 // LibraryVersion returns the version of the linked stegano library.
 func LibraryVersion() string {
 	return stegano.Version()
+}
+
+// steganoOptions returns opts plus the engine's encryption key, if any.
+func (e *SteganoEngine) steganoOptions(opts ...stegano.Option) []stegano.Option {
+	if e.key != nil {
+		opts = append(opts, stegano.WithPassword(string(e.key)))
+	}
+	return opts
 }
 
 // GenerateFingerprint creates a fingerprint payload for a dataset.
@@ -79,9 +101,9 @@ func (e *SteganoEngine) EmbedInQualities(fastqData []byte, fingerprint string) (
 	if err := ValidateInput(fastqData, fingerprint, "embed"); err != nil {
 		return nil, err
 	}
-	out, err := stegano.Embed(fastqData, []byte(fingerprint), stegano.WithFormat(stegano.FormatFASTQ))
+	out, err := stegano.Embed(fastqData, []byte(fingerprint), e.steganoOptions(stegano.WithFormat(stegano.FormatFASTQ))...)
 	if err != nil {
-		return nil, translateSteganoError("embed", err).
+		return nil, e.translateError("embed", err).
 			WithContext("fingerprint_length", len(fingerprint)).
 			WithContext("data_length", len(fastqData))
 	}
@@ -97,9 +119,9 @@ func (e *SteganoEngine) ExtractFingerprint(fastqData []byte) (string, error) {
 		return "", NewFingerprintingError("extract", ErrInvalidFormat, ErrorCodeValidation).
 			WithContext("data_length", len(fastqData))
 	}
-	payload, err := stegano.Extract(fastqData, stegano.WithFormat(stegano.FormatFASTQ))
+	payload, err := stegano.Extract(fastqData, e.steganoOptions(stegano.WithFormat(stegano.FormatFASTQ))...)
 	if err != nil {
-		return "", translateSteganoError("extract", err).WithContext("data_length", len(fastqData))
+		return "", e.translateError("extract", err).WithContext("data_length", len(fastqData))
 	}
 	return string(payload), nil
 }
@@ -116,8 +138,8 @@ func (e *SteganoEngine) EmbedInFASTQFile(inPath, outPath, fingerprint string) er
 	if err != nil {
 		return NewFingerprintingError("embed_file", err, ErrorCodeSystem).WithContext("path", inPath)
 	}
-	if err := stegano.EmbedFile(inPath, outPath, []byte(fingerprint), stegano.WithFormat(stegano.FormatFASTQ)); err != nil {
-		return translateSteganoError("embed_file", err).
+	if err := stegano.EmbedFile(inPath, outPath, []byte(fingerprint), e.steganoOptions(stegano.WithFormat(stegano.FormatFASTQ))...); err != nil {
+		return e.translateError("embed_file", err).
 			WithContext("path", inPath).
 			WithContext("file_size", info.Size())
 	}
@@ -130,9 +152,9 @@ func (e *SteganoEngine) EmbedInFASTQFile(inPath, outPath, fingerprint string) er
 // ExtractFromFASTQFile extracts a fingerprint from the FASTQ file at path.
 // Only the start of the file is read.
 func (e *SteganoEngine) ExtractFromFASTQFile(path string) (string, error) {
-	payload, err := stegano.ExtractFile(path, stegano.WithFormat(stegano.FormatFASTQ))
+	payload, err := stegano.ExtractFile(path, e.steganoOptions(stegano.WithFormat(stegano.FormatFASTQ))...)
 	if err != nil {
-		return "", translateSteganoError("extract_file", err).WithContext("path", path)
+		return "", e.translateError("extract_file", err).WithContext("path", path)
 	}
 	return string(payload), nil
 }
@@ -164,9 +186,9 @@ func (e *SteganoEngine) EmbedInSAMRecords(samData []byte, fingerprint string) ([
 		return nil, err
 	}
 	out, err := stegano.Embed(samData, []byte(fingerprint),
-		stegano.WithFormat(stegano.FormatSAM), stegano.WithStrategy("auxiliary"))
+		e.steganoOptions(stegano.WithFormat(stegano.FormatSAM), stegano.WithStrategy("auxiliary"))...)
 	if err != nil {
-		return nil, translateSteganoError("embed_sam", err).WithContext("data_length", len(samData))
+		return nil, e.translateError("embed_sam", err).WithContext("data_length", len(samData))
 	}
 	return out, nil
 }
@@ -177,9 +199,9 @@ func (e *SteganoEngine) ExtractFromSAMRecords(samData []byte) (string, error) {
 		return "", NewFingerprintingError("extract_sam", ErrEmptyInput, ErrorCodeValidation)
 	}
 	payload, err := stegano.Extract(samData,
-		stegano.WithFormat(stegano.FormatSAM), stegano.WithStrategy("auxiliary"))
+		e.steganoOptions(stegano.WithFormat(stegano.FormatSAM), stegano.WithStrategy("auxiliary"))...)
 	if err != nil {
-		return "", translateSteganoError("extract_sam", err).WithContext("data_length", len(samData))
+		return "", e.translateError("extract_sam", err).WithContext("data_length", len(samData))
 	}
 	return string(payload), nil
 }
@@ -188,16 +210,18 @@ func (e *SteganoEngine) ExtractFromSAMRecords(samData []byte) (string, error) {
 // state, so this is a no-op.
 func (e *SteganoEngine) Close() {}
 
-// translateSteganoError converts a stegano library error into a
-// FingerprintingError with the matching error code.
-func translateSteganoError(op string, err error) *FingerprintingError {
+// translateError converts a stegano library error into a FingerprintingError
+// with the matching error code. A cryptographic failure while extracting is a
+// key problem: ErrWrongKey when the engine has a key, ErrKeyRequired when not.
+func (e *SteganoEngine) translateError(op string, err error) *FingerprintingError {
 	var se *stegano.Error
 	if !errors.As(err, &se) {
 		return NewFingerprintingError(op, err, ErrorCodeUnknown)
 	}
 
+	extracting := strings.HasPrefix(op, "extract")
 	opFailed := ErrEmbeddingFailed
-	if strings.HasPrefix(op, "extract") {
+	if extracting {
 		opFailed = ErrExtractionFailed
 	}
 
@@ -211,7 +235,16 @@ func translateSteganoError(op string, err error) *FingerprintingError {
 		fe = NewFingerprintingError(op, ErrCorruptedData, ErrorCodeCorruption)
 	case stegano.ErrGPU:
 		fe = NewFingerprintingError(op, ErrGPUError, ErrorCodeGPU)
-	case stegano.ErrCryptographic, stegano.ErrIO, stegano.ErrOutputSizeChanged, stegano.ErrPanic:
+	case stegano.ErrCryptographic:
+		switch {
+		case extracting && e.key != nil:
+			fe = NewFingerprintingError(op, ErrWrongKey, ErrorCodePermission)
+		case extracting:
+			fe = NewFingerprintingError(op, ErrKeyRequired, ErrorCodePermission)
+		default:
+			fe = NewFingerprintingError(op, opFailed, ErrorCodeSystem)
+		}
+	case stegano.ErrIO, stegano.ErrOutputSizeChanged, stegano.ErrPanic:
 		fe = NewFingerprintingError(op, opFailed, ErrorCodeSystem)
 	default:
 		fe = NewFingerprintingError(op, opFailed, ErrorCodeUnknown)

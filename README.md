@@ -100,7 +100,7 @@ With CGO enabled (the default on macOS and Linux), `go install` fails to link un
 ./phantom-science validate output/*.fastq [--phantom phantom.json]
 
 # Verify fingerprints, optionally requiring a customer and dataset
-./phantom-science verify output/*.fastq [--customer ACME --dataset ds-42]
+./phantom-science verify output/*.fastq --key-file fingerprint.key [--customer ACME --dataset ds-42]
 ```
 
 `validate` and `verify` exit non-zero if any file fails. `verify` reports each file's customer, dataset and creation time, and needs a build with the stegano library. When a phantom config enables validation, `generate` also validates every file it writes; if no tests are listed, the built-in suite runs.
@@ -375,7 +375,7 @@ Phantom Science uses [stegano](https://github.com/scttfrdmn/stegano) v0.8.0 (thr
 - **SAM:** the fingerprint goes into a `zs:Z:` optional tag. The 11 mandatory fields of each record are unchanged.
 - **Extraction** fails cleanly on data with no fingerprint or a damaged one; it never returns a wrong fingerprint.
 
-Payloads are embedded **without encryption**, so anyone with the stegano library can read a fingerprint; in SAM output it is visible as hex in the tag. Fingerprints written by stegano 0.5.x and earlier use an older wire format and cannot be extracted.
+Fingerprints are **encrypted with a key** you supply: stegano derives an encryption key from it with Argon2id and seals the payload with AES-256-GCM. Without the key a fingerprint cannot be read, and in SAM output the tag no longer shows the customer and dataset IDs. Unencrypted fingerprints are possible only with an explicit `plaintext: true`; anyone with the stegano library can read those. Fingerprints written by stegano 0.5.x and earlier use an older wire format and cannot be extracted.
 
 ### Fingerprinting generated FASTQ
 
@@ -386,14 +386,26 @@ Add `quality_scores` to `steganography_layers` to fingerprint every FASTQ file a
   "enable": true,
   "customer_fingerprint": true,
   "dataset_fingerprint": true,
-  "steganography_layers": ["quality_scores"]
+  "steganography_layers": ["quality_scores"],
+  "key_file": "/path/to/fingerprint.key"
 }
 ```
+
+Create a key once, keep it private, and use the same key to verify:
+
+```bash
+openssl rand -base64 32 > fingerprint.key && chmod 600 fingerprint.key
+```
+
+- **Where the key comes from:** `key_file`, or the `PHANTOM_FINGERPRINT_KEY` environment variable when no file is set. Relative `key_file` paths resolve against the working directory.
+- **What a valid key looks like:** text, at least 16 bytes, with no NUL bytes. Key files must not be readable by other users (`chmod 600`).
+- **When there is no key:** the `quality_scores` layer refuses to run unless `plaintext: true` is set.
 
 - Each file is fingerprinted once, after it is written, with one fingerprint per run (`customer:dataset:stegano-<version>:ts-<unix time>`). Files are processed in a streaming pass, so file size does not affect memory use, and they keep their 0600 permissions.
 - Generation fails, rather than writing unmarked output, when the fingerprint cannot be embedded. That happens when the build has no stegano library (`CGO_ENABLED=0`, or a release build), or when a file is too small to hold it (see the capacity figure above). A file that fails is removed.
 - `generate --stdout` cannot carry a quality-score fingerprint and refuses to run with this layer. Remove `quality_scores` to stream.
-- `customer_fingerprint` and `dataset_fingerprint` control the separate read-ID tags (`:cust:<id>`, `:ds:<id>`) appended to each read header.
+- `customer_fingerprint` and `dataset_fingerprint` control the separate read-ID tags (`:cust:<id>`, `:ds:<id>`) appended to each read header. These tags are plain text in every read; turn them off if customer or dataset IDs must not be visible.
+- `phantom-science verify --key-file fingerprint.key FILE...` reads fingerprints back and reports whether each was encrypted.
 
 ### Building with fingerprinting
 

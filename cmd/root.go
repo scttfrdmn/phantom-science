@@ -77,7 +77,7 @@ Copyright 2025-2026 Scott Friedman`,
 				log.Fatalf("Validation failed: %v", err)
 			}
 		case "verify":
-			if err := app.Verify(args, cli.VerifyExpectation{}); err != nil {
+			if err := app.Verify(args, cli.VerifyOptions{}); err != nil {
 				log.Fatalf("Verification failed: %v", err)
 			}
 		default:

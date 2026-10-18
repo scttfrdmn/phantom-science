@@ -14,7 +14,15 @@ import (
 	"github.com/scttfrdmn/phantom-science/pkg/types"
 )
 
+const testFingerprintKey = "test-fingerprint-key-0123456789"
+
+// qualityFingerprintConfig returns a config that writes encrypted
+// quality-score fingerprints, with its key file in dir.
 func qualityFingerprintConfig(dir string, reads, batches int, paired bool) types.SequencerConfig {
+	keyPath := filepath.Join(dir, "fingerprint.key")
+	if err := os.WriteFile(keyPath, []byte(testFingerprintKey+"\n"), 0o600); err != nil {
+		panic(err)
+	}
 	return types.SequencerConfig{
 		SampleName:    "fp-sample",
 		Lane:          1,
@@ -30,6 +38,7 @@ func qualityFingerprintConfig(dir string, reads, batches int, paired bool) types
 		Fingerprinting: types.FingerprintConfig{
 			Enable:              true,
 			SteganographyLayers: []string{"quality_scores"},
+			KeyFile:             keyPath,
 		},
 	}
 }
@@ -149,5 +158,90 @@ func TestGenerate_TooSmallForFingerprint(t *testing.T) {
 	}
 	if files, _ := filepath.Glob(filepath.Join(dir, "*.fastq")); len(files) != 0 {
 		t.Errorf("unmarked output left behind: %v", files)
+	}
+}
+
+// Quality-score fingerprints need a key unless plaintext is allowed; the
+// check happens before anything is written.
+func TestGenerate_QualityLayerRequiresKey(t *testing.T) {
+	t.Setenv(fingerprinting.KeyEnvVar, "")
+	dir := t.TempDir()
+	cfg := qualityFingerprintConfig(dir, 50, 1, false)
+	cfg.Fingerprinting.KeyFile = ""
+	e := NewEngine(cfg)
+	defer e.Close()
+
+	err := e.Generate()
+	if err == nil || !strings.Contains(err.Error(), "encryption key") {
+		t.Fatalf("Generate error = %v, want a missing-key error", err)
+	}
+	if files, _ := filepath.Glob(filepath.Join(dir, "*.fastq")); len(files) != 0 {
+		t.Errorf("files written despite the missing key: %v", files)
+	}
+}
+
+// plaintext: true allows unencrypted fingerprints, readable without a key.
+func TestGenerate_PlaintextOptIn(t *testing.T) {
+	t.Setenv(fingerprinting.KeyEnvVar, "")
+	dir := t.TempDir()
+	cfg := qualityFingerprintConfig(dir, 50, 1, false)
+	cfg.Fingerprinting.KeyFile = ""
+	cfg.Fingerprinting.Plaintext = true
+	e := NewEngine(cfg)
+	defer e.Close()
+	if err := e.Generate(); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	v, err := fingerprinting.NewVerifier()
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := v.Verify(e.GeneratedFiles()[0])
+	if err != nil || !res.Found || res.Encrypted {
+		t.Errorf("keyless Verify = %+v, %v; want a plaintext fingerprint", res, err)
+	}
+}
+
+// Encrypted fingerprints are readable only with the key: the key comes from
+// PHANTOM_FINGERPRINT_KEY when no key file is configured.
+func TestGenerate_KeyFromEnvironment(t *testing.T) {
+	t.Setenv(fingerprinting.KeyEnvVar, testFingerprintKey)
+	dir := t.TempDir()
+	cfg := qualityFingerprintConfig(dir, 50, 1, false)
+	cfg.Fingerprinting.KeyFile = ""
+	e := NewEngine(cfg)
+	defer e.Close()
+	if err := e.Generate(); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	file := e.GeneratedFiles()[0]
+
+	keyless, _ := fingerprinting.NewVerifier()
+	if _, err := keyless.Verify(file); !errors.Is(err, fingerprinting.ErrKeyRequired) {
+		t.Errorf("keyless Verify error = %v, want ErrKeyRequired", err)
+	}
+	keyed, _ := fingerprinting.NewVerifier(fingerprinting.WithKey([]byte(testFingerprintKey)))
+	res, err := keyed.Verify(file)
+	if err != nil || !res.Found || !res.Encrypted || !strings.HasPrefix(res.Fingerprint, "customer-7:dataset-42:") {
+		t.Errorf("keyed Verify = %+v, %v; want the encrypted fingerprint", res, err)
+	}
+}
+
+// A key file readable by other users is rejected before anything is written.
+func TestGenerate_RejectsExposedKeyFile(t *testing.T) {
+	dir := t.TempDir()
+	cfg := qualityFingerprintConfig(dir, 50, 1, false)
+	if err := os.Chmod(cfg.Fingerprinting.KeyFile, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	e := NewEngine(cfg)
+	defer e.Close()
+	err := e.Generate()
+	if err == nil || !strings.Contains(err.Error(), "chmod 600") {
+		t.Fatalf("Generate error = %v, want a key file permission error", err)
+	}
+	if files, _ := filepath.Glob(filepath.Join(dir, "*.fastq")); len(files) != 0 {
+		t.Errorf("files written despite the exposed key: %v", files)
 	}
 }

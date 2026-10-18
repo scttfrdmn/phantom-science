@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -11,42 +12,62 @@ import (
 	"github.com/scttfrdmn/phantom-science/pkg/types"
 )
 
-// VerifyExpectation optionally constrains which fingerprint a file must carry.
-// Empty fields are not checked.
-type VerifyExpectation struct {
+// VerifyOptions configures VerifyFiles. Customer and Dataset, when set, are
+// required values. KeyFile holds the key for encrypted fingerprints; when empty
+// the fingerprinting.KeyEnvVar environment variable is used.
+type VerifyOptions struct {
 	Customer string
 	Dataset  string
+	KeyFile  string
 }
 
 // VerifyFiles checks each FASTQ file in paths for a steganographic
 // fingerprint and reports one line per file to w. It returns an error if any
-// file has no fingerprint, a fingerprint that does not match expect, or
-// cannot be checked.
-func VerifyFiles(w io.Writer, paths []string, expect VerifyExpectation) error {
+// file has no fingerprint, a fingerprint that does not match opts, or cannot
+// be checked (including an encrypted fingerprint without the right key).
+func VerifyFiles(w io.Writer, paths []string, opts VerifyOptions) error {
 	if len(paths) == 0 {
 		return fmt.Errorf("no files to verify (usage: phantom-science verify FILE...)")
 	}
-	verifier, err := fingerprinting.NewVerifier()
+	key, err := fingerprinting.ResolveKey(opts.KeyFile)
+	if err != nil {
+		return err
+	}
+	var vopts []fingerprinting.Option
+	if key != nil {
+		vopts = append(vopts, fingerprinting.WithKey(key))
+	}
+	verifier, err := fingerprinting.NewVerifier(vopts...)
 	if err != nil {
 		return fmt.Errorf("fingerprint verification needs the stegano library (build with CGO after `make stegano`): %w", err)
 	}
 
 	failed := 0
 	for _, path := range paths {
-		found, payload, err := verifier.Verify(path)
+		result, err := verifier.Verify(path)
 		switch {
+		case errors.Is(err, fingerprinting.ErrKeyRequired):
+			fmt.Fprintf(w, "❌ %s: fingerprint is encrypted; pass --key-file or set %s\n", path, fingerprinting.KeyEnvVar)
+			failed++
+		case errors.Is(err, fingerprinting.ErrWrongKey):
+			fmt.Fprintf(w, "❌ %s: fingerprint cannot be decrypted with this key\n", path)
+			failed++
 		case err != nil:
 			fmt.Fprintf(w, "❌ %s: cannot verify: %v\n", path, err)
 			failed++
-		case !found:
+		case !result.Found:
 			fmt.Fprintf(w, "❌ %s: no fingerprint\n", path)
 			failed++
 		default:
-			if msg := checkFingerprint(payload, expect); msg != "" {
+			if msg := checkFingerprint(result.Fingerprint, opts); msg != "" {
 				fmt.Fprintf(w, "❌ %s: %s\n", path, msg)
 				failed++
 			} else {
-				fmt.Fprintf(w, "✅ %s: %s\n", path, describeFingerprint(payload))
+				protection := "plaintext"
+				if result.Encrypted {
+					protection = "encrypted"
+				}
+				fmt.Fprintf(w, "✅ %s: %s (%s)\n", path, describeFingerprint(result.Fingerprint), protection)
 			}
 		}
 	}
@@ -57,7 +78,7 @@ func VerifyFiles(w io.Writer, paths []string, expect VerifyExpectation) error {
 }
 
 // checkFingerprint returns a reason payload fails expect, or "" if it passes.
-func checkFingerprint(payload string, expect VerifyExpectation) string {
+func checkFingerprint(payload string, expect VerifyOptions) string {
 	if expect.Customer == "" && expect.Dataset == "" {
 		return ""
 	}

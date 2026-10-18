@@ -24,6 +24,8 @@ var (
 	ErrExtractionFailed    = errors.New("extraction operation failed")
 	ErrCapacityExceeded    = errors.New("fingerprint exceeds embedding capacity")
 	ErrCorruptedData       = errors.New("data appears to be corrupted")
+	ErrKeyRequired         = errors.New("fingerprint is encrypted: a key is required")
+	ErrWrongKey            = errors.New("fingerprint cannot be decrypted with this key")
 	
 	// Performance errors
 	ErrTimeout             = errors.New("operation timed out")
