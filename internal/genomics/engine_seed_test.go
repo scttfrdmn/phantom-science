@@ -209,9 +209,6 @@ func TestNotImplemented_Errors(t *testing.T) {
 		edit  func(*types.SequencerConfig)
 		issue string
 	}{
-		{"lognormal", func(c *types.SequencerConfig) { c.ReadLengthDistribution.Dist = "lognormal" }, "#10"},
-		{"gamma", func(c *types.SequencerConfig) { c.ReadLengthDistribution.Dist = "gamma" }, "#10"},
-		{"empirical", func(c *types.SequencerConfig) { c.ReadLengthDistribution.Dist = "empirical" }, "#10"},
 		{"ont", func(c *types.SequencerConfig) { c.Platform = "ont" }, "#12"},
 		{"gzip", func(c *types.SequencerConfig) { c.Output.Compression = "gzip" }, "#12"},
 		{"summary", func(c *types.SequencerConfig) { c.Output.SummaryFile = "sequencing_summary.txt" }, "#12"},

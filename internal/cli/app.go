@@ -61,7 +61,11 @@ func (a *App) Generate() error {
     
     // Validate the generated files if the phantom config enables validation
     if cfg, ok := EffectiveValidation(a.phantomConfig.Validation); ok {
-        if err := ValidateFiles(os.Stdout, engine.GeneratedFiles(), cfg); err != nil {
+        lengths, err := ReadLengthValidation(config)
+        if err != nil {
+            return err
+        }
+        if err := ValidateFiles(os.Stdout, engine.GeneratedFiles(), cfg, lengths); err != nil {
             return fmt.Errorf("validation failed: %w", err)
         }
     }

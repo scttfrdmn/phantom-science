@@ -146,7 +146,11 @@ func runGenerate(cmd *cobra.Command, out io.Writer) error {
 		// Validate the generated files when the phantom config enables validation.
 		if phantomConfig != nil {
 			if vcfg, ok := cli.EffectiveValidation(phantomConfig.Validation); ok {
-				return cli.ValidateFiles(out, engine.GeneratedFiles(), vcfg)
+				lengths, err := cli.ReadLengthValidation(*config)
+				if err != nil {
+					return err
+				}
+				return cli.ValidateFiles(out, engine.GeneratedFiles(), vcfg, lengths)
 			}
 		}
 		return nil
