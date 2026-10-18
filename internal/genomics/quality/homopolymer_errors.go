@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand/v2"
+	"sort"
 	"strings"
 	"time"
 )
@@ -385,13 +386,20 @@ func (m *HomopolymerErrorModel) introduceError(result *ErrorSimulationResult, ru
 	return error
 }
 
-// chooseErrorType chooses an error type based on platform distribution
+// chooseErrorType chooses an error type based on platform distribution.
+// Types are visited in sorted order (not Go's randomised map order) so the
+// choice is a deterministic function of the seed.
 func (m *HomopolymerErrorModel) chooseErrorType() string {
 	r := m.rng.Float64()
 	cumulative := 0.0
-	
-	for errorType, prob := range m.errorDistribution {
-		cumulative += prob
+
+	errorTypes := make([]string, 0, len(m.errorDistribution))
+	for errorType := range m.errorDistribution {
+		errorTypes = append(errorTypes, errorType)
+	}
+	sort.Strings(errorTypes)
+	for _, errorType := range errorTypes {
+		cumulative += m.errorDistribution[errorType]
 		if r <= cumulative {
 			return errorType
 		}
