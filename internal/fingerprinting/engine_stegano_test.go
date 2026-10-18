@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime/debug"
 	"strings"
 	"testing"
@@ -57,17 +58,29 @@ func requireCode(t *testing.T, err error, code ErrorCode) *FingerprintingError {
 // release, or the C header and library symbols disagree. A stale library left
 // in a shared cargo target directory is the usual cause.
 func TestLinkedLibraryMatchesGoModule(t *testing.T) {
-	info, ok := debug.ReadBuildInfo()
-	require.True(t, ok, "build info unavailable")
-	var modVersion string
-	for _, dep := range info.Deps {
-		if dep.Path == steganoModule {
-			modVersion = dep.Version
-		}
-	}
-	require.NotEmpty(t, modVersion, "%s not found in build info", steganoModule)
+	modVersion := steganoModuleVersion(t)
 	assert.Equal(t, modVersion, "v"+LibraryVersion(),
 		"linked libstegano does not match the Go module version; rebuild it with scripts/build-stegano.sh")
+}
+
+// steganoModuleVersion returns the stegano Go module version this build
+// uses: from the binary's build info when it lists dependencies, otherwise
+// from the require line in the repository's go.mod (test binaries built by
+// some Go versions record no dependencies).
+func steganoModuleVersion(t *testing.T) string {
+	t.Helper()
+	if info, ok := debug.ReadBuildInfo(); ok {
+		for _, dep := range info.Deps {
+			if dep.Path == steganoModule {
+				return dep.Version
+			}
+		}
+	}
+	gomod, err := os.ReadFile(filepath.Join("..", "..", "go.mod"))
+	require.NoError(t, err, "reading go.mod")
+	m := regexp.MustCompile(`(?m)^\s*` + regexp.QuoteMeta(steganoModule) + `\s+(v\S+)`).FindSubmatch(gomod)
+	require.NotNil(t, m, "%s not found in build info or go.mod", steganoModule)
+	return string(m[1])
 }
 
 // With CGO, New must return the real engine. Falling back to the legacy engine
