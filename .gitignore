@@ -100,7 +100,6 @@ __pycache__/
 *$py.class
 
 # Rust target directory (for crypto engine and stegano)
-crypto-engine/target/
 .stegano/
 target/
 Cargo.lock

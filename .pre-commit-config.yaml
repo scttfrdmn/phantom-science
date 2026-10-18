@@ -50,40 +50,6 @@ repos:
         args: ['./...']
         pass_filenames: false
 
-  # Rust language hooks
-  - repo: local
-    hooks:
-      - id: cargo-fmt
-        name: cargo fmt
-        entry: cargo fmt
-        language: system
-        files: \.rs$
-        args: ['--manifest-path', 'crypto-engine/Cargo.toml', '--all', '--']
-
-      - id: cargo-clippy
-        name: cargo clippy
-        entry: cargo clippy
-        language: system
-        files: \.rs$
-        args: ['--manifest-path', 'crypto-engine/Cargo.toml', '--all-targets', '--all-features', '--', '-D', 'warnings']
-        pass_filenames: false
-
-      - id: cargo-test
-        name: cargo test
-        entry: cargo test
-        language: system
-        files: \.rs$
-        args: ['--manifest-path', 'crypto-engine/Cargo.toml']
-        pass_filenames: false
-
-      - id: cargo-audit
-        name: cargo audit
-        entry: cargo audit
-        language: system
-        files: Cargo\.(toml|lock)$
-        args: ['--file', 'crypto-engine/Cargo.lock']
-        pass_filenames: false
-
   # YAML linting
   - repo: https://github.com/adrienverge/yamllint
     rev: v1.33.0

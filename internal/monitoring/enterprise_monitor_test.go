@@ -344,35 +344,6 @@ func TestGPUMetricsStructure(t *testing.T) {
 	}
 }
 
-func TestBusinessMetricsStructure(t *testing.T) {
-	monitor, err := NewEnterpriseMonitor(nil)
-	if err != nil {
-		t.Fatalf("NewEnterpriseMonitor failed: %v", err)
-	}
-	
-	metrics := monitor.metrics.BusinessMetrics
-	
-	if metrics.CustomersActive == nil {
-		t.Error("CustomersActive should be initialized")
-	}
-	
-	if metrics.DatasetsProcessed == nil {
-		t.Error("DatasetsProcessed should be initialized")
-	}
-	
-	if metrics.RevenueGenerated == nil {
-		t.Error("RevenueGenerated should be initialized")
-	}
-	
-	if metrics.SLACompliance == nil {
-		t.Error("SLACompliance should be initialized")
-	}
-	
-	if metrics.CustomerSatisfaction == nil {
-		t.Error("CustomerSatisfaction should be initialized")
-	}
-}
-
 func TestComplianceMetricsStructure(t *testing.T) {
 	monitor, err := NewEnterpriseMonitor(nil)
 	if err != nil {

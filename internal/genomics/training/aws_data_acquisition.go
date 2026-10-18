@@ -143,7 +143,7 @@ var AuthenticityValidationDatasets = map[string]DatasetInfo{
 		Files: []FileInfo{
 			{Key: "Homo_sapiens_assembly38.fasta", Size: 3200000000},
 			{Key: "Homo_sapiens_assembly38.fasta.fai", Size: 3000},
-			{Key: "Homo_sapiens_assembly38.dict", Size: 7000},
+			{Key: "Homo_sapiens_assembly38.dict", Size: 7000}, // gitleaks:allow -- S3 object key, not a credential
 		},
 	},
 	"population_vcf": {

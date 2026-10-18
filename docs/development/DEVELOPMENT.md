@@ -126,7 +126,6 @@ phantom-science/
 ├── configs/              # Configuration files
 │   ├── sequencer/v1.0/   # Device-specific configs
 │   └── phantom/v1.0/     # Enterprise configs
-├── crypto-engine/        # Rust cryptographic code
 ├── docs/                 # Documentation
 └── scripts/              # Build and utility scripts
 ```

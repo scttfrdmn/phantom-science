@@ -14,21 +14,16 @@ help: ## Show this help message
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
 # Build targets
-build: ## Build the application
+build: ## Build the application (needs `make stegano` first unless CGO_ENABLED=0)
 	@echo "🔨 Building Phantom Science..."
 	@mkdir -p bin
-	go build -o bin/phantom-science ./...
+	go build -o bin/phantom-science .
 	@echo "✅ Build complete: bin/phantom-science"
 
 stegano: ## Build the stegano library version pinned in go.mod (needed for CGO builds)
 	@scripts/build-stegano.sh
 
-build-all: ## Build Go and Rust components
-	@echo "🔨 Building all components..."
-	@mkdir -p bin
-	go build -o bin/phantom-science ./...
-	cd crypto-engine && cargo build --release
-	@echo "✅ Build complete: Go and Rust components"
+build-all: stegano build ## Build the stegano library, then the application
 
 # Testing targets
 test: ## Run all tests
@@ -68,7 +63,6 @@ lint: ## Run all linters
 fmt: ## Format all code
 	@echo "🎨 Formatting code..."
 	go fmt ./...
-	@if [ -d crypto-engine ]; then cd crypto-engine && cargo fmt; fi
 	@echo "✅ Code formatted"
 
 vet: ## Run go vet
@@ -84,7 +78,6 @@ security: ## Run security checks
 	@echo "🔒 Running security checks..."
 	@echo "Go security scan..."
 	@if command -v gosec >/dev/null 2>&1; then gosec -quiet ./...; else echo "gosec not found, install with: make install-tools"; fi
-	@if [ -d crypto-engine ]; then echo "Rust security audit..." && cd crypto-engine && cargo audit; fi
 	@echo "✅ Security checks complete"
 
 # Configuration validation
@@ -116,11 +109,6 @@ install-tools: ## Install development tools
 	fi
 	@echo "Installing Python tools..."
 	@if command -v pip3 >/dev/null 2>&1; then pip3 install pre-commit yamllint detect-secrets; else echo "pip3 not found, install Python first"; fi
-	@if [ -d crypto-engine ]; then \
-		echo "Installing Rust tools..."; \
-		rustup component add clippy rustfmt; \
-		cargo install cargo-audit; \
-	fi
 	@echo "✅ Development tools installed"
 
 install-pre-commit: ## Install pre-commit hooks
@@ -132,14 +120,12 @@ install-pre-commit: ## Install pre-commit hooks
 benchmark: ## Run performance benchmarks
 	@echo "⚡ Running benchmarks..."
 	go test ./... -bench=. -benchmem
-	@if [ -d crypto-engine ]; then cd crypto-engine && cargo bench; fi
 
 # Cleanup targets
 clean: ## Clean build artifacts and temporary files
 	@echo "🧹 Cleaning up..."
 	rm -f bin/phantom-science
 	rm -f coverage.out coverage.html
-	@if [ -d crypto-engine ]; then rm -rf crypto-engine/target/release/; fi
 	rm -rf *_output/
 	go clean -cache -testcache
 	@echo "✅ Cleanup complete"
@@ -147,7 +133,6 @@ clean: ## Clean build artifacts and temporary files
 clean-all: clean ## Clean everything including downloaded dependencies
 	@echo "🧹 Deep cleaning..."
 	go clean -modcache
-	@if [ -d crypto-engine ]; then cd crypto-engine && cargo clean; fi
 	@echo "✅ Deep cleanup complete"
 
 # Version and release

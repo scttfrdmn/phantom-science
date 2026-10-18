@@ -76,9 +76,6 @@ type EnterpriseMetrics struct {
 	// GPU metrics
 	GPUMetrics       *GPUMetrics
 	
-	// Business metrics
-	BusinessMetrics  *BusinessMetrics
-	
 	// Compliance metrics
 	ComplianceMetrics *ComplianceMetrics
 	
@@ -116,15 +113,6 @@ type GPUMetrics struct {
 	GPUPowerConsumption  prometheus.GaugeVec
 	CUDAErrors          prometheus.Counter
 	ProcessingThroughput prometheus.Gauge
-}
-
-// BusinessMetrics tracks business and operational KPIs
-type BusinessMetrics struct {
-	CustomersActive      prometheus.Gauge
-	DatasetsProcessed    prometheus.Counter
-	RevenueGenerated     prometheus.Counter
-	SLACompliance        prometheus.Gauge
-	CustomerSatisfaction prometheus.Gauge
 }
 
 // ComplianceMetrics tracks regulatory compliance metrics
@@ -327,30 +315,6 @@ func (em *EnterpriseMonitor) initializeMetrics() error {
 		}),
 	}
 	
-	// Business metrics
-	businessMetrics := &BusinessMetrics{
-		CustomersActive: prometheus.NewGauge(prometheus.GaugeOpts{
-			Name: "phantom_customers_active",
-			Help: "Number of active customers",
-		}),
-		DatasetsProcessed: prometheus.NewCounter(prometheus.CounterOpts{
-			Name: "phantom_datasets_processed_total",
-			Help: "Total number of datasets processed",
-		}),
-		RevenueGenerated: prometheus.NewCounter(prometheus.CounterOpts{
-			Name: "phantom_revenue_generated_total",
-			Help: "Total revenue generated",
-		}),
-		SLACompliance: prometheus.NewGauge(prometheus.GaugeOpts{
-			Name: "phantom_sla_compliance_percent",
-			Help: "SLA compliance percentage",
-		}),
-		CustomerSatisfaction: prometheus.NewGauge(prometheus.GaugeOpts{
-			Name: "phantom_customer_satisfaction_score",
-			Help: "Customer satisfaction score",
-		}),
-	}
-	
 	// Compliance metrics
 	complianceMetrics := &ComplianceMetrics{
 		AuditEventsTotal: prometheus.NewCounter(prometheus.CounterOpts{
@@ -405,12 +369,6 @@ func (em *EnterpriseMonitor) initializeMetrics() error {
 		gpuMetrics.CUDAErrors,
 		gpuMetrics.ProcessingThroughput,
 		
-		businessMetrics.CustomersActive,
-		businessMetrics.DatasetsProcessed,
-		businessMetrics.RevenueGenerated,
-		businessMetrics.SLACompliance,
-		businessMetrics.CustomerSatisfaction,
-		
 		complianceMetrics.AuditEventsTotal,
 		complianceMetrics.ComplianceViolations,
 		complianceMetrics.DataRetentionDays,
@@ -422,7 +380,6 @@ func (em *EnterpriseMonitor) initializeMetrics() error {
 		SystemMetrics:     systemMetrics,
 		AppMetrics:        appMetrics,
 		GPUMetrics:        gpuMetrics,
-		BusinessMetrics:   businessMetrics,
 		ComplianceMetrics: complianceMetrics,
 		PrometheusMetrics: &PrometheusMetrics{Registry: registry},
 	}

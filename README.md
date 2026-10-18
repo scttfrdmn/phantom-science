@@ -62,18 +62,20 @@ Pre-1.0: interfaces and output formats may change between minor versions (see [C
 
 ### Installation
 
+Requires Go 1.24 or later.
+
 ```bash
-# Download the latest release
-curl -LO https://github.com/scttfrdmn/phantom-science/releases/latest/download/phantom-science
+# Install without steganographic fingerprinting (pure Go, no C toolchain needed)
+CGO_ENABLED=0 go install github.com/scttfrdmn/phantom-science@latest
 
-# Make executable
-chmod +x phantom-science
-
-# Or build from source
+# Or build from source with fingerprinting (needs a C toolchain and Rust/cargo)
 git clone https://github.com/scttfrdmn/phantom-science.git
 cd phantom-science
-go build -o phantom-science .
+make stegano   # builds the stegano library pinned in go.mod into .stegano/
+make build     # writes bin/phantom-science
 ```
+
+With CGO enabled (the default on macOS and Linux), `go install` fails to link unless the stegano library is available; see [Building with fingerprinting](#building-with-fingerprinting). Prebuilt release binaries are not published yet.
 
 ### Launch Interactive TUI
 
@@ -454,19 +456,20 @@ cd workflows/cromwell && ./run_workflow.sh
 ## Development
 
 ### Requirements
-- Go 1.21+
+- Go 1.24+
+- For fingerprinting: a C toolchain and Rust (cargo)
 - Make (optional)
 
 ### Building
 ```bash
-# Standard build
-go build -o phantom-science .
+# Build the stegano library once (CGO builds link against it)
+make stegano
 
-# Development build with race detection
-go build -race -o phantom-science .
+# Standard build (make sets CGO_LDFLAGS for .stegano/)
+make build
 
-# Release build with optimizations
-go build -ldflags="-s -w" -o phantom-science .
+# Pure-Go build without fingerprinting
+CGO_ENABLED=0 go build -o phantom-science .
 ```
 
 ### Testing
