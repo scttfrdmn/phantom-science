@@ -96,3 +96,26 @@ func TestManifest_RoundTripAndVerify(t *testing.T) {
 		t.Error("Read accepted a foreign format")
 	}
 }
+
+// A signal run has no SequencerConfig: the config is omitted, the signal
+// section is recorded, and BLOW5 outputs count as read outputs.
+func TestManifest_SignalRun(t *testing.T) {
+	m := New("v", 3, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC), types.SequencerConfig{})
+	m.Signal = &Signal{Profile: "p", Inputs: []Input{{Name: "a.fastq", Bytes: 1, SHA256: "x"}}}
+	m.Add(Output{Path: "a_0.blow5", Role: RoleSignal, Bytes: 10, Reads: 4, Bases: 400})
+	m.Add(Output{Path: "truth.fa", Role: RoleTruth, Bytes: 5})
+	if m.Totals != (Totals{Files: 1, Reads: 4, Bases: 400, Bytes: 15}) {
+		t.Errorf("totals %+v", m.Totals)
+	}
+	data, err := m.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(data, []byte(`"config"`)) || !bytes.Contains(data, []byte(`"signal": {`)) {
+		t.Errorf("signal manifest JSON:\n%s", data)
+	}
+	g := New("v", 3, time.Time{}, types.SequencerConfig{Platform: "ont"})
+	if data, _ := g.Marshal(); !bytes.Contains(data, []byte(`"config"`)) || bytes.Contains(data, []byte(`"signal"`)) {
+		t.Errorf("generation manifest JSON:\n%s", data)
+	}
+}

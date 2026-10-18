@@ -39,7 +39,8 @@ const (
 const (
 	RoleFASTQ   = "fastq"   // generated reads
 	RoleSummary = "summary" // run summary (ONT sequencing_summary.txt)
-	RoleTruth   = "truth"   // ground truth (variants, read origins)
+	RoleTruth   = "truth"   // ground truth (variants, read origins, source sequences)
+	RoleSignal  = "signal"  // raw nanopore signal (BLOW5)
 )
 
 // Manifest is the phantom-manifest.json document.
@@ -53,18 +54,49 @@ type Manifest struct {
 	Seed uint64 `json:"seed"`
 	// RunStart is the run's acquisition start, derived from the seed (it is
 	// the ONT start_time origin); it is not the wall-clock time of the run.
+	// A signal run takes it from its input reads' start times.
 	RunStart time.Time `json:"run_start"`
 	// Destination is the S3 URI the outputs were uploaded under; empty for
 	// local output (paths are relative to the manifest's directory).
 	Destination string `json:"destination,omitempty"`
-	// Config is the sanitized configuration (see SanitizeConfig).
-	Config types.SequencerConfig `json:"config"`
+	// Config is the sanitized configuration (see SanitizeConfig). A signal
+	// run has none and records its parameters in Signal instead.
+	Config types.SequencerConfig `json:"config,omitzero"`
+	// Signal holds the parameters of a raw-signal run (the signal
+	// command); nil for read generation.
+	Signal *Signal `json:"signal,omitempty"`
 	// Encrypted reports whether quality-score fingerprints were encrypted
 	// with a key (the key itself is never recorded).
 	Encrypted bool       `json:"fingerprint_encrypted,omitempty"`
 	FlowCells []FlowCell `json:"flow_cells"`
 	Outputs   []Output   `json:"outputs"`
 	Totals    Totals     `json:"totals"`
+}
+
+// Signal describes a raw-signal run: with the manifest Seed and the inputs
+// it names, it reproduces every BLOW5 byte. Inputs are recorded by base name,
+// size and SHA-256, never by path.
+type Signal struct {
+	Profile           string  `json:"profile"`
+	PoreModel         Input   `json:"pore_model"`
+	ModelUnits        string  `json:"model_units"` // "pa" or "standardised"
+	RecordCompression string  `json:"record_compression"`
+	SignalCompression string  `json:"signal_compression"`
+	ReadsPerFile      int     `json:"reads_per_file"`
+	Inputs            []Input `json:"inputs"`
+	Truth             *Input  `json:"truth,omitempty"`
+	// Samples is the total number of signal samples written.
+	Samples int64 `json:"samples"`
+	// Skipped counts input reads shorter than the pore model's k, which
+	// have no signal.
+	Skipped int64 `json:"skipped,omitempty"`
+}
+
+// Input is an input file of a run.
+type Input struct {
+	Name   string `json:"name"` // base name
+	Bytes  int64  `json:"bytes"`
+	SHA256 string `json:"sha256"`
 }
 
 // Tool identifies the generator.
@@ -99,12 +131,14 @@ type Output struct {
 	FlowCell int    `json:"flow_cell"`
 	Bytes    int64  `json:"bytes"`
 	SHA256   string `json:"sha256"`
-	// Reads and Bases count the FASTQ records and bases of a fastq output.
+	// Reads and Bases count the records and bases of a fastq output, or the
+	// reads and source bases of a signal output.
 	Reads int64 `json:"reads,omitempty"`
 	Bases int64 `json:"bases,omitempty"`
 }
 
-// Totals sums the FASTQ outputs (Bytes sums every output).
+// Totals sums the read outputs: FASTQ files, or BLOW5 files of a signal run
+// (Bytes sums every output).
 type Totals struct {
 	Files int   `json:"files"`
 	Reads int64 `json:"reads"`
@@ -147,7 +181,7 @@ func SanitizeConfig(c types.SequencerConfig) types.SequencerConfig {
 func (m *Manifest) Add(o Output) {
 	m.Outputs = append(m.Outputs, o)
 	m.Totals.Bytes += o.Bytes
-	if o.Role == RoleFASTQ {
+	if o.Role == RoleFASTQ || o.Role == RoleSignal {
 		m.Totals.Files++
 		m.Totals.Reads += o.Reads
 		m.Totals.Bases += o.Bases
