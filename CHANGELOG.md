@@ -30,6 +30,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `output.file_pattern` with `{sample_name}`, `{flowcell_id}`, `{run_id}`, `{file_number}`, `{barcode}`, `{lane}` and `{mate}` (#12).
 - v2 sequencer templates (`configs/sequencers/*.yaml`) load for Oxford Nanopore, with an optional `run:` section for run settings (#12).
 - `validation.WithReadLengths` and `cli.ReadLengthValidation`: generated reads are checked against the configured distribution (bounds and a 4σ mean check) (#10).
+- `phantom-science transcriptome` (#13): synthetic ONT cDNA reads (PCS109/110/111/114 primers) from a transcript FASTA, FASTA + GTF, or genome FASTA + GTF (minus strand reverse-complemented). Includes a Zipf/log-normal expression model or a loaded TPM/salmon/Bambu profile, 5′ truncation (3′ capture), geometric poly(A), random strand, the basecaller error tiers, MinKNOW headers and summary, and optional gzip.
+- Isoform ground truth (#13): `truth.tsv` (per read), `counts.tsv` (true TPM, expected and realised reads), and `novel_isoforms.tsv`/`.gtf` for injected exon-skip and alternative-3′-end isoforms (`--novel-rate`).
+- `internal/genomics/signal` (#14): nanopore raw-signal synthesis from k-mer pore models, reimplementing squigulator's algorithm in Go. It has gamma dwell, level and white noise, baseline drift, stalls and skips, an adapter leader, poly-A/T plateaus and int16 digitisation, and is reproducible per read from the run seed and read UUID. Presets: `dna_r10.4.1_e8.2_400bps_5khz` and `rna004_130bps_4khz`.
+- `scripts/fetch-pore-model.sh` (#14) downloads ONT pore models, which are not vendored (MPL-2.0; review the licence).
+- `internal/genomics/slow5` (#15): SLOW5 ASCII and BLOW5 writer and reader following the SLOW5 v0.2.0 spec. Record compression is none, zlib or zstd; signal compression is svb-zd, byte-compatible with slow5lib. It supports all auxiliary types including the standard ONT fields, and a chunked writer names files `<flowcell>_<runid>_<n>.blow5` with 4000 reads each. Validated against slow5tools 1.5.0 and blue-crab (pod5 round trip).
+- Output targets (#16): `--total-bases` (K/M/G/T), `--total-reads` and `--flow-cells`, with `max_output_gb`/`max_output_tb` as per-flow-cell base caps.
+- `--workers N` (#16) generates files in parallel, with byte-identical output for any worker count.
+- `--output s3://bucket/prefix/` (#16) spools, finalizes and multipart-uploads each file under keys that mirror the local names, with regenerable-from-seed object tags.
+- `phantom-manifest.json` for every run (#16): seed, sanitized config, and the size and sha256 of every output. It never contains key material.
+- `phantom-science bench` (#16) reports reads/s, bases/s and MB/s per worker count.
+- Acceptance scripts for external tools (run by the user):
+  - `scripts/acceptance/transcriptome_bambu.sh`: Pychopper → minimap2 → Bambu (#13)
+  - `dorado_identity.sh` (#14)
+  - `slow5_validate.sh` (#15)
+  - `pycoqc.sh` (#16)
 
 ### Changed
 - **BREAKING:** the `quality_scores` steganography layer requires an encryption key and refuses to run without one, unless `plaintext: true` is set. Generation checks the key before writing anything (#3).
@@ -57,6 +72,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `phantom-science validate` reports variable read lengths (count, min, max, mean, N50) instead of failing on them; after generation, lengths are checked against the configured distribution (#10).
 - With a read-length distribution, an indel variant changes the read length by exactly the indel size (#10).
 - `ont_promethion24.yaml`: 2675 channels, 400 b/s, and error rates and SUP accuracy (0.974) consistent with the generator's tier table (#12).
+- With an HMM model, each output file uses its own model instance, so a file generated alone matches the same file in a full run (#16).
+- `Generate` writes through a hidden spool directory in the output directory and finishes by writing the manifest (#16).
+- Added the github.com/klauspost/compress v1.19.2 dependency, for zstd in BLOW5 (#15).
 
 ### Removed
 - Unused "business" Prometheus metrics in `internal/monitoring` (`phantom_customers_active`, `phantom_datasets_processed_total`, `phantom_revenue_generated_total`, `phantom_sla_compliance_percent`, `phantom_customer_satisfaction_score`). Nothing recorded values to them.
@@ -100,6 +118,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `.gitignore` entries matched directories as well as root binaries.
 - `read_length_consistency` counted a trailing CR in CRLF files (#10).
 - The Metal GPU backend's Objective-C compiled on Linux CGO builds; it is now macOS-only (#9).
+- In paired-end file output with a read-length distribution, R1 and R2 mates had different lengths; they now share the sampled length, and fixed-length output is unchanged (#16).
 
 ## [0.7.0] - 2026-10-17
 
