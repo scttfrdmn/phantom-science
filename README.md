@@ -52,7 +52,7 @@ See [docs/SCIENTIFIC_VALIDATION.md](docs/SCIENTIFIC_VALIDATION.md) for full meth
 - Configurable time compression for rapid testing
 
 ### 🔏 **Steganographic Fingerprinting**
-- FASTQ quality-score and SAM tag fingerprints via stegano v0.8.0. Generated FASTQ is not fingerprinted yet; see [Steganographic Fingerprinting](#steganographic-fingerprinting) for limitations.
+- FASTQ quality-score and SAM tag fingerprints via stegano v0.8.0, embedded in every generated FASTQ file when the `quality_scores` layer is enabled. See [Steganographic Fingerprinting](#steganographic-fingerprinting).
 
 ## Status
 
@@ -369,13 +369,29 @@ TGTAATCTGATACGGTGGAGTATAATTCGATTGGGGAAAAGAAGCTGACTACTCAGAAGAGTGGCAAGGAG
 
 Phantom Science uses [stegano](https://github.com/scttfrdmn/stegano) v0.8.0 (through its Go module, `github.com/scttfrdmn/stegano/go`) to embed a fingerprint, such as `customer:dataset:stegano-0.8.0:ts-…`, into genomics data and read it back:
 
-- **FASTQ:** the fingerprint goes into quality-score least-significant bits. Headers and sequences are unchanged, and each quality score changes by at most one Phred step. A carrier needs roughly five 150 bp reads or more.
+- **FASTQ:** the fingerprint goes into quality-score least-significant bits. Headers and sequences are unchanged, and each quality score changes by at most one Phred step. A typical fingerprint needs about 900 quality characters (six 150 bp or eight 100 bp reads); the exact minimum grows with fingerprint length.
 - **SAM:** the fingerprint goes into a `zs:Z:` optional tag. The 11 mandatory fields of each record are unchanged.
 - **Extraction** fails cleanly on data with no fingerprint or a damaged one; it never returns a wrong fingerprint.
 
 Payloads are embedded **without encryption**, so anyone with the stegano library can read a fingerprint; in SAM output it is visible as hex in the tag. Fingerprints written by stegano 0.5.x and earlier use an older wire format and cannot be extracted.
 
-**Current limitation:** the FASTQ generator calls the fingerprinting engine once per read, but a single read is far too small to hold a fingerprint, so generated FASTQ files currently contain no steganographic fingerprint. Read-ID tagging (`:cust:` / `:ds:`) does work.
+### Fingerprinting generated FASTQ
+
+Add `quality_scores` to `steganography_layers` to fingerprint every FASTQ file a run writes. The settings can come from a phantom config passed with `-p` (which takes precedence, including its `customer_id`) or from the sequencer config's `enterprise.fingerprinting` section:
+
+```json
+"fingerprinting": {
+  "enable": true,
+  "customer_fingerprint": true,
+  "dataset_fingerprint": true,
+  "steganography_layers": ["quality_scores"]
+}
+```
+
+- Each file is fingerprinted once, after it is written, with one fingerprint per run (`customer:dataset:stegano-<version>:ts-<unix time>`). Files are processed in a streaming pass, so file size does not affect memory use, and they keep their 0600 permissions.
+- Generation fails, rather than writing unmarked output, when the fingerprint cannot be embedded. That happens when the build has no stegano library (`CGO_ENABLED=0`, or a release build), or when a file is too small to hold it (see the capacity figure above). A file that fails is removed.
+- `generate --stdout` cannot carry a quality-score fingerprint and refuses to run with this layer. Remove `quality_scores` to stream.
+- `customer_fingerprint` and `dataset_fingerprint` control the separate read-ID tags (`:cust:<id>`, `:ds:<id>`) appended to each read header.
 
 ### Building with fingerprinting
 

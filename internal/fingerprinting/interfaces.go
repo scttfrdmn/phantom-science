@@ -17,6 +17,16 @@ type Verifier interface {
 	ValidateFile(filePath string) bool
 }
 
+// FileFingerprinter embeds and extracts fingerprints in whole FASTQ files.
+// Implemented by SteganoEngine; use a type assertion to check.
+type FileFingerprinter interface {
+	// EmbedInFASTQFile embeds fingerprint in the quality scores of the FASTQ
+	// file inPath and writes the result to outPath, which may be inPath.
+	EmbedInFASTQFile(inPath, outPath, fingerprint string) error
+	// ExtractFromFASTQFile extracts a fingerprint embedded by EmbedInFASTQFile.
+	ExtractFromFASTQFile(path string) (string, error)
+}
+
 // SAMFingerprintingEngine extends Engine with SAM-level fingerprinting capabilities.
 // Implemented by SteganoEngine; use a type assertion to check.
 type SAMFingerprintingEngine interface {

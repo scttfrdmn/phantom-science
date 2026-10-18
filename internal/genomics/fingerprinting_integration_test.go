@@ -31,7 +31,7 @@ func TestGenomicsEngineWithFingerprinting(t *testing.T) {
 			Enable:              true,
 			CustomerFingerprint: true,
 			DatasetFingerprint:  true,
-			SteganographyLayers: []string{"quality_scores", "read_ids"},
+			SteganographyLayers: []string{"read_ids"}, // quality_scores is covered by fingerprinting_file_test.go
 			CryptographicSigning: true,
 			TamperDetection:     true,
 		},
@@ -76,29 +76,13 @@ func TestGenomicsEngineWithFingerprinting(t *testing.T) {
 			t.Errorf("Expected %d reads, got %d", expectedReads, readCount)
 		}
 		
-		// Check for fingerprinted read IDs (should contain customer ID)
-		customerID := config.Enterprise.CustomerID
-		if customerID != "" {
-			// Look for embedded customer ID in read IDs
-			// The exact format depends on the fingerprinting implementation
-			// but we should see some modification to the read IDs
-			readIDsWithCustomer := 0
-			start := 0
-			for i, char := range contentStr {
-				if char == '\n' {
-					line := contentStr[start:i]
-					if len(line) > 0 && line[0] == '@' {
-						// This is a read ID line
-						if len(line) > 100 { // Fingerprinted read IDs should be longer
-							readIDsWithCustomer++
-						}
-					}
-					start = i + 1
-				}
+		// Every read ID must carry the customer and dataset tags.
+		for i, line := range lines {
+			if i%4 != 0 || line == "" {
+				continue
 			}
-			
-			if config.Fingerprinting.CustomerFingerprint && readIDsWithCustomer == 0 {
-				t.Log("Warning: No fingerprinted read IDs detected (may be expected if stegano library not available)")
+			if !strings.Contains(line, config.Enterprise.CustomerID) || !strings.Contains(line, config.DatasetID) {
+				t.Fatalf("read ID %q lacks customer %q or dataset %q", line, config.Enterprise.CustomerID, config.DatasetID)
 			}
 		}
 	})
@@ -212,7 +196,7 @@ func TestGenomicsEnginePairedEndWithFingerprinting(t *testing.T) {
 			Enable:              true,
 			CustomerFingerprint: true,
 			DatasetFingerprint:  true,
-			SteganographyLayers: []string{"quality_scores", "read_ids"},
+			SteganographyLayers: []string{"read_ids"}, // quality_scores is covered by fingerprinting_file_test.go
 		},
 	}
 	

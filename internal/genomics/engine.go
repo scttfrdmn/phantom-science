@@ -8,7 +8,9 @@ import (
     "crypto/rand"
     "fmt"
     "io"
+    "os"
     "path/filepath"
+    "sync"
     "github.com/scttfrdmn/phantom-science/internal/fingerprinting"
     "github.com/scttfrdmn/phantom-science/internal/genomics/authenticity"
     "github.com/scttfrdmn/phantom-science/internal/security"
@@ -19,6 +21,66 @@ type Engine struct {
     config               types.SequencerConfig
     fingerprintingEngine fingerprinting.Engine
     hmmModel             authenticity.SequenceGenerator // nil = use crypto/rand
+
+    // One fingerprint per engine, shared by every file it writes.
+    fingerprintOnce sync.Once
+    fingerprint     string
+    fingerprintErr  error
+}
+
+// qualityLayer is the steganography layer that embeds a fingerprint in FASTQ
+// quality scores.
+const qualityLayer = "quality_scores"
+
+// qualityFingerprintingEnabled reports whether output files must carry a
+// quality-score fingerprint.
+func (e *Engine) qualityFingerprintingEnabled() bool {
+    if !e.config.Fingerprinting.Enable {
+        return false
+    }
+    for _, layer := range e.config.Fingerprinting.SteganographyLayers {
+        if layer == qualityLayer {
+            return true
+        }
+    }
+    return false
+}
+
+// fileFingerprinter returns the engine's file-level fingerprinter, or an error
+// when the fingerprinting engine cannot embed into files (CGO disabled, release
+// build, or stegano library unavailable).
+func (e *Engine) fileFingerprinter() (fingerprinting.FileFingerprinter, error) {
+    if ff, ok := e.fingerprintingEngine.(fingerprinting.FileFingerprinter); ok {
+        return ff, nil
+    }
+    return nil, fmt.Errorf("steganography layer %q needs the stegano library: build with CGO after `make stegano`, or remove %q from steganography_layers", qualityLayer, qualityLayer)
+}
+
+// runFingerprint returns the fingerprint for this engine's run, generating it
+// on first use.
+func (e *Engine) runFingerprint() (string, error) {
+    e.fingerprintOnce.Do(func() {
+        e.fingerprint, e.fingerprintErr = e.fingerprintingEngine.GenerateFingerprint(e.config.DatasetID)
+    })
+    return e.fingerprint, e.fingerprintErr
+}
+
+// embedFileFingerprint embeds the run fingerprint into the finished FASTQ file
+// at filename. On failure the unmarked file is removed, so output never
+// silently lacks a requested fingerprint.
+func (e *Engine) embedFileFingerprint(filename string) error {
+    ff, err := e.fileFingerprinter()
+    if err == nil {
+        var fp string
+        if fp, err = e.runFingerprint(); err == nil {
+            err = ff.EmbedInFASTQFile(filename, filename, fp)
+        }
+    }
+    if err != nil {
+        os.Remove(filename) // #nosec G104 -- best effort; the embed error is returned
+        return fmt.Errorf("fingerprinting %s: %w", filepath.Base(filename), err)
+    }
+    return nil
 }
 
 func NewEngine(config types.SequencerConfig) *Engine {
@@ -76,6 +138,11 @@ func (e *Engine) Generate() error {
     }
     if e.config.OutputDir == "" {
         return fmt.Errorf("output directory cannot be empty")
+    }
+    if e.qualityFingerprintingEnabled() {
+        if _, err := e.fileFingerprinter(); err != nil {
+            return err
+        }
     }
     
     fmt.Println("🧬 Initializing genomics simulation engine...")
@@ -142,12 +209,33 @@ func (e *Engine) generateFASTQFile(filename string, batch, read int) error {
         return fmt.Errorf("invalid file path: %w", err)
     }
     
+    if e.qualityFingerprintingEnabled() {
+        if _, err := e.fileFingerprinter(); err != nil {
+            return err
+        }
+    }
+
     file, err := security.SecureFileCreate(filename, e.config.OutputDir)
     if err != nil {
         return err
     }
-    defer file.Close()
-    
+    if err := e.writeFASTQRecords(file, batch, read); err != nil {
+        file.Close() // #nosec G104 -- the write error is returned
+        os.Remove(filename) // #nosec G104 -- best effort cleanup of a partial file
+        return err
+    }
+    if err := file.Close(); err != nil {
+        return fmt.Errorf("closing %s: %w", filepath.Base(filename), err)
+    }
+    if e.qualityFingerprintingEnabled() {
+        return e.embedFileFingerprint(filename)
+    }
+    return nil
+}
+
+// writeFASTQRecords writes one batch of FASTQ records to w.
+func (e *Engine) writeFASTQRecords(w io.Writer, batch, read int) error {
+    bw := bufio.NewWriterSize(w, 256*1024)
     qualityChars := "!\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJ"
     
     for readNum := 1; readNum <= e.config.ReadsPerBatch; readNum++ {
@@ -197,23 +285,12 @@ func (e *Engine) generateFASTQFile(filename string, batch, read int) error {
             }
         }
         
-        // Apply steganographic fingerprinting to quality scores if enabled
-        if e.config.Fingerprinting.Enable && e.fingerprintingEngine != nil {
-            // Generate fingerprint for this dataset
-            fingerprint, err := e.fingerprintingEngine.GenerateFingerprint(e.config.DatasetID)
-            if err == nil {
-                // Embed fingerprint in quality scores using stegano
-                if modifiedQualities, err := e.fingerprintingEngine.EmbedInQualities(qualities, fingerprint); err == nil {
-                    qualities = modifiedQualities
-                }
-            }
+        if _, err := fmt.Fprintf(bw, "%s\n%s\n+\n%s\n", readID, sequence, qualities); err != nil {
+            return fmt.Errorf("writing FASTQ record: %w", err)
         }
-        
-        // Write FASTQ record
-        fmt.Fprintf(file, "%s\n%s\n+\n%s\n", readID, string(sequence), string(qualities))
     }
-    
-    return nil
+
+    return bw.Flush()
 }
 
 // generateSequence returns a DNA sequence and optional per-base Phred quality scores.
@@ -295,6 +372,9 @@ func (e *Engine) GenerateToWriter(w io.Writer, opts GenerateOpts) error {
     }
     if e.config.TotalBatches <= 0 {
         return fmt.Errorf("invalid total batches: %d", e.config.TotalBatches)
+    }
+    if e.qualityFingerprintingEnabled() {
+        return fmt.Errorf("steganography layer %q needs file output: a fingerprint cannot be embedded in streamed output; write files instead, or remove %q from steganography_layers", qualityLayer, qualityLayer)
     }
 
     qualityChars := "!\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJ"
@@ -380,16 +460,9 @@ func (e *Engine) GenerateToWriter(w io.Writer, opts GenerateOpts) error {
                     }
                 }
 
-                // Apply steganographic fingerprinting to qualities if enabled.
-                if e.config.Fingerprinting.Enable && e.fingerprintingEngine != nil {
-                    if fp, err := e.fingerprintingEngine.GenerateFingerprint(e.config.DatasetID); err == nil {
-                        if mq, err := e.fingerprintingEngine.EmbedInQualities(qualities, fp); err == nil {
-                            qualities = mq
-                        }
-                    }
+                if _, err := fmt.Fprintf(bw, "%s\n%s\n+\n%s\n", readID, sequence, qualities); err != nil {
+                    return fmt.Errorf("writing FASTQ record: %w", err)
                 }
-
-                fmt.Fprintf(bw, "%s\n%s\n+\n%s\n", readID, string(sequence), string(qualities))
             }
         }
     }

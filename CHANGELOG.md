@@ -7,11 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Quality-score fingerprinting is now controlled by the `quality_scores` entry in `steganography_layers`; enabling fingerprinting without that layer only tags read IDs (#1).
+- When `quality_scores` is requested, generation fails instead of writing unmarked files:
+  - without the stegano library (`CGO_ENABLED=0` or release builds), before any file is written
+  - when a file is too small to hold the fingerprint; the file is removed
+  - for `generate --stdout`, which cannot carry the fingerprint (#1)
+
 ### Removed
 - Unused "business" Prometheus metrics in `internal/monitoring` (`phantom_customers_active`, `phantom_datasets_processed_total`, `phantom_revenue_generated_total`, `phantom_sla_compliance_percent`, `phantom_customer_satisfaction_score`). Nothing recorded values to them.
 - Rust pre-commit hooks and Makefile steps for the removed `crypto-engine/` crate.
 
 ### Fixed
+- Generated FASTQ files contained no steganographic fingerprint (#1):
+  - The generator passed each read's quality string to the fingerprinting engine, which rejected it as not FASTQ and far too small, and the error was discarded.
+  - Each finished file is now fingerprinted once with stegano's streaming `EmbedFile`, with one fingerprint per run, and the file keeps its permissions.
+  - New `fingerprinting.FileFingerprinter` interface (`EmbedInFASTQFile`, `ExtractFromFASTQFile`).
+- Fingerprinting settings never reached the generator from a phantom config (`-p`) or from a sequencer config's `enterprise.fingerprinting` section; only a top-level `fingerprinting` section in the sequencer config was read. `SequencerConfig.ResolveFingerprinting` now applies them for the root command, `generate` and the TUI. `generate` previously ignored `-p` entirely (#1).
+- FASTQ write and close errors were ignored.
 - `make build` failed with "cannot write multiple packages to non-directory"; it now builds `bin/phantom-science` from the main package. `make build-all` now runs `make stegano` and then `make build`.
 - The README's install instructions pointed at a release download that does not exist. They now use `CGO_ENABLED=0 go install` for a pure-Go build, or `make stegano && make build` for fingerprinting.
 

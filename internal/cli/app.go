@@ -49,17 +49,14 @@ func NewApp(configPath string, phantomPath string, verbose bool) (*App, error) {
 func (a *App) Generate() error {
     fmt.Println("🧬 Starting Phantom Science genomic data generation...")
     
-    // Initialize enterprise features
-    if a.phantomConfig.Enterprise.Fingerprinting.Enable {
-        fingerprinter := fingerprinting.New(a.phantomConfig.Enterprise.CustomerID)
-        defer fingerprinter.Close()
-    }
-    
     // Initialize validation framework
     validator := validation.NewFramework(a.phantomConfig.Validation)
     
-    // Initialize genomics engine
-    engine := genomics.NewEngine(*a.config)
+    // Initialize genomics engine with the effective fingerprinting settings
+    config := *a.config
+    config.ResolveFingerprinting(a.phantomConfig)
+    engine := genomics.NewEngine(config)
+    defer engine.Close()
     
     // Generate synthetic data
     if err := engine.Generate(); err != nil {

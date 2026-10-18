@@ -8,6 +8,7 @@ import (
 
 	"github.com/scttfrdmn/phantom-science/internal/cli"
 	"github.com/scttfrdmn/phantom-science/internal/genomics"
+	"github.com/scttfrdmn/phantom-science/pkg/types"
 	"github.com/spf13/cobra"
 )
 
@@ -55,6 +56,14 @@ With --stdout, reads are streamed to stdout for direct piping into an aligner:
 		if modelDir != "" {
 			config.ModelDir = modelDir
 		}
+
+		var phantomConfig *types.PhantomConfig
+		if phantomPath, _ := cmd.InheritedFlags().GetString("phantom"); phantomPath != "" {
+			if phantomConfig, err = loader.LoadPhantomConfig(phantomPath); err != nil {
+				return fmt.Errorf("loading phantom config: %w", err)
+			}
+		}
+		config.ResolveFingerprinting(phantomConfig)
 
 		engine := genomics.NewEngine(*config)
 		defer engine.Close()

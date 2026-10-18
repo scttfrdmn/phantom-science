@@ -335,7 +335,9 @@ func (m Model) handleActionSelection() (Model, tea.Cmd) {
 	}
 
 	// Initialize genomics engine for actual FASTQ generation
-	m.genomicsEngine = genomics.NewEngine(m.sequencerConfig)
+	engineConfig := m.sequencerConfig
+	engineConfig.ResolveFingerprinting(m.phantomConfig)
+	m.genomicsEngine = genomics.NewEngine(engineConfig)
 	
 	simulator := timing.NewRunSimulator(m.sequencerConfig, m.compression)
 	

@@ -105,6 +105,24 @@ type AuditConfig struct {
     ExportEndpoint   string `json:"export_endpoint"`
 }
 
+// ResolveFingerprinting sets c.Fingerprinting to the fingerprinting settings
+// generation should use. A phantom config that enables fingerprinting takes
+// precedence (with its customer ID); otherwise settings nested under the
+// sequencer config's "enterprise" section are used when the top-level
+// "fingerprinting" section does not enable them. phantom may be nil.
+func (c *SequencerConfig) ResolveFingerprinting(phantom *PhantomConfig) {
+    if phantom != nil && phantom.Enterprise.Fingerprinting.Enable {
+        c.Fingerprinting = phantom.Enterprise.Fingerprinting
+        if phantom.Enterprise.CustomerID != "" {
+            c.Enterprise.CustomerID = phantom.Enterprise.CustomerID
+        }
+        return
+    }
+    if !c.Fingerprinting.Enable && c.Enterprise.Fingerprinting.Enable {
+        c.Fingerprinting = c.Enterprise.Fingerprinting
+    }
+}
+
 type FingerprintConfig struct {
     Enable              bool     `json:"enable"`
     CustomerFingerprint bool     `json:"customer_fingerprint"`

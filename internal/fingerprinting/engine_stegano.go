@@ -6,6 +6,8 @@ package fingerprinting
 import (
 	"errors"
 	"fmt"
+	"os"
+	"strings"
 	"time"
 
 	stegano "github.com/scttfrdmn/stegano/go"
@@ -76,6 +78,39 @@ func (e *SteganoEngine) ExtractFingerprint(fastqData []byte) (string, error) {
 	return string(payload), nil
 }
 
+// EmbedInFASTQFile embeds fingerprint in the FASTQ file inPath and writes the
+// result to outPath, which may be inPath. The file is streamed, so memory use
+// does not grow with its size. outPath is replaced atomically and keeps
+// inPath's permission bits; on error it is left untouched.
+func (e *SteganoEngine) EmbedInFASTQFile(inPath, outPath, fingerprint string) error {
+	if err := validateFingerprint(fingerprint, "embed_file"); err != nil {
+		return err
+	}
+	info, err := os.Stat(inPath)
+	if err != nil {
+		return NewFingerprintingError("embed_file", err, ErrorCodeSystem).WithContext("path", inPath)
+	}
+	if err := stegano.EmbedFile(inPath, outPath, []byte(fingerprint), stegano.WithFormat(stegano.FormatFASTQ)); err != nil {
+		return translateSteganoError("embed_file", err).
+			WithContext("path", inPath).
+			WithContext("file_size", info.Size())
+	}
+	if err := os.Chmod(outPath, info.Mode().Perm()); err != nil {
+		return NewFingerprintingError("embed_file", err, ErrorCodeSystem).WithContext("path", outPath)
+	}
+	return nil
+}
+
+// ExtractFromFASTQFile extracts a fingerprint from the FASTQ file at path.
+// Only the start of the file is read.
+func (e *SteganoEngine) ExtractFromFASTQFile(path string) (string, error) {
+	payload, err := stegano.ExtractFile(path, stegano.WithFormat(stegano.FormatFASTQ))
+	if err != nil {
+		return "", translateSteganoError("extract_file", err).WithContext("path", path)
+	}
+	return string(payload), nil
+}
+
 // VerifyFingerprint reports whether fastqData carries an extractable fingerprint.
 func (e *SteganoEngine) VerifyFingerprint(fastqData []byte) bool {
 	_, err := e.ExtractFingerprint(fastqData)
@@ -99,9 +134,8 @@ func (e *SteganoEngine) EmbedInSAMRecords(samData []byte, fingerprint string) ([
 	if len(samData) == 0 {
 		return nil, NewFingerprintingError("embed_sam", ErrEmptyInput, ErrorCodeValidation)
 	}
-	if fingerprint == "" || len(fingerprint) > MaxFingerprintLength || containsInvalidCharacters(fingerprint) {
-		return nil, NewFingerprintingError("embed_sam", ErrInvalidFingerprint, ErrorCodeValidation).
-			WithContext("fingerprint_length", len(fingerprint))
+	if err := validateFingerprint(fingerprint, "embed_sam"); err != nil {
+		return nil, err
 	}
 	out, err := stegano.Embed(samData, []byte(fingerprint),
 		stegano.WithFormat(stegano.FormatSAM), stegano.WithStrategy("auxiliary"))
@@ -137,7 +171,7 @@ func translateSteganoError(op string, err error) *FingerprintingError {
 	}
 
 	opFailed := ErrEmbeddingFailed
-	if op == "extract" || op == "extract_sam" {
+	if strings.HasPrefix(op, "extract") {
 		opFailed = ErrExtractionFailed
 	}
 

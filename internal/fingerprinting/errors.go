@@ -135,32 +135,37 @@ func ValidateInput(data []byte, fingerprint string, operation string) error {
 		return NewFingerprintingError(operation, ErrEmptyInput, ErrorCodeValidation).
 			WithContext("data_length", 0)
 	}
-	
-	if fingerprint == "" {
-		return NewFingerprintingError(operation, ErrInvalidFingerprint, ErrorCodeValidation).
-			WithContext("fingerprint_length", 0)
+
+	if err := validateFingerprint(fingerprint, operation); err != nil {
+		return err
 	}
-	
+
 	// Validate FASTQ format structure
 	if !isValidFASTQData(data) {
 		return NewFingerprintingError(operation, ErrInvalidFormat, ErrorCodeValidation).
 			WithContext("data_length", len(data)).
 			WithContext("format", "FASTQ")
 	}
-	
-	// Validate fingerprint length and content
+
+	return nil
+}
+
+// validateFingerprint checks that fingerprint is non-empty, at most
+// MaxFingerprintLength bytes, and printable ASCII.
+func validateFingerprint(fingerprint string, operation string) error {
+	if fingerprint == "" {
+		return NewFingerprintingError(operation, ErrInvalidFingerprint, ErrorCodeValidation).
+			WithContext("fingerprint_length", 0)
+	}
 	if len(fingerprint) > MaxFingerprintLength {
 		return NewFingerprintingError(operation, ErrInvalidFingerprint, ErrorCodeValidation).
 			WithContext("fingerprint_length", len(fingerprint)).
 			WithContext("max_length", MaxFingerprintLength)
 	}
-	
-	// Check for potentially problematic fingerprint content
 	if containsInvalidCharacters(fingerprint) {
 		return NewFingerprintingError(operation, ErrInvalidFingerprint, ErrorCodeValidation).
 			WithContext("fingerprint", fingerprint)
 	}
-	
 	return nil
 }
 

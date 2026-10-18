@@ -274,3 +274,70 @@ type ValidationError struct {
 func (e *ValidationError) Error() string {
 	return e.Field + ": " + e.Message
 }
+func TestResolveFingerprinting(t *testing.T) {
+	quality := FingerprintConfig{Enable: true, SteganographyLayers: []string{"quality_scores"}}
+	readIDs := FingerprintConfig{Enable: true, SteganographyLayers: []string{"read_ids"}}
+
+	tests := []struct {
+		name         string
+		seq          SequencerConfig
+		phantom      *PhantomConfig
+		wantLayers   []string
+		wantEnable   bool
+		wantCustomer string
+	}{
+		{
+			name:         "top-level settings kept without phantom config",
+			seq:          SequencerConfig{Fingerprinting: readIDs, Enterprise: EnterpriseConfig{CustomerID: "SEQ"}},
+			wantEnable:   true,
+			wantLayers:   []string{"read_ids"},
+			wantCustomer: "SEQ",
+		},
+		{
+			name:         "nested enterprise settings used when top-level is disabled",
+			seq:          SequencerConfig{Enterprise: EnterpriseConfig{CustomerID: "SEQ", Fingerprinting: quality}},
+			wantEnable:   true,
+			wantLayers:   []string{"quality_scores"},
+			wantCustomer: "SEQ",
+		},
+		{
+			name:         "enabled phantom config overrides settings and customer",
+			seq:          SequencerConfig{Fingerprinting: readIDs, Enterprise: EnterpriseConfig{CustomerID: "SEQ"}},
+			phantom:      &PhantomConfig{Enterprise: EnterpriseConfig{CustomerID: "PH", Fingerprinting: quality}},
+			wantEnable:   true,
+			wantLayers:   []string{"quality_scores"},
+			wantCustomer: "PH",
+		},
+		{
+			name:         "disabled phantom config (CLI/TUI default) changes nothing",
+			seq:          SequencerConfig{Fingerprinting: readIDs, Enterprise: EnterpriseConfig{CustomerID: "SEQ"}},
+			phantom:      &PhantomConfig{Enterprise: EnterpriseConfig{CustomerID: "DEMO"}},
+			wantEnable:   true,
+			wantLayers:   []string{"read_ids"},
+			wantCustomer: "SEQ",
+		},
+		{
+			name:         "nothing enabled anywhere",
+			seq:          SequencerConfig{Enterprise: EnterpriseConfig{CustomerID: "SEQ"}},
+			phantom:      &PhantomConfig{},
+			wantCustomer: "SEQ",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := tt.seq
+			c.ResolveFingerprinting(tt.phantom)
+			if c.Fingerprinting.Enable != tt.wantEnable {
+				t.Errorf("Enable = %v, want %v", c.Fingerprinting.Enable, tt.wantEnable)
+			}
+			if len(c.Fingerprinting.SteganographyLayers) != len(tt.wantLayers) ||
+				(len(tt.wantLayers) > 0 && c.Fingerprinting.SteganographyLayers[0] != tt.wantLayers[0]) {
+				t.Errorf("layers = %v, want %v", c.Fingerprinting.SteganographyLayers, tt.wantLayers)
+			}
+			if c.Enterprise.CustomerID != tt.wantCustomer {
+				t.Errorf("CustomerID = %q, want %q", c.Enterprise.CustomerID, tt.wantCustomer)
+			}
+		})
+	}
+}
