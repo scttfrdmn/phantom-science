@@ -289,12 +289,16 @@ func (m *HomopolymerErrorModel) SimulateErrors(sequence []byte, qualities []byte
 	runs := m.FindHomopolymerRuns(sequence)
 	result.HomopolymerRuns = runs
 	
-	// Apply errors to each run
+	// Apply errors to each run. Runs are found left to right on the original
+	// sequence, so an edit lands at its original position plus the net length
+	// change of the edits already applied (shift).
+	shift := 0
 	for _, run := range runs {
 		if m.shouldIntroduceError(run) {
-			error := m.introduceError(result, run)
+			error := m.introduceError(result, run, shift)
 			if error != nil {
 				result.Errors = append(result.Errors, *error)
+				shift += error.ObservedLength - error.TrueLength
 			}
 		}
 	}
@@ -350,7 +354,9 @@ func (m *HomopolymerErrorModel) getContextModifier(context string) float64 {
 }
 
 // introduceError introduces an error into the sequence
-func (m *HomopolymerErrorModel) introduceError(result *ErrorSimulationResult, run HomopolymerRun) *HomopolymerError {
+// introduceError applies one error inside run. error.Position is in original
+// sequence coordinates; shift maps it into the current ErrorSequence.
+func (m *HomopolymerErrorModel) introduceError(result *ErrorSimulationResult, run HomopolymerRun, shift int) *HomopolymerError {
 	// Choose error type
 	errorType := m.chooseErrorType()
 	
@@ -370,18 +376,19 @@ func (m *HomopolymerErrorModel) introduceError(result *ErrorSimulationResult, ru
 		ObservedLength: run.Length,
 	}
 	
-	// Apply error based on type
+	// Apply error based on type, at the position in the edited sequence
+	at := errorPos + shift
 	switch errorType {
 	case "deletion":
-		m.applyDeletion(result, error)
+		m.applyDeletion(result, error, at)
 	case "insertion":
-		m.applyInsertion(result, error)
+		m.applyInsertion(result, error, at)
 	case "substitution":
-		m.applySubstitution(result, error)
+		m.applySubstitution(result, error, at)
 	}
 	
 	// Adjust quality scores
-	m.adjustQualityScores(result, error)
+	m.adjustQualityScores(result, at)
 	
 	return error
 }
@@ -409,13 +416,13 @@ func (m *HomopolymerErrorModel) chooseErrorType() string {
 }
 
 // applyDeletion applies a deletion error
-func (m *HomopolymerErrorModel) applyDeletion(result *ErrorSimulationResult, error *HomopolymerError) {
+func (m *HomopolymerErrorModel) applyDeletion(result *ErrorSimulationResult, error *HomopolymerError, at int) {
 	// Remove base at error position
 	newSequence := make([]byte, 0, len(result.ErrorSequence)-1)
 	newQualities := make([]byte, 0, len(result.ErrorQualities)-1)
 	
 	for i := 0; i < len(result.ErrorSequence); i++ {
-		if i != error.Position {
+		if i != at {
 			newSequence = append(newSequence, result.ErrorSequence[i])
 			newQualities = append(newQualities, result.ErrorQualities[i])
 		}
@@ -427,7 +434,7 @@ func (m *HomopolymerErrorModel) applyDeletion(result *ErrorSimulationResult, err
 }
 
 // applyInsertion applies an insertion error
-func (m *HomopolymerErrorModel) applyInsertion(result *ErrorSimulationResult, error *HomopolymerError) {
+func (m *HomopolymerErrorModel) applyInsertion(result *ErrorSimulationResult, error *HomopolymerError, at int) {
 	// Insert base at error position
 	newSequence := make([]byte, 0, len(result.ErrorSequence)+1)
 	newQualities := make([]byte, 0, len(result.ErrorQualities)+1)
@@ -436,7 +443,7 @@ func (m *HomopolymerErrorModel) applyInsertion(result *ErrorSimulationResult, er
 		newSequence = append(newSequence, result.ErrorSequence[i])
 		newQualities = append(newQualities, result.ErrorQualities[i])
 		
-		if i == error.Position {
+		if i == at {
 			// Insert same base (homopolymer extension)
 			newSequence = append(newSequence, error.Base)
 			// Quality of inserted base is typically lower
@@ -454,7 +461,7 @@ func (m *HomopolymerErrorModel) applyInsertion(result *ErrorSimulationResult, er
 }
 
 // applySubstitution applies a substitution error
-func (m *HomopolymerErrorModel) applySubstitution(result *ErrorSimulationResult, error *HomopolymerError) {
+func (m *HomopolymerErrorModel) applySubstitution(result *ErrorSimulationResult, error *HomopolymerError, at int) {
 	// Choose different base
 	bases := []byte{'A', 'T', 'G', 'C'}
 	var newBase byte
@@ -467,18 +474,18 @@ func (m *HomopolymerErrorModel) applySubstitution(result *ErrorSimulationResult,
 	}
 	
 	// Apply substitution
-	result.ErrorSequence[error.Position] = newBase
+	result.ErrorSequence[at] = newBase
 	error.ObservedLength = error.TrueLength // Length doesn't change
 }
 
 // adjustQualityScores adjusts quality scores based on error introduction
-func (m *HomopolymerErrorModel) adjustQualityScores(result *ErrorSimulationResult, error *HomopolymerError) {
+func (m *HomopolymerErrorModel) adjustQualityScores(result *ErrorSimulationResult, at int) {
 	// Reduce quality scores around error position
 	reductionAmount := 3.0
 	windowSize := 2
 	
-	start := error.Position - windowSize
-	end := error.Position + windowSize
+	start := at - windowSize
+	end := at + windowSize
 	
 	if start < 0 {
 		start = 0
