@@ -88,13 +88,45 @@ type SequencerConfig struct {
     // Output controls file naming, compression and run summary files.
     Output OutputSpec `json:"output,omitzero" yaml:"output,omitempty"`
 
-    // Output-size targets and parallelism (#16). When TotalBases or
-    // TotalReads is set, batch counts are derived from the read-length
-    // distribution instead of TotalBatches. Zero means unset.
+    // Output-size targets and parallelism (#16). Zero means unset.
+    //
+    // TotalBases and TotalReads (at most one may be set) replace
+    // TotalBatches: output files of ReadsPerBatch reads are written until
+    // the target is met. TotalReads is exact (read pairs for paired-end
+    // output; the last file is partial). TotalBases stops after the read
+    // (pair) that reaches the target, so the output holds at least
+    // TotalBases and less than TotalBases plus one read (pair) length.
+    // Both apply per flow cell.
     TotalBases int64 `json:"total_bases,omitempty" yaml:"total_bases,omitempty"`
     TotalReads int64 `json:"total_reads,omitempty" yaml:"total_reads,omitempty"`
-    FlowCells  int   `json:"flow_cells,omitempty" yaml:"flow_cells,omitempty"`
-    Workers    int   `json:"workers,omitempty" yaml:"workers,omitempty"`
+    // FlowCells > 1 generates that many independent runs, each in its own
+    // subdirectory with a run seed, run ID and flow-cell ID derived from
+    // Seed, and each sized by the targets above.
+    FlowCells int `json:"flow_cells,omitempty" yaml:"flow_cells,omitempty"`
+    // Workers is the number of output files generated in parallel (0 or 1:
+    // one at a time). Output does not depend on it.
+    Workers int `json:"workers,omitempty" yaml:"workers,omitempty"`
+}
+
+// MaxOutputBases returns the hard cap on output bases per flow cell set by
+// MaxOutputGB and MaxOutputTB, which are read as gigabases and terabases
+// (sequencer output is quoted in bases); the smaller applies when both are
+// set. Zero means no cap.
+func (c SequencerConfig) MaxOutputBases() int64 {
+    var limit int64
+    for _, v := range []float64{c.MaxOutputGB * 1e9, c.MaxOutputTB * 1e12} {
+        if !(v > 0) {
+            continue
+        }
+        n := int64(9e18)
+        if v < 9e18 {
+            n = max(int64(v), 1)
+        }
+        if limit == 0 || n < limit {
+            limit = n
+        }
+    }
+    return limit
 }
 
 // Read-length distribution names for ReadLengthSpec.Dist.

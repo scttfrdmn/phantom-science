@@ -407,3 +407,23 @@ func TestResolveFingerprinting(t *testing.T) {
 		})
 	}
 }
+
+func TestSequencerConfig_MaxOutputBases(t *testing.T) {
+	for _, tc := range []struct {
+		gb, tb float64
+		want   int64
+	}{
+		{0, 0, 0},
+		{15, 0, 15e9},
+		{0, 3, 3e12},
+		{5000, 3, 3e12}, // the smaller cap applies
+		{1e-6, 0, 1000},
+		{1e-12, 0, 1}, // a set cap never rounds down to "no cap"
+		{-1, 0, 0},
+	} {
+		c := SequencerConfig{MaxOutputGB: tc.gb, MaxOutputTB: tc.tb}
+		if got := c.MaxOutputBases(); got != tc.want {
+			t.Errorf("gb=%g tb=%g: MaxOutputBases = %d, want %d", tc.gb, tc.tb, got, tc.want)
+		}
+	}
+}
