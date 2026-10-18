@@ -171,7 +171,7 @@ quick: build test-short ## Quick development check: build and short tests
 # Legacy Docker targets (preserved)
 docker-build: ## Build Docker image
 	@echo "🐳 Building Docker image..."
-	@if [ -f deploy/docker/Dockerfile ]; then docker build -f deploy/docker/Dockerfile -t phantom-science:latest .; else echo "Dockerfile not found"; fi
+	docker build -f deploy/production/docker/Dockerfile -t phantom-science:latest .
 
 # Configuration management
 config-examples: ## Show available configuration examples

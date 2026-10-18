@@ -2,6 +2,8 @@ module github.com/scttfrdmn/phantom-science
 
 go 1.24.4
 
+toolchain go1.26.9
+
 require (
 	github.com/aws/aws-sdk-go v1.55.7
 	github.com/charmbracelet/bubbletea v1.3.5
