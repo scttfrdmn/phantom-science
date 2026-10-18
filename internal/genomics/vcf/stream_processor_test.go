@@ -511,7 +511,7 @@ func TestNewAuthenticityProcessor_CustomConfig(t *testing.T) {
 		KmerSize:          4,
 		ContextWindowSize: 500,
 		UseGPU:            false,
-		TargetScore:       50.3,
+		TargetScore:       50.0,
 		EnableCaching:     true,
 		MaxCacheSize:      1024 * 1024,
 	})
@@ -780,7 +780,7 @@ func TestAuthenticityResults_IsAuthenticityTargetMet_DeviationStored(t *testing.
 	require.NoError(t, ap.ProcessVariant(v))
 
 	results := ap.GetAuthenticityResults()
-	results.IsAuthenticityTargetMet(50.3, 5.0)
+	results.IsAuthenticityTargetMet(50.0, 5.0)
 	assert.GreaterOrEqual(t, results.TargetScoreDeviation, 0.0)
 }
 
@@ -810,12 +810,12 @@ func TestAuthenticityConfig_Fields(t *testing.T) {
 		UseGPU:            false,
 		UseML:             true,
 		PopulationPanels:  []string{"YRI", "CEU"},
-		TargetScore:       50.3,
+		TargetScore:       50.0,
 		EnableCaching:     true,
 		MaxCacheSize:      1024 * 1024 * 1024,
 	}
 	assert.Equal(t, 8, cfg.KmerSize)
-	assert.Equal(t, 50.3, cfg.TargetScore)
+	assert.Equal(t, 50.0, cfg.TargetScore)
 	assert.Len(t, cfg.PopulationPanels, 2)
 	assert.True(t, cfg.UseML)
 }
@@ -859,7 +859,7 @@ func TestPopulationContext_Fields(t *testing.T) {
 	pc := &vcf.PopulationContext{
 		PopulationID:      "CEU",
 		VariantFrequency:  map[string]float64{"chr1:100:A>T": 0.05},
-		AuthenticityScore: 50.3,
+		AuthenticityScore: 50.0,
 		SampleCount:       100,
 	}
 	assert.Equal(t, "CEU", pc.PopulationID)

@@ -21,8 +21,8 @@ func main() {
 		numWorkers     = flag.Int("workers", 4, "Number of worker goroutines")
 		useGPU         = flag.Bool("gpu", false, "Enable GPU acceleration")
 		useML          = flag.Bool("ml", false, "Enable ML-based authenticity validation")
-		targetScore    = flag.Float64("target", 50.3, "Target authenticity score for indistinguishability")
-		tolerance      = flag.Float64("tolerance", 2.1, "Tolerance for authenticity score")
+		targetScore    = flag.Float64("target", 50.0, "Reference value for the mean k-mer diversity score (50 = half of all possible k-mers observed per context window); a heuristic, not a classifier accuracy")
+		tolerance      = flag.Float64("tolerance", 2.1, "Allowed absolute deviation of the mean score from -target")
 		verbose        = flag.Bool("verbose", false, "Enable verbose output")
 		showProgress   = flag.Bool("progress", false, "Show processing progress")
 		contextWindow  = flag.Int("context", 1000, "Genomic context window size")
@@ -52,7 +52,7 @@ func main() {
 	fmt.Printf("💾 Buffer size: %d bytes (%.1f KB)\n", *bufferSize, float64(*bufferSize)/1024)
 	fmt.Printf("🗄️  Cache size: %d bytes (%.1f MB)\n", *maxCache, float64(*maxCache)/(1024*1024))
 	fmt.Printf("⚙️  Workers: %d\n", *numWorkers)
-	fmt.Printf("🎯 Target authenticity: %.1f ± %.1f\n", *targetScore, *tolerance)
+	fmt.Printf("🎯 Score reference range: %.1f ± %.1f\n", *targetScore, *tolerance)
 	
 	if *useGPU {
 		fmt.Printf("🚀 GPU acceleration: enabled\n")
@@ -152,6 +152,10 @@ func main() {
 	streamStats := streamProcessor.GetStatistics()
 	authResults := authProcessor.GetAuthenticityResults()
 
+	// Compare against the reference range before display so the summary
+	// reports the actual outcome.
+	withinRange := authResults.IsAuthenticityTargetMet(*targetScore, *tolerance)
+
 	// Display results
 	displayResults(streamStats, authResults, processingTime, *targetScore, *tolerance, *verbose)
 
@@ -164,16 +168,17 @@ func main() {
 		}
 	}
 
-	// Check authenticity target
-	if authResults.IsAuthenticityTargetMet(*targetScore, *tolerance) {
-		fmt.Printf("\n🎉 SUCCESS: Statistical indistinguishability achieved!\n")
-		fmt.Printf("   Target: %.1f ± %.1f\n", *targetScore, *tolerance)
+	// Report the reference-range check. The score is a k-mer diversity
+	// heuristic; it does not measure distinguishability from real data.
+	if withinRange {
+		fmt.Printf("\n✅ Mean k-mer diversity score within reference range\n")
+		fmt.Printf("   Reference: %.1f ± %.1f\n", *targetScore, *tolerance)
 		fmt.Printf("   Achieved: %.1f (deviation: %.1f)\n", 
 			authResults.MeanAuthenticityScore, authResults.TargetScoreDeviation)
 		os.Exit(0)
 	} else {
-		fmt.Printf("\n⚠️  WARNING: Statistical indistinguishability not achieved\n")
-		fmt.Printf("   Target: %.1f ± %.1f\n", *targetScore, *tolerance)
+		fmt.Printf("\n⚠️  WARNING: Mean k-mer diversity score outside reference range\n")
+		fmt.Printf("   Reference: %.1f ± %.1f\n", *targetScore, *tolerance)
 		fmt.Printf("   Achieved: %.1f (deviation: %.1f)\n", 
 			authResults.MeanAuthenticityScore, authResults.TargetScoreDeviation)
 		os.Exit(1)
@@ -200,14 +205,14 @@ func displayResults(streamStats vcf.ProcessingStatistics, authResults *vcf.Authe
 	fmt.Printf("   Mean authenticity score: %.2f\n", authResults.MeanAuthenticityScore)
 	fmt.Printf("   Median authenticity score: %.2f\n", authResults.MedianScore)
 	fmt.Printf("   Standard deviation: %.2f\n", authResults.StandardDeviation)
-	fmt.Printf("   Target score: %.1f ± %.1f\n", targetScore, tolerance)
-	
+	fmt.Printf("   Reference range: %.1f ± %.1f\n", targetScore, tolerance)
+
 	if authResults.IsStatisticallyIndistinguishable {
-		fmt.Printf("   ✅ Statistical indistinguishability: ACHIEVED\n")
+		fmt.Printf("   ✅ Within reference range\n")
 	} else {
-		fmt.Printf("   ❌ Statistical indistinguishability: NOT ACHIEVED\n")
+		fmt.Printf("   ❌ Outside reference range\n")
 	}
-	fmt.Printf("   Target deviation: %.2f\n", authResults.TargetScoreDeviation)
+	fmt.Printf("   Deviation from reference: %.2f\n", authResults.TargetScoreDeviation)
 
 	fmt.Printf("\n🧬 K-mer Analysis:\n")
 	fmt.Printf("   Total k-mers: %d\n", authResults.TotalKmers)

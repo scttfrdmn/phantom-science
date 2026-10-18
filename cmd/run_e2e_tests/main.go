@@ -73,8 +73,13 @@ func main() {
 	
 	// Print summary
 	printTestSummary(results, args)
-	
-	log.Println("✅ End-to-end testing completed successfully!")
+
+	if results.AuthenticityResults != nil && !results.AuthenticityResults.Passed() {
+		log.Fatalf("❌ ML calibration failed on %d of %d platforms",
+			results.AuthenticityResults.FailedCount(), len(results.AuthenticityResults.Platforms))
+	}
+
+	log.Println("✅ End-to-end testing completed")
 }
 
 // parseCommandLineArgs parses command line arguments
@@ -98,7 +103,7 @@ func parseCommandLineArgs() *CommandLineArgs {
 	flag.BoolVar(&args.report, "report", true, 
 		"Generate comprehensive HTML and JSON reports")
 	flag.BoolVar(&args.authenticity, "authenticity", true, 
-		"Include statistical authenticity validation")
+		"Include the ML classifier calibration (null comparison plus GC-skewed positive control)")
 	flag.BoolVar(&args.help, "help", false, 
 		"Show this help message")
 	
@@ -155,11 +160,18 @@ EXAMPLES:
   # Comprehensive authenticity validation
   ./run_e2e_tests -platforms=all -populations=all -authenticity -report
 
-TARGET METRICS:
-  🎯 Statistical Indistinguishability: ~50.3% ML classification accuracy
-  📊 Authenticity Score: ~52.0 for optimal performance
-  ⚡ Platform Performance: >95% workflow success rate
-  🧬 Population Genetics: Preserved diversity and structure patterns
+ML CALIBRATION (-authenticity):
+  No real sequencing reads are bundled, so this tool cannot measure how
+  synthetic reads compare to genuine reads. Instead it calibrates the
+  measurement pipeline on each platform, using 1000 training and 1000
+  holdout reads per class:
+    Null comparison:  two independent draws from the same generator. Passes
+                      when holdout accuracy lies inside the 4-sigma binomial
+                      band around 0.5 (0.5 +/- 4*sqrt(0.25/n)).
+    Positive control: the same comparison with one class GC-skewed. Passes
+                      when holdout accuracy exceeds 0.9, which shows the
+                      classifier can detect a real difference.
+  The command exits non-zero if any platform fails either check.
 `)
 }
 
@@ -170,8 +182,7 @@ func printBanner() {
 ║                   🧬 PHANTOM SCIENCE E2E TESTING SUITE 🧬                    ║
 ║                                                                              ║
 ║              Comprehensive End-to-End Platform Validation                   ║
-║                     Statistical Indistinguishability                        ║
-║                           Target: ~50.3% Accuracy                           ║
+║          ML calibration: null comparison and GC-skew positive control        ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 `)
 }
@@ -351,12 +362,83 @@ type CrossPlatformResult struct {
 	AuthenticityVariance float64
 }
 
-// AuthenticityResult holds statistical authenticity validation results
+// ML calibration parameters. Holdout accuracy under the null is
+// Binomial(n, 0.5)/n with n = 2*authHoldoutPerClass, so its standard deviation
+// is sqrt(0.25/n), about 0.011 for 1000 reads per class.
+const (
+	authTrainPerClass   = 1000
+	authHoldoutPerClass = 1000
+	// nullBandSigmas sets the width of the pass band around 0.5. At 4 sigma a
+	// correct pipeline fails by chance with probability below 1e-4.
+	nullBandSigmas = 4.0
+	// gcSkewProbability is the chance that each A/T base in the positive
+	// control set is replaced by G/C (GC content ~0.5 -> ~0.7).
+	gcSkewProbability = 0.4
+	// positiveControlMin is the minimum holdout accuracy the classifier must
+	// reach on the GC-skewed positive control.
+	positiveControlMin = 0.9
+)
+
+// PlatformCalibration holds the ML calibration result for one platform.
+type PlatformCalibration struct {
+	// NullAccuracy is holdout accuracy on two independent draws from the
+	// same generator; it should be near 0.5.
+	NullAccuracy float64
+	// Band is the half-width of the pass band around 0.5.
+	Band float64
+	// ControlAccuracy is holdout accuracy when one class is GC-skewed.
+	ControlAccuracy float64
+	NullPass        bool
+	ControlPass     bool
+	// Err is set when the calibration could not be run; the platform fails.
+	Err string
+}
+
+// Passed reports whether the platform ran without error and passed both checks.
+func (c *PlatformCalibration) Passed() bool {
+	return c.Err == "" && c.NullPass && c.ControlPass
+}
+
+// AuthenticityResult holds the per-platform ML calibration results. It is a
+// calibration of the measurement pipeline, not a real-vs-synthetic measurement:
+// no real reads are bundled.
 type AuthenticityResult struct {
-	OverallAccuracy      float64
-	PlatformAccuracies   map[testing.SequencingPlatform]float64
-	MLClassifierResults  map[testing.SequencingPlatform]float64
-	StatisticalTests     map[string]float64
+	Platforms map[testing.SequencingPlatform]*PlatformCalibration
+}
+
+// FailedCount returns the number of platforms that errored or failed a check.
+func (r *AuthenticityResult) FailedCount() int {
+	failed := 0
+	for _, c := range r.Platforms {
+		if !c.Passed() {
+			failed++
+		}
+	}
+	return failed
+}
+
+// Passed reports whether every platform passed. An empty result does not pass.
+func (r *AuthenticityResult) Passed() bool {
+	return len(r.Platforms) > 0 && r.FailedCount() == 0
+}
+
+// nullBand returns the nullBandSigmas-sigma half-width of the binomial band
+// around 0.5 for a holdout of holdoutPerClass reads per class.
+func nullBand(holdoutPerClass int) float64 {
+	n := float64(2 * holdoutPerClass)
+	return nullBandSigmas * math.Sqrt(0.25/n)
+}
+
+// gradeCalibration grades a platform's null and positive-control accuracies.
+func gradeCalibration(nullAccuracy, controlAccuracy float64, holdoutPerClass int) *PlatformCalibration {
+	band := nullBand(holdoutPerClass)
+	return &PlatformCalibration{
+		NullAccuracy:    nullAccuracy,
+		Band:            band,
+		ControlAccuracy: controlAccuracy,
+		NullPass:        math.Abs(nullAccuracy-0.5) <= band,
+		ControlPass:     controlAccuracy > positiveControlMin,
+	}
 }
 
 // runComprehensiveTests runs the comprehensive test suite
@@ -508,16 +590,19 @@ func runCrossPlatformAnalysis(framework *testing.E2EFramework, platforms []testi
 		for _, population := range populations {
 			config := framework.CreatePlatformConfig(platform, population)
 			if config == nil {
+				log.Printf("   ⚠️  cross-platform: %s/%s: no platform configuration; excluded", platform, population)
 				continue
 			}
-			
+
 			data, err := framework.GenerateSyntheticData(config)
 			if err != nil {
+				log.Printf("   ⚠️  cross-platform: %s/%s: generate data: %v; excluded", platform, population, err)
 				continue
 			}
-			
+
 			score, err := framework.AnalyzeAuthenticity(data)
 			if err != nil {
+				log.Printf("   ⚠️  cross-platform: %s/%s: analyze: %v; excluded", platform, population, err)
 				continue
 			}
 			
@@ -534,50 +619,52 @@ func runCrossPlatformAnalysis(framework *testing.E2EFramework, platforms []testi
 	return result
 }
 
-// runAuthenticityValidation runs statistical authenticity validation
+// runAuthenticityValidation calibrates the ML indistinguishability measurement
+// on each platform: a null comparison of two independent draws from the same
+// generator (expected accuracy 0.5) and a GC-skewed positive control (expected
+// accuracy near 1). A platform whose data cannot be generated or whose
+// classifier cannot be trained is recorded as failed, not skipped.
 func runAuthenticityValidation(framework *testing.E2EFramework, platforms []testing.SequencingPlatform, populations []string, args *CommandLineArgs) *AuthenticityResult {
 	result := &AuthenticityResult{
-		PlatformAccuracies:  make(map[testing.SequencingPlatform]float64),
-		MLClassifierResults: make(map[testing.SequencingPlatform]float64),
-		StatisticalTests:    make(map[string]float64),
+		Platforms: make(map[testing.SequencingPlatform]*PlatformCalibration),
 	}
-	
-	totalAccuracy := 0.0
-	validPlatforms := 0
-	
+
 	for _, platform := range platforms {
-		// Generate balanced dataset
-		realData, syntheticData, err := framework.GenerateBalancedDataset(platform, 500)
+		calibration, err := calibratePlatform(framework, platform)
 		if err != nil {
-			continue
+			log.Printf("   ❌ %s: ML calibration failed: %v", platform, err)
+			calibration = &PlatformCalibration{Err: err.Error()}
 		}
-		
-		// Train ML classifier
-		classifier := framework.CreateMLClassifier()
-		err = classifier.Train(realData, syntheticData)
-		if err != nil {
-			continue
-		}
-		
-		// Test accuracy (target: ~50.3% for statistical indistinguishability)
-		testReal, testSynthetic, err := framework.GenerateBalancedDataset(platform, 100)
-		if err != nil {
-			continue
-		}
-		
-		accuracy := classifier.TestAccuracy(testReal, testSynthetic)
-		result.PlatformAccuracies[platform] = accuracy
-		result.MLClassifierResults[platform] = accuracy
-		
-		totalAccuracy += accuracy
-		validPlatforms++
+		result.Platforms[platform] = calibration
 	}
-	
-	if validPlatforms > 0 {
-		result.OverallAccuracy = totalAccuracy / float64(validPlatforms)
-	}
-	
+
 	return result
+}
+
+// calibratePlatform runs the null comparison and positive control for one platform.
+func calibratePlatform(framework *testing.E2EFramework, platform testing.SequencingPlatform) (*PlatformCalibration, error) {
+	trainReal, trainSynthetic, err := framework.GenerateBalancedDataset(platform, authTrainPerClass)
+	if err != nil {
+		return nil, fmt.Errorf("generate training data: %w", err)
+	}
+	testReal, testSynthetic, err := framework.GenerateBalancedDataset(platform, authHoldoutPerClass)
+	if err != nil {
+		return nil, fmt.Errorf("generate holdout data: %w", err)
+	}
+
+	null := framework.CreateMLClassifier()
+	if err := null.Train(trainReal, trainSynthetic); err != nil {
+		return nil, fmt.Errorf("train null classifier: %w", err)
+	}
+	nullAccuracy := null.TestAccuracy(testReal, testSynthetic)
+
+	control := framework.CreateMLClassifier()
+	if err := control.Train(trainReal, testing.GCSkewed(trainSynthetic, gcSkewProbability, 1)); err != nil {
+		return nil, fmt.Errorf("train positive-control classifier: %w", err)
+	}
+	controlAccuracy := control.TestAccuracy(testReal, testing.GCSkewed(testSynthetic, gcSkewProbability, 2))
+
+	return gradeCalibration(nullAccuracy, controlAccuracy, authHoldoutPerClass), nil
 }
 
 // runPerformanceBenchmarks runs performance benchmarks
@@ -724,22 +811,11 @@ func printTestSummary(results *TestResults, args *CommandLineArgs) {
 		}
 	}
 	
-	// Authenticity results
+	// ML calibration results
 	if results.AuthenticityResults != nil {
-		fmt.Println("\n🎯 STATISTICAL AUTHENTICITY RESULTS:")
-		fmt.Println(strings.Repeat("-", 80))
-		fmt.Printf("Overall ML Classification Accuracy: %.3f (Target: ~0.503)\n", 
-			results.AuthenticityResults.OverallAccuracy)
-		
-		if abs := math.Abs(results.AuthenticityResults.OverallAccuracy - 0.503); abs < 0.05 {
-			fmt.Println("✅ EXCELLENT: Achieved statistical indistinguishability!")
-		} else if abs < 0.1 {
-			fmt.Println("✅ GOOD: Close to statistical indistinguishability")
-		} else {
-			fmt.Println("⚠️  NEEDS IMPROVEMENT: Classification accuracy deviates from target")
-		}
+		printCalibrationSummary(results.Platforms, results.AuthenticityResults)
 	}
-	
+
 	// Cross-platform consistency
 	if results.CrossPlatformResults != nil {
 		fmt.Println("\n🔄 CROSS-PLATFORM CONSISTENCY:")
@@ -781,6 +857,46 @@ func printTestSummary(results *TestResults, args *CommandLineArgs) {
 	
 	if args.report {
 		fmt.Printf("\n📊 Detailed reports available in: %s\n", args.outputDir)
+	}
+}
+
+// printCalibrationSummary prints the per-platform ML calibration table.
+func printCalibrationSummary(platforms []testing.SequencingPlatform, auth *AuthenticityResult) {
+	fmt.Println("\n🎯 ML CLASSIFIER CALIBRATION:")
+	fmt.Println(strings.Repeat("-", 80))
+	fmt.Println("No real reads are bundled, so this calibrates the measurement pipeline")
+	fmt.Println("rather than measuring real-vs-synthetic distinguishability.")
+	fmt.Printf("Null: independent draws from one generator, pass if within 0.5 ± %.0fσ (%d holdout reads/class).\n",
+		nullBandSigmas, authHoldoutPerClass)
+	fmt.Printf("Positive control: one class GC-skewed (p=%.1f), pass if accuracy > %.2f.\n",
+		gcSkewProbability, positiveControlMin)
+	fmt.Println(strings.Repeat("-", 80))
+	fmt.Printf("%-24s %-15s %-6s %-9s %-6s\n", "Platform", "Null accuracy", "Null", "Control", "Ctrl")
+	fmt.Println(strings.Repeat("-", 80))
+
+	passFail := func(ok bool) string {
+		if ok {
+			return "PASS"
+		}
+		return "FAIL"
+	}
+	for _, platform := range platforms {
+		c, ok := auth.Platforms[platform]
+		if !ok {
+			continue
+		}
+		if c.Err != "" {
+			fmt.Printf("%-24s ERROR: %s\n", platform, c.Err)
+			continue
+		}
+		fmt.Printf("%-24s %.3f ± %.3f   %-6s %-9.3f %-6s\n",
+			platform, c.NullAccuracy, c.Band, passFail(c.NullPass), c.ControlAccuracy, passFail(c.ControlPass))
+	}
+
+	if auth.Passed() {
+		fmt.Println("✅ Calibration passed: chance accuracy on the null comparison, and the GC skew was detected.")
+	} else {
+		fmt.Printf("❌ Calibration failed on %d of %d platforms.\n", auth.FailedCount(), len(auth.Platforms))
 	}
 }
 

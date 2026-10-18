@@ -119,7 +119,7 @@ type AuthenticityConfig struct {
 	UseGPU            bool
 	UseML             bool
 	PopulationPanels  []string
-	TargetScore       float64  // Target authenticity score (~50.3 for indistinguishability)
+	TargetScore       float64  // Reference value for the k-mer diversity score (50 = diversity 0.5); a heuristic, not a classifier accuracy
 	EnableCaching     bool
 	MaxCacheSize      int64
 }
@@ -444,7 +444,10 @@ type AuthenticityResults struct {
 	MemoryUsage          int64
 	CompressionRatio     float64
 	
-	// Statistical indistinguishability assessment
+	// Reference-range check set by IsAuthenticityTargetMet. Despite the
+	// field name, this only records whether the mean k-mer diversity score
+	// lies within tolerance of the reference value; it is not a statistical
+	// test against real data. The name is kept for API compatibility.
 	IsStatisticallyIndistinguishable bool
 	TargetScoreDeviation            float64
 }
@@ -460,7 +463,9 @@ type PopulationAuthenticityResult struct {
 	MemoryUsage          int64
 }
 
-// IsAuthenticityTargetMet checks if the authenticity target is met
+// IsAuthenticityTargetMet reports whether the mean k-mer diversity score lies
+// within tolerance of targetScore, and records the deviation. It is a range
+// check on a heuristic score, not a test of statistical indistinguishability.
 func (ar *AuthenticityResults) IsAuthenticityTargetMet(targetScore float64, tolerance float64) bool {
 	deviation := ar.MeanAuthenticityScore - targetScore
 	if deviation < 0 {

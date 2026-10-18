@@ -129,7 +129,7 @@ streaming-authenticity-test: streaming-build streaming-stress-data
 	@echo "🎯 Testing authenticity analysis..."
 	@echo ""
 	@echo "Standard authenticity analysis:"
-	@./bin/stream_vcf -input $(TEST_DATA_DIR)/large_test.vcf -k 8 -target 50.3 -tolerance 2.1 -verbose
+	@./bin/stream_vcf -input $(TEST_DATA_DIR)/large_test.vcf -k 8 -target 50.0 -tolerance 2.1 -verbose
 	@echo ""
 	@echo "Multi-population analysis:"
 	@./bin/stream_vcf -input $(TEST_DATA_DIR)/large_test.vcf -k 8 -populations "POP1,POP2,POP3" -verbose
@@ -248,7 +248,7 @@ help-streaming:
 	@echo "Streaming VCF processing provides:"
 	@echo "  - Memory-efficient processing of unlimited VCF size"
 	@echo "  - GPU-accelerated k-mer analysis with packed arrays"
-	@echo "  - Statistical authenticity validation (~50.3% target)"
+	@echo "  - Heuristic k-mer diversity scoring against a reference range"
 	@echo "  - Multi-population genomic analysis"
 	@echo "  - Real-time progress monitoring and caching"
 
@@ -259,8 +259,8 @@ streaming-examples:
 	@echo "# Basic VCF processing:"
 	@echo "./bin/stream_vcf -input variants.vcf -k 8 -verbose"
 	@echo ""
-	@echo "# GPU-accelerated authenticity analysis:"
-	@echo "./bin/stream_vcf -input variants.vcf -k 8 -gpu -target 50.3 -tolerance 2.1"
+	@echo "# GPU-accelerated k-mer diversity scoring:"
+	@echo "./bin/stream_vcf -input variants.vcf -k 8 -gpu -target 50.0 -tolerance 2.1"
 	@echo ""
 	@echo "# Multi-population analysis with output:"
 	@echo "./bin/stream_vcf -input variants.vcf -populations \"EUR,AFR,ASN\" -output results.json"

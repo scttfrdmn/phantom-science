@@ -232,8 +232,8 @@ func TestPrintUsage_NoCrash(t *testing.T) {
 
 func makeTestResults(overallScore float64) *TestResults {
 	return &TestResults{
-		Platforms:       []phantomtesting.SequencingPlatform{phantomtesting.IlluminaNovaSeq6000},
-		Populations:     []string{"YRI", "CEU"},
+		Platforms:   []phantomtesting.SequencingPlatform{phantomtesting.IlluminaNovaSeq6000},
+		Populations: []string{"YRI", "CEU"},
 		PlatformResults: map[phantomtesting.SequencingPlatform]*PlatformTestResult{
 			phantomtesting.IlluminaNovaSeq6000: {
 				SuccessRate:         0.95,
@@ -296,10 +296,12 @@ func TestPrintTestSummary_Poor(t *testing.T) {
 	printTestSummary(results, args)
 }
 
-func TestPrintTestSummary_WithAuthenticityResults(t *testing.T) {
+func TestPrintTestSummary_WithCalibrationResults(t *testing.T) {
 	results := makeTestResults(85.0)
 	results.AuthenticityResults = &AuthenticityResult{
-		OverallAccuracy: 0.503, // ~50.3% → EXCELLENT
+		Platforms: map[phantomtesting.SequencingPlatform]*PlatformCalibration{
+			phantomtesting.IlluminaNovaSeq6000: gradeCalibration(0.5, 0.99, authHoldoutPerClass),
+		},
 	}
 	results.CrossPlatformResults = &CrossPlatformResult{
 		ConsistencyScore:     95.0,
@@ -309,22 +311,119 @@ func TestPrintTestSummary_WithAuthenticityResults(t *testing.T) {
 	printTestSummary(results, args)
 }
 
-func TestPrintTestSummary_AuthenticityGood(t *testing.T) {
-	results := makeTestResults(75.0)
-	results.AuthenticityResults = &AuthenticityResult{
-		OverallAccuracy: 0.55, // abs = 0.047 < 0.1 → GOOD
-	}
-	args := &CommandLineArgs{}
-	printTestSummary(results, args)
-}
-
-func TestPrintTestSummary_AuthenticityNeedsImprovement(t *testing.T) {
+func TestPrintTestSummary_CalibrationError(t *testing.T) {
 	results := makeTestResults(50.0)
 	results.AuthenticityResults = &AuthenticityResult{
-		OverallAccuracy: 0.7, // abs = 0.197 > 0.1 → NEEDS IMPROVEMENT
+		Platforms: map[phantomtesting.SequencingPlatform]*PlatformCalibration{
+			phantomtesting.IlluminaNovaSeq6000: {Err: "generate training data: boom"},
+		},
 	}
-	args := &CommandLineArgs{}
-	printTestSummary(results, args)
+	printTestSummary(results, &CommandLineArgs{})
+}
+
+// TestNullBand checks the band is 4 binomial standard deviations of the
+// holdout accuracy under H0: 4*sqrt(0.25/2000) ~= 0.0447 for 1000 reads/class.
+func TestNullBand(t *testing.T) {
+	got := nullBand(1000)
+	want := 4 * math.Sqrt(0.25/2000)
+	if math.Abs(got-want) > 1e-12 {
+		t.Errorf("nullBand(1000) = %f, want %f", got, want)
+	}
+	if nullBand(100) <= got {
+		t.Errorf("band should shrink as the holdout grows: nullBand(100)=%f, nullBand(1000)=%f", nullBand(100), got)
+	}
+}
+
+func TestGradeCalibration(t *testing.T) {
+	band := nullBand(authHoldoutPerClass)
+	tests := []struct {
+		name           string
+		null, control  float64
+		wantNull       bool
+		wantControl    bool
+		wantPlatformOK bool
+	}{
+		{"chance and detected control", 0.5, 0.99, true, true, true},
+		{"just inside upper band", 0.5 + band*0.99, 0.95, true, true, true},
+		{"just inside lower band", 0.5 - band*0.99, 0.95, true, true, true},
+		// 0.06 from chance is more than 5 sigma out at n=2000.
+		{"outside band high", 0.56, 0.99, false, true, false},
+		{"outside band low", 0.44, 0.99, false, true, false},
+		// 0.55 is 0.05 from chance, beyond the 0.0447 band at n=2000.
+		{"just outside band", 0.55, 0.99, false, true, false},
+		{"control below threshold", 0.5, 0.85, true, false, false},
+		{"control exactly at threshold fails", 0.5, positiveControlMin, true, false, false},
+		{"both fail", 0.7, 0.5, false, false, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := gradeCalibration(tt.null, tt.control, authHoldoutPerClass)
+			if c.NullPass != tt.wantNull {
+				t.Errorf("NullPass = %v, want %v (null=%.4f, band=%.4f)", c.NullPass, tt.wantNull, tt.null, c.Band)
+			}
+			if c.ControlPass != tt.wantControl {
+				t.Errorf("ControlPass = %v, want %v (control=%.4f)", c.ControlPass, tt.wantControl, tt.control)
+			}
+			if c.Passed() != tt.wantPlatformOK {
+				t.Errorf("Passed() = %v, want %v", c.Passed(), tt.wantPlatformOK)
+			}
+		})
+	}
+}
+
+func TestAuthenticityResult_Passed(t *testing.T) {
+	ok := gradeCalibration(0.5, 0.99, authHoldoutPerClass)
+	bad := gradeCalibration(0.6, 0.99, authHoldoutPerClass)
+	errored := &PlatformCalibration{Err: "boom", NullPass: true, ControlPass: true}
+
+	if (&AuthenticityResult{}).Passed() {
+		t.Error("an empty result must not pass")
+	}
+	all := &AuthenticityResult{Platforms: map[phantomtesting.SequencingPlatform]*PlatformCalibration{
+		phantomtesting.IlluminaNovaSeq6000: ok,
+		phantomtesting.IlluminaMiSeq:       ok,
+	}}
+	if !all.Passed() || all.FailedCount() != 0 {
+		t.Errorf("all-pass result: Passed=%v FailedCount=%d", all.Passed(), all.FailedCount())
+	}
+	mixed := &AuthenticityResult{Platforms: map[phantomtesting.SequencingPlatform]*PlatformCalibration{
+		phantomtesting.IlluminaNovaSeq6000: ok,
+		phantomtesting.IlluminaMiSeq:       bad,
+		phantomtesting.PacBioRevio:         errored,
+	}}
+	if mixed.Passed() || mixed.FailedCount() != 2 {
+		t.Errorf("mixed result: Passed=%v FailedCount=%d, want false/2", mixed.Passed(), mixed.FailedCount())
+	}
+}
+
+// TestRunAuthenticityValidation runs the real calibration on one short-read
+// platform: the null comparison must land in the band and the GC-skewed
+// positive control must be detected.
+func TestRunAuthenticityValidation(t *testing.T) {
+	if testing.Short() {
+		t.Skip("generates 4000 reads per platform")
+	}
+	framework := phantomtesting.NewE2EFramework()
+	platform := phantomtesting.IlluminaNovaSeq6000
+	res := runAuthenticityValidation(framework, []phantomtesting.SequencingPlatform{platform}, nil, &CommandLineArgs{})
+
+	c, ok := res.Platforms[platform]
+	if !ok {
+		t.Fatalf("no calibration result for %s", platform)
+	}
+	if c.Err != "" {
+		t.Fatalf("calibration error: %s", c.Err)
+	}
+	if !c.NullPass {
+		t.Errorf("null accuracy %.3f outside 0.5 ± %.3f", c.NullAccuracy, c.Band)
+	}
+	if !c.ControlPass {
+		t.Errorf("positive-control accuracy %.3f, want > %.2f", c.ControlAccuracy, positiveControlMin)
+	}
+	if !res.Passed() {
+		t.Error("expected the calibration to pass")
+	}
+	t.Logf("null %.3f ± %.3f, control %.3f", c.NullAccuracy, c.Band, c.ControlAccuracy)
 }
 
 // Ensure math and time imports are used

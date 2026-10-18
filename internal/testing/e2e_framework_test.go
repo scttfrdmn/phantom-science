@@ -5,6 +5,7 @@ package testing
 
 import (
 	"bytes"
+	"math"
 	"runtime"
 	"testing"
 	"time"
@@ -667,5 +668,46 @@ func TestAnalyzeAuthenticity_CHB(t *testing.T) {
 	}
 	if score < 0.0 || score > 100.0 {
 		t.Errorf("AnalyzeAuthenticity score = %f, want in [0,100]", score)
+	}
+}
+
+// TestGCSkewed checks the positive-control transform: GC content rises by
+// about (1-g)*p, the input is untouched, and the same seed reproduces it.
+func TestGCSkewed(t *testing.T) {
+	f := NewE2EFramework()
+	data, err := f.generateSyntheticDataN(f.CreatePlatformConfig(IlluminaNovaSeq6000, "CEU"), 500)
+	if err != nil {
+		t.Fatalf("generateSyntheticDataN: %v", err)
+	}
+	orig := make([][]byte, len(data.Sequences))
+	for i, s := range data.Sequences {
+		orig[i] = append([]byte(nil), s...)
+	}
+
+	const p = 0.4
+	before := f.calculateGCContent(data.Sequences)
+	skewed := GCSkewed(data, p, 7)
+	after := f.calculateGCContent(skewed.Sequences)
+
+	want := before + (1-before)*p
+	if math.Abs(after-want) > 0.01 {
+		t.Errorf("GC content after skew = %.4f, want %.4f ± 0.01 (before %.4f)", after, want, before)
+	}
+	for i := range orig {
+		if !bytes.Equal(orig[i], data.Sequences[i]) {
+			t.Fatalf("GCSkewed modified input sequence %d", i)
+		}
+		if len(skewed.Sequences[i]) != len(orig[i]) {
+			t.Fatalf("sequence %d length changed: %d -> %d", i, len(orig[i]), len(skewed.Sequences[i]))
+		}
+	}
+	again := GCSkewed(data, p, 7)
+	for i := range skewed.Sequences {
+		if !bytes.Equal(skewed.Sequences[i], again.Sequences[i]) {
+			t.Fatalf("same seed produced different output at sequence %d", i)
+		}
+	}
+	if same := GCSkewed(data, 0, 7); !bytes.Equal(same.Sequences[0], orig[0]) {
+		t.Error("p=0 should leave sequences unchanged")
 	}
 }

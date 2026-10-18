@@ -64,14 +64,14 @@ func TestDisplayResults_NoCrash(t *testing.T) {
 		CacheUtilization:  0.5,
 	}
 	authResults := &vcf.AuthenticityResults{
-		MeanAuthenticityScore:            50.3,
+		MeanAuthenticityScore:            50.0,
 		MedianScore:                      49.5,
 		StandardDeviation:                2.1,
 		IsStatisticallyIndistinguishable: true,
 		TargetScoreDeviation:             0.5,
 	}
 	// Should not panic
-	displayResults(streamStats, authResults, time.Second, 50.3, 2.1, false)
+	displayResults(streamStats, authResults, time.Second, 50.0, 2.1, false)
 }
 
 func TestDisplayResults_Verbose(t *testing.T) {
@@ -90,7 +90,7 @@ func TestDisplayResults_Verbose(t *testing.T) {
 		AuthenticityScores:    []float64{45.0, 48.0, 51.0},
 	}
 	// Should not panic with verbose=true
-	displayResults(streamStats, authResults, 2*time.Second, 50.3, 2.1, true)
+	displayResults(streamStats, authResults, 2*time.Second, 50.0, 2.1, true)
 }
 
 func TestDisplayResults_IndistinguishableFalse(t *testing.T) {

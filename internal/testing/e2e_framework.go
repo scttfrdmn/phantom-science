@@ -763,6 +763,33 @@ func (f *E2EFramework) calculateGCContent(sequences [][]byte) float64 {
 	return float64(gcBases) / float64(totalBases)
 }
 
+// GCSkewed returns a copy of data in which each A or T base is replaced by G or
+// C with probability p, shifting expected GC content from g to g+(1-g)*p (about
+// 0.5+p/2 for unbiased sequence). The input is not modified; header and quality
+// slices are shared with the original.
+//
+// It is the positive control for the ML indistinguishability measurement: a
+// classifier that cannot separate GC-skewed reads from unskewed reads cannot
+// detect any real distributional difference either, so a chance-level result
+// on the null comparison would be meaningless. The seed makes the skew
+// deterministic.
+func GCSkewed(data *SyntheticData, p float64, seed int64) *SyntheticData {
+	rng := rand.New(rand.NewSource(seed)) // #nosec G404 -- deterministic test fixture
+	out := *data
+	out.Sequences = make([][]byte, len(data.Sequences))
+	for i, seq := range data.Sequences {
+		s := make([]byte, len(seq))
+		for j, b := range seq {
+			if (b == 'A' || b == 'T') && rng.Float64() < p {
+				b = "GC"[rng.Intn(2)]
+			}
+			s[j] = b
+		}
+		out.Sequences[i] = s
+	}
+	return &out
+}
+
 // GenerateBalancedDataset generates two independent datasets of numSamples
 // reads each for ML testing.
 //

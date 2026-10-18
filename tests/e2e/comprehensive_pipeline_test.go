@@ -3,7 +3,7 @@ package e2e
 import (
 	"fmt"
 	"math"
-	"math/rand"
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -83,10 +83,11 @@ func testPlatformPipeline(t *testing.T, framework *pt.E2EFramework, platform pt.
 			authenticityScore, err := framework.AnalyzeAuthenticity(syntheticData)
 			require.NoError(t, err)
 
-			// Target: ~50.3% classification accuracy for statistical indistinguishability
-			expectedScore := 52.0 // Authenticity score when classification accuracy is ~50%
+			// AnalyzeAuthenticity is a heuristic composite score, not a measured
+			// real-vs-synthetic accuracy; this only checks it stays in its usual range.
+			expectedScore := 52.0
 			assert.InDelta(t, expectedScore, authenticityScore, 20.0,
-				"Authenticity score should be close to 52 for statistical indistinguishability")
+				"heuristic authenticity score should stay within its usual range")
 
 			t.Logf("✅ Platform %s, Population %s: Authenticity Score = %.2f", 
 				platform, population, authenticityScore)
@@ -242,8 +243,8 @@ func testStatisticalIndistinguishability(t *testing.T, framework *pt.E2EFramewor
 			// Positive control: the same pipeline must detect a real
 			// distributional difference, or a ~0.5 result above is meaningless.
 			skewed := framework.CreateMLClassifier()
-			require.NoError(t, skewed.Train(trainReal, gcSkewed(trainSynthetic, 0.4)))
-			skewedAccuracy := skewed.TestAccuracy(testReal, gcSkewed(testSynthetic, 0.4))
+			require.NoError(t, skewed.Train(trainReal, pt.GCSkewed(trainSynthetic, 0.4, 1)))
+			skewedAccuracy := skewed.TestAccuracy(testReal, pt.GCSkewed(testSynthetic, 0.4, 2))
 			assert.Greater(t, skewedAccuracy, 0.9,
 				"classifier should easily separate GC-skewed reads from unskewed reads")
 
@@ -251,25 +252,6 @@ func testStatisticalIndistinguishability(t *testing.T, framework *pt.E2EFramewor
 				platform, accuracy, tolerance, skewedAccuracy)
 		})
 	}
-}
-
-// gcSkewed returns a copy of data in which each A/T base is replaced by G/C
-// with probability p, shifting GC content from ~0.5 to ~0.5+p/2.
-func gcSkewed(data *pt.SyntheticData, p float64) *pt.SyntheticData {
-	rng := rand.New(rand.NewSource(1)) // #nosec G404 -- deterministic test fixture
-	out := *data
-	out.Sequences = make([][]byte, len(data.Sequences))
-	for i, seq := range data.Sequences {
-		s := make([]byte, len(seq))
-		for j, b := range seq {
-			if (b == 'A' || b == 'T') && rng.Float64() < p {
-				b = "GC"[rng.Intn(2)]
-			}
-			s[j] = b
-		}
-		out.Sequences[i] = s
-	}
-	return &out
 }
 
 // testPerformanceBenchmarks validates performance across all platforms
@@ -294,18 +276,39 @@ func testPerformanceBenchmarks(t *testing.T, framework *pt.E2EFramework, platfor
 	framework.GeneratePerformanceReport(benchmarks)
 }
 
+// perfStrict enables the absolute wall-clock thresholds below. They depend on
+// the machine and its load, so they flake on shared CI runners; set
+// PHANTOM_PERF_STRICT=1 to enforce them on a quiet, known machine.
+func perfStrict() bool { return os.Getenv("PHANTOM_PERF_STRICT") == "1" }
+
 // validatePlatformPerformance validates platform-specific performance expectations
 func validatePlatformPerformance(t *testing.T, platform pt.SequencingPlatform, benchmark *pt.PlatformBenchmark) {
-	switch platform {
-	case pt.IlluminaNovaSeq6000:
-		// NovaSeq should have highest throughput
-		assert.Greater(t, benchmark.ThroughputMBps, 10.0, "NovaSeq should have >10 MB/s throughput")
-		assert.Less(t, benchmark.LatencyMs, 100, "NovaSeq should have <100ms latency")
+	// Timing measurements must always be present and sane.
+	assert.Greater(t, benchmark.ThroughputMBps, 0.0, "throughput should be measured")
+	assert.False(t, math.IsInf(benchmark.ThroughputMBps, 0) || math.IsNaN(benchmark.ThroughputMBps),
+		"throughput should be finite")
+	assert.GreaterOrEqual(t, benchmark.LatencyMs, 0, "latency should be recorded")
+	assert.GreaterOrEqual(t, benchmark.CPUUsagePercent, 0.0, "CPU usage should be non-negative")
+	assert.LessOrEqual(t, benchmark.CPUUsagePercent, 100.0, "CPU usage is a share of machine capacity")
 
+	// Machine- and load-dependent minimums, opt-in only.
+	if perfStrict() {
+		switch platform {
+		case pt.IlluminaNovaSeq6000:
+			assert.Greater(t, benchmark.ThroughputMBps, 10.0, "NovaSeq should have >10 MB/s throughput")
+			assert.Less(t, benchmark.LatencyMs, 100, "NovaSeq should have <100ms latency")
+		case pt.PacBioRevio:
+			assert.Greater(t, benchmark.ThroughputMBps, 5.0, "PacBio should have >5 MB/s throughput")
+		case pt.MGI_DNBSEQ_T20x2:
+			assert.Greater(t, benchmark.ThroughputMBps, 10.0, "MGI should have >10 MB/s throughput")
+		}
+		assert.Less(t, benchmark.CPUUsagePercent, 90.0, "CPU usage should be <90%")
+	}
+
+	switch platform {
 	case pt.PacBioRevio:
-		// PacBio should have high accuracy but lower throughput
+		// PacBio should have high accuracy
 		assert.GreaterOrEqual(t, benchmark.AccuracyScore, 0.999, "PacBio should have >=99.9% accuracy")
-		assert.Greater(t, benchmark.ThroughputMBps, 5.0, "PacBio should have >5 MB/s throughput")
 
 	case pt.ONTPromethION24:
 		// ONT should have highest single-read length generation speed
@@ -313,8 +316,6 @@ func validatePlatformPerformance(t *testing.T, platform pt.SequencingPlatform, b
 		assert.Less(t, benchmark.MemoryUsageMB, int64(8000), "ONT should use <8GB memory")
 
 	case pt.MGI_DNBSEQ_T20x2:
-		// MGI should have ultra-high throughput
-		assert.Greater(t, benchmark.ThroughputMBps, 10.0, "MGI should have >10 MB/s throughput")
 		assert.Less(t, benchmark.CostPerGB, 10.0, "MGI should be cost-effective")
 
 	case pt.ElementAVITI:
@@ -325,7 +326,6 @@ func validatePlatformPerformance(t *testing.T, platform pt.SequencingPlatform, b
 
 	// All platforms should meet basic performance requirements
 	assert.Greater(t, benchmark.AuthenticityScore, 40.0, "All platforms should maintain authenticity >40")
-	assert.Less(t, benchmark.CPUUsagePercent, 90.0, "CPU usage should be <90%")
 	assert.Greater(t, benchmark.OverallScore, 40.0, "Overall benchmark score should be >40")
 }
 
