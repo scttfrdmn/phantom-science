@@ -1,0 +1,47 @@
+Provenance of the SLOW5/BLOW5 test files in this directory
+==========================================================
+
+exp_1_lossless.blow5
+    Copied unchanged from slow5lib, test/data/exp/one_fast5/exp_1_lossless.blow5
+    (https://github.com/hasindu2008/slow5lib, commit
+    76c4da00aac8290806311babebc3476cd8464d21). One read, SLOW5 file version
+    0.1.0, record compression none, no signal compression, auxiliary fields
+    channel_number, median_before, read_number, start_mux, start_time.
+
+lossless_none_svb-zd.blow5
+lossless_zstd_svb-zd.blow5
+lossless_zlib_svb-zd.blow5
+lossless.slow5.gz
+    Derived from exp_1_lossless.blow5 with slow5tools 1.5.0
+    (https://github.com/hasindu2008/slow5tools, commit
+    8341d93b175cace57f8a6bae6049af6b87630e0c, built with zstd=1):
+        slow5tools view exp_1_lossless.blow5 -c none -s svb-zd -o lossless_none_svb-zd.blow5
+        slow5tools view exp_1_lossless.blow5 -c zstd -s svb-zd -o lossless_zstd_svb-zd.blow5
+        slow5tools view exp_1_lossless.blow5 -c zlib -s svb-zd -o lossless_zlib_svb-zd.blow5
+        slow5tools view exp_1_lossless.blow5 -o lossless.slow5 && gzip -9 -n lossless.slow5
+
+These files are covered by the slow5lib licence:
+
+MIT License
+
+Copyright (c) 2020 Hasindu Gamaarachchi
+Copyright (c) 2020 Sasha Jenner
+Copyright (c) 2020 Hiruna Samarakoon
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
