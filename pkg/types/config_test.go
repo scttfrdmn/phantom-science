@@ -1,9 +1,75 @@
 package types
 
 import (
+	"encoding/json"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
+
+// The generation fields added for seeds, read lengths, error models, ONT
+// metadata, output and scale must round-trip, and stay out of serialized
+// configs that do not set them.
+func TestSequencerConfig_GenerationFieldsRoundTrip(t *testing.T) {
+	in := SequencerConfig{
+		SampleName: "S",
+		Platform:   "ont",
+		Seed:       42,
+		ReadLengthDistribution: ReadLengthSpec{
+			Dist: ReadLengthLognormal, N50: 50000, Median: 25000, Min: 200, Max: 2000000,
+			Mean: 30000, SD: 20000, Shape: 2, Scale: 750, EmpiricalPath: "h.tsv",
+		},
+		ErrorModel: ErrorModelSpec{Tier: "sup"},
+		ONT:        ONTSpec{RunID: "r", FlowCellID: "PAM12345", ProtocolGroupID: "p", Channels: 3000, SpeedBPS: 400},
+		Output:     OutputSpec{Compression: "gzip", FilePattern: "x", SummaryFile: "sequencing_summary.txt"},
+		TotalBases: 140e9, TotalReads: 1e6, FlowCells: 2, Workers: 8,
+	}
+	data, err := json.Marshal(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var back SequencerConfig
+	if err := json.Unmarshal(data, &back); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(back, in) {
+		t.Errorf("JSON round trip:\n got %+v\nwant %+v", back, in)
+	}
+	for _, key := range []string{`"seed":42`, `"platform":"ont"`, `"read_length_distribution":{`, `"n50":50000`, `"error_model":{"tier":"sup"}`, `"total_bases":140000000000`} {
+		if !strings.Contains(string(data), key) {
+			t.Errorf("JSON lacks %s: %s", key, data)
+		}
+	}
+
+	ydata, err := yaml.Marshal(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var yback SequencerConfig
+	if err := yaml.Unmarshal(ydata, &yback); err != nil {
+		t.Fatal(err)
+	}
+	if yback.Seed != 42 || yback.Platform != "ont" || yback.ReadLengthDistribution != in.ReadLengthDistribution ||
+		yback.ErrorModel != in.ErrorModel || yback.ONT != in.ONT || yback.Output != in.Output ||
+		yback.TotalBases != in.TotalBases || yback.TotalReads != in.TotalReads || yback.FlowCells != 2 || yback.Workers != 8 {
+		t.Errorf("YAML round trip lost fields: %+v", yback)
+	}
+}
+
+func TestSequencerConfig_GenerationFieldsOmittedWhenUnset(t *testing.T) {
+	data, err := json.Marshal(SequencerConfig{SampleName: "S"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"seed", "platform", "read_length_distribution", "error_model", `"ont"`, `"output"`, "total_bases", "total_reads", "flow_cells", "workers"} {
+		if strings.Contains(string(data), key) {
+			t.Errorf("unset %s serialized: %s", key, data)
+		}
+	}
+}
 
 func TestSequencerConfigValidation(t *testing.T) {
 	tests := []struct {

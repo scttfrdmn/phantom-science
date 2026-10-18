@@ -63,6 +63,91 @@ type SequencerConfig struct {
     // <Population>.hmm.json (e.g. YRI.hmm.json). Used together with Population.
     // Ignored when HMMModelPath is set explicitly.
     ModelDir string `json:"model_dir,omitempty" yaml:"model_dir,omitempty"`
+
+    // Platform selects the read model and output format: "illumina" (the
+    // default when empty) or "ont" (Oxford Nanopore; not implemented yet, #12).
+    Platform string `json:"platform,omitempty" yaml:"platform,omitempty"`
+
+    // Seed makes generation reproducible: the same seed and configuration
+    // produce byte-identical output. Zero means "draw a random seed"; the
+    // drawn seed is logged to stderr so the run can be repeated.
+    Seed uint64 `json:"seed,omitempty" yaml:"seed,omitempty"`
+
+    // ReadLengthDistribution selects how read lengths are sampled. The zero
+    // value (or Dist "fixed") gives every read exactly ReadLength bases.
+    ReadLengthDistribution ReadLengthSpec `json:"read_length_distribution,omitzero" yaml:"read_length_distribution,omitempty"`
+
+    // ErrorModel configures sequencing errors applied to generated reads.
+    // The zero value applies no errors (#11).
+    ErrorModel ErrorModelSpec `json:"error_model,omitzero" yaml:"error_model,omitempty"`
+
+    // ONT holds Oxford Nanopore run metadata used when Platform is "ont".
+    ONT ONTSpec `json:"ont,omitzero" yaml:"ont,omitempty"`
+
+    // Output controls file naming, compression and run summary files.
+    Output OutputSpec `json:"output,omitzero" yaml:"output,omitempty"`
+
+    // Output-size targets and parallelism (#16). When TotalBases or
+    // TotalReads is set, batch counts are derived from the read-length
+    // distribution instead of TotalBatches. Zero means unset.
+    TotalBases int64 `json:"total_bases,omitempty" yaml:"total_bases,omitempty"`
+    TotalReads int64 `json:"total_reads,omitempty" yaml:"total_reads,omitempty"`
+    FlowCells  int   `json:"flow_cells,omitempty" yaml:"flow_cells,omitempty"`
+    Workers    int   `json:"workers,omitempty" yaml:"workers,omitempty"`
+}
+
+// Read-length distribution names for ReadLengthSpec.Dist.
+const (
+    ReadLengthFixed     = "fixed"
+    ReadLengthLognormal = "lognormal"
+    ReadLengthGamma     = "gamma"
+    ReadLengthEmpirical = "empirical"
+)
+
+// ReadLengthSpec describes the read-length distribution (#10). Which fields
+// apply depends on Dist: lognormal uses N50 and Median (or Mean and SD),
+// gamma uses Shape and Scale (or Mean and SD), empirical loads a length
+// histogram from EmpiricalPath. Min and Max clamp every sampler when set.
+type ReadLengthSpec struct {
+    Dist          string  `json:"dist,omitempty" yaml:"dist,omitempty"` // fixed | lognormal | gamma | empirical
+    Mean          float64 `json:"mean,omitempty" yaml:"mean,omitempty"`
+    SD            float64 `json:"sd,omitempty" yaml:"sd,omitempty"`
+    Min           int     `json:"min,omitempty" yaml:"min,omitempty"`
+    Max           int     `json:"max,omitempty" yaml:"max,omitempty"`
+    N50           int     `json:"n50,omitempty" yaml:"n50,omitempty"`
+    Median        int     `json:"median,omitempty" yaml:"median,omitempty"`
+    Shape         float64 `json:"shape,omitempty" yaml:"shape,omitempty"`
+    Scale         float64 `json:"scale,omitempty" yaml:"scale,omitempty"`
+    EmpiricalPath string  `json:"empirical_path,omitempty" yaml:"empirical_path,omitempty"`
+}
+
+// ErrorModelSpec configures the sequencing error model (#11).
+type ErrorModelSpec struct {
+    // Tier is the ONT basecaller tier: "sup", "hac" or "fast". Empty means
+    // no error model.
+    Tier string `json:"tier,omitempty" yaml:"tier,omitempty"`
+}
+
+// ONTSpec holds Oxford Nanopore run metadata written to read headers and the
+// sequencing summary (#12). Empty values are generated.
+type ONTSpec struct {
+    RunID           string  `json:"run_id,omitempty" yaml:"run_id,omitempty"`
+    FlowCellID      string  `json:"flow_cell_id,omitempty" yaml:"flow_cell_id,omitempty"`
+    ProtocolGroupID string  `json:"protocol_group_id,omitempty" yaml:"protocol_group_id,omitempty"`
+    Channels        int     `json:"channels,omitempty" yaml:"channels,omitempty"`
+    SpeedBPS        float64 `json:"speed_bps,omitempty" yaml:"speed_bps,omitempty"` // translocation speed, bases per second
+}
+
+// OutputSpec controls output files (#12, #16).
+type OutputSpec struct {
+    // Compression is "none" (default when empty) or "gzip".
+    Compression string `json:"compression,omitempty" yaml:"compression,omitempty"`
+    // FilePattern overrides the output file naming; empty keeps the
+    // Illumina-style <sample>_S1_L<lane>_[R<mate>_]<batch>.fastq names.
+    FilePattern string `json:"file_pattern,omitempty" yaml:"file_pattern,omitempty"`
+    // SummaryFile, when set, names a per-run read summary (ONT
+    // sequencing_summary.txt) written next to the FASTQ files.
+    SummaryFile string `json:"summary_file,omitempty" yaml:"summary_file,omitempty"`
 }
 
 // PhantomConfig represents Phantom Science enterprise features

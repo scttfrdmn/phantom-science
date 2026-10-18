@@ -5,11 +5,15 @@ package genomics
 
 import (
 	"bytes"
+	"math/rand/v2"
 	"strings"
 	"testing"
 
 	"github.com/scttfrdmn/phantom-science/pkg/types"
 )
+
+// testRand returns a fixed-seed generator for unit tests.
+func testRand() *rand.Rand { return newStream(1, 0) }
 
 func minimalConfig(t *testing.T) types.SequencerConfig {
 	t.Helper()
@@ -121,7 +125,7 @@ func TestGenerateToWriter_Variants(t *testing.T) {
 func TestInjectVariants_AlwaysInject(t *testing.T) {
 	seq := []byte("AAACGTAAA")
 	variants := []VariantRecord{{Ref: "ACGT", Alt: "TTTT", Freq: 1.0}}
-	result := injectVariants(seq, variants)
+	result, _ := injectVariants(testRand(), seq, nil, variants)
 	if len(result) != len(seq) {
 		t.Errorf("result length %d != original %d", len(result), len(seq))
 	}
@@ -136,7 +140,7 @@ func TestInjectVariants_NeverInject(t *testing.T) {
 	original := make([]byte, len(seq))
 	copy(original, seq)
 	variants := []VariantRecord{{Ref: "ACGT", Alt: "TTTT", Freq: 0.0}}
-	result := injectVariants(seq, variants)
+	result, _ := injectVariants(testRand(), seq, nil, variants)
 	if !bytes.Equal(result, original) {
 		t.Errorf("Freq=0 should not modify sequence; got %q, want %q", result, original)
 	}
@@ -148,29 +152,38 @@ func TestInjectVariants_MissingRef(t *testing.T) {
 	original := make([]byte, len(seq))
 	copy(original, seq)
 	variants := []VariantRecord{{Ref: "CCCC", Alt: "TTTT", Freq: 1.0}}
-	result := injectVariants(seq, variants)
+	result, _ := injectVariants(testRand(), seq, nil, variants)
 	if !bytes.Equal(result, original) {
 		t.Errorf("absent REF should leave sequence unchanged; got %q", result)
 	}
 }
 
-// TestInjectVariants_LengthPreserved verifies ALT longer than REF is truncated
-// and ALT shorter than REF is padded with N.
-func TestInjectVariants_LengthPreserved(t *testing.T) {
+// TestInjectVariants_IndelChangesLength verifies that injection splices the
+// allele without truncating or padding: the read length changes by exactly
+// the indel size (the pipeline trims fixed-length reads afterwards), and
+// qualities stay aligned with the bases.
+func TestInjectVariants_IndelChangesLength(t *testing.T) {
 	seq := []byte("AAATGAAA") // len=8
+	qual := []byte{1, 2, 3, 4, 5, 6, 7, 8}
 
-	// Longer ALT: replace "ATG" (3) with "GGGGGG" (6) — result should stay len=8
-	longerALT := []VariantRecord{{Ref: "ATG", Alt: "GGGGGG", Freq: 1.0}}
-	res := injectVariants(seq, longerALT)
-	if len(res) != 8 {
-		t.Errorf("longer ALT: expected len 8, got %d (%q)", len(res), res)
+	// Longer ALT: replace "ATG" (3) with "GGGGGG" (6) → len 11.
+	res, q := injectVariants(testRand(), seq, qual, []VariantRecord{{Ref: "ATG", Alt: "GGGGGG", Freq: 1.0}})
+	if string(res) != "AAGGGGGGAAA" {
+		t.Errorf("longer ALT: got %q, want AAGGGGGGAAA", res)
+	}
+	if !bytes.Equal(q, []byte{1, 2, 3, 4, 5, 5, 5, 5, 6, 7, 8}) {
+		t.Errorf("longer ALT qualities: got %v", q)
 	}
 
-	// Shorter ALT: replace "ATG" (3) with "G" (1) — result should be padded to len=8
-	shorterALT := []VariantRecord{{Ref: "ATG", Alt: "G", Freq: 1.0}}
-	seq2 := []byte("AAATGAAA")
-	res2 := injectVariants(seq2, shorterALT)
-	if len(res2) != 8 {
-		t.Errorf("shorter ALT: expected len 8, got %d (%q)", len(res2), res2)
+	// Shorter ALT: replace "ATG" (3) with "G" (1) → len 6, no N padding.
+	res2, q2 := injectVariants(testRand(), []byte("AAATGAAA"), qual, []VariantRecord{{Ref: "ATG", Alt: "G", Freq: 1.0}})
+	if string(res2) != "AAGAAA" {
+		t.Errorf("shorter ALT: got %q, want AAGAAA", res2)
+	}
+	if !bytes.Equal(q2, []byte{1, 2, 3, 6, 7, 8}) {
+		t.Errorf("shorter ALT qualities: got %v", q2)
+	}
+	if string(seq) != "AAATGAAA" {
+		t.Errorf("input modified: %q", seq)
 	}
 }

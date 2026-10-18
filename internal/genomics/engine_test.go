@@ -141,7 +141,7 @@ func TestGenerateFASTQFile(t *testing.T) {
 	}
 
 	engine := NewEngine(config)
-	err := engine.generateFASTQFile(filename, 1, 1)
+	err := engine.GenerateFASTQFile(filename, 1, 1)
 	if err != nil {
 		t.Fatalf("Expected FASTQ generation to succeed, got error: %v", err)
 	}
@@ -201,7 +201,7 @@ func TestFASTQFormat(t *testing.T) {
 	}
 
 	engine := NewEngine(config)
-	err := engine.generateFASTQFile(filename, 1, 1)
+	err := engine.GenerateFASTQFile(filename, 1, 1)
 	if err != nil {
 		t.Fatalf("Expected FASTQ generation to succeed, got error: %v", err)
 	}

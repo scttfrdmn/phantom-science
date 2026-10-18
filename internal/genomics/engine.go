@@ -1,16 +1,22 @@
 // Package genomics provides the core FASTQ generation engine, including HMM model
 // integration, steganographic fingerprinting, and sequencer-realistic output.
+//
+// Generation runs through one shared per-read pipeline (pipeline.go) with
+// extension points for read lengths (engine_readlen.go), qualities and
+// sequencing errors (engine_errors.go), and headers, file names and output
+// handling (engine_output.go). Randomness is seedable (rng.go).
 package genomics
 
 import (
     "bufio"
-    "bytes"
-    "crypto/rand"
     "fmt"
     "io"
+    "math/rand/v2"
     "os"
     "path/filepath"
     "sync"
+    "sync/atomic"
+
     "github.com/scttfrdmn/phantom-science/internal/fingerprinting"
     "github.com/scttfrdmn/phantom-science/internal/genomics/authenticity"
     "github.com/scttfrdmn/phantom-science/internal/security"
@@ -20,7 +26,25 @@ import (
 type Engine struct {
     config               types.SequencerConfig
     fingerprintingEngine fingerprinting.Engine
-    hmmModel             authenticity.SequenceGenerator // nil = use crypto/rand
+    hmmModel             authenticity.SequenceGenerator // nil = uniform random bases
+
+    // seed is the run seed (SequencerConfig.Seed, or drawn when unset);
+    // seedDrawn reports a drawn seed, which is logged once to logw.
+    seed        uint64
+    seedDrawn   bool
+    seedErr     error
+    seedLogOnce sync.Once
+    // logw receives diagnostics (seed, HMM model loading). It is stderr so
+    // that FASTQ streamed to stdout stays clean.
+    logw io.Writer
+
+    // rawMu guards rawRand, the stream behind GenerateRawSequence.
+    rawMu   sync.Mutex
+    rawRand *rand.Rand
+
+    // overlapSkips counts positioned variants skipped because they overlap
+    // a variant already applied to the same read.
+    overlapSkips atomic.Int64
 
     // Files written by Generate and GenerateFASTQFile, in order.
     filesMu sync.Mutex
@@ -108,6 +132,9 @@ func (e *Engine) embedFileFingerprint(filename string) error {
     return nil
 }
 
+// NewEngine creates an engine for config. It resolves the run seed (drawing
+// one when config.Seed is zero) and loads the HMM model when configured.
+// Diagnostics go to stderr.
 func NewEngine(config types.SequencerConfig) *Engine {
     // Initialize fingerprinting engine with customer ID from config
     customerID := "phantom-science" // Default customer ID
@@ -115,7 +142,8 @@ func NewEngine(config types.SequencerConfig) *Engine {
         customerID = config.Enterprise.CustomerID
     }
 
-    e := &Engine{config: config}
+    e := &Engine{config: config, logw: os.Stderr}
+    e.seed, e.seedDrawn, e.seedErr = ResolveSeed(config.Seed)
     var fpOpts []fingerprinting.Option
     if config.Fingerprinting.Enable {
         key, err := fingerprinting.ResolveKey(config.Fingerprinting.KeyFile)
@@ -130,11 +158,12 @@ func NewEngine(config types.SequencerConfig) *Engine {
     if modelPath := resolveModelPath(config); modelPath != "" {
         m, err := authenticity.LoadModel(modelPath)
         if err != nil {
-            fmt.Printf("   [warn] HMM model load failed (%s): %v — using crypto/rand\n",
+            fmt.Fprintf(e.logw, "   [warn] HMM model load failed (%s): %v — using uniform random bases\n",
                 modelPath, err)
         } else {
             e.hmmModel = m
-            fmt.Printf("   [info] Loaded HMM model from %s\n", modelPath)
+            e.reseedModel(newStream(e.seed, rawStream))
+            fmt.Fprintf(e.logw, "   [info] Loaded HMM model from %s\n", modelPath)
         }
     }
     return e
@@ -144,7 +173,7 @@ func NewEngine(config types.SequencerConfig) *Engine {
 // Resolution order:
 //  1. Explicit HMMModelPath — highest priority.
 //  2. ModelDir/<Population>.hmm.json — when both Population and ModelDir are set.
-//  3. Empty string — engine uses crypto/rand.
+//  3. Empty string — engine uses uniform random bases.
 func resolveModelPath(config types.SequencerConfig) string {
     if config.HMMModelPath != "" {
         return config.HMMModelPath
@@ -172,55 +201,68 @@ func (e *Engine) Generate() error {
     if e.config.OutputDir == "" {
         return fmt.Errorf("output directory cannot be empty")
     }
+    if err := e.checkExtensions(); err != nil {
+        return err
+    }
     if e.qualityFingerprintingEnabled() {
         if err := e.checkQualityFingerprinting(); err != nil {
             return err
         }
     }
-    
+    e.logSeed()
+
     fmt.Println("🧬 Initializing genomics simulation engine...")
     fmt.Printf("   Sample: %s\n", e.config.SampleName)
     fmt.Printf("   Reads per batch: %d\n", e.config.ReadsPerBatch)
     fmt.Printf("   Total batches: %d\n", e.config.TotalBatches)
-    
-    // Note: crypto/rand doesn't need seeding
-    
+
     // Create output directory with security validation
     if err := security.SecureMkdirAll(e.config.OutputDir, ""); err != nil {
         return fmt.Errorf("failed to create output directory: %w", err)
     }
-    
+
     totalReads := e.config.TotalBatches * e.config.ReadsPerBatch
     fmt.Printf("   Total reads to generate: %d\n", totalReads)
-    
-    // Generate FASTQ files for each batch
+
+    obs, err := e.observer()
+    if err != nil {
+        return err
+    }
+    mates := []int{1}
+    if e.config.PairedEnd {
+        mates = []int{1, 2}
+    }
     for batch := 1; batch <= e.config.TotalBatches; batch++ {
         fmt.Printf("   Generating batch %d/%d...\n", batch, e.config.TotalBatches)
-        
-        if e.config.PairedEnd {
-            // Generate paired-end files
-            r1File := filepath.Join(e.config.OutputDir, fmt.Sprintf("%s_S1_L%03d_R1_%03d.fastq", e.config.SampleName, e.config.Lane, batch))
-            r2File := filepath.Join(e.config.OutputDir, fmt.Sprintf("%s_S1_L%03d_R2_%03d.fastq", e.config.SampleName, e.config.Lane, batch))
-            
-            if err := e.generateFASTQFile(r1File, batch, 1); err != nil {
-                return fmt.Errorf("failed to generate R1 file: %w", err)
-            }
-            if err := e.generateFASTQFile(r2File, batch, 2); err != nil {
-                return fmt.Errorf("failed to generate R2 file: %w", err)
-            }
-        } else {
-            // Generate single-end file
-            fastqFile := filepath.Join(e.config.OutputDir, fmt.Sprintf("%s_S1_L%03d_%03d.fastq", e.config.SampleName, e.config.Lane, batch))
-            if err := e.generateFASTQFile(fastqFile, batch, 1); err != nil {
+        for _, mate := range mates {
+            if err := e.generateFASTQFile(e.outputPath(batch, mate), batch, mate, obs); err != nil {
+                closeObserver(obs) // #nosec G104 -- the generation error is returned
+                if e.config.PairedEnd {
+                    return fmt.Errorf("failed to generate R%d file: %w", mate, err)
+                }
                 return fmt.Errorf("failed to generate FASTQ file: %w", err)
             }
         }
     }
-    
-    fmt.Printf("   ✅ Generated %d FASTQ files in %s\n", 
-        e.config.TotalBatches * (1 + boolToInt(e.config.PairedEnd)), 
+    if err := closeObserver(obs); err != nil {
+        return err
+    }
+
+    fmt.Printf("   ✅ Generated %d FASTQ files in %s\n",
+        e.config.TotalBatches*len(mates),
         e.config.OutputDir)
-    
+
+    return nil
+}
+
+// closeObserver closes obs when it is not nil.
+func closeObserver(obs ReadObserver) error {
+    if obs == nil {
+        return nil
+    }
+    if err := obs.Close(); err != nil {
+        return fmt.Errorf("closing read observer: %w", err)
+    }
     return nil
 }
 
@@ -231,17 +273,31 @@ func (e *Engine) Close() {
     }
 }
 
-// GenerateFASTQFile generates a single FASTQ file (public method for TUI)
+// GenerateFASTQFile generates a single FASTQ file (public method for TUI).
+// read is the mate number (1, or 2 for the second file of a pair). The
+// file's reads come from the RNG stream of (batch, read), so its content
+// depends only on the seed, the configuration, batch and read.
 func (e *Engine) GenerateFASTQFile(filename string, batch, read int) error {
-    return e.generateFASTQFile(filename, batch, read)
+    if err := e.checkExtensions(); err != nil {
+        return err
+    }
+    obs, err := e.observer()
+    if err != nil {
+        return err
+    }
+    if err := e.generateFASTQFile(filename, batch, read, obs); err != nil {
+        closeObserver(obs) // #nosec G104 -- the generation error is returned
+        return err
+    }
+    return closeObserver(obs)
 }
 
-func (e *Engine) generateFASTQFile(filename string, batch, read int) error {
+func (e *Engine) generateFASTQFile(filename string, batch, read int, obs ReadObserver) error {
     // Validate file path against the configured output directory
     if err := security.ValidateFilePath(filename, e.config.OutputDir); err != nil {
         return fmt.Errorf("invalid file path: %w", err)
     }
-    
+
     if e.qualityFingerprintingEnabled() {
         if err := e.checkQualityFingerprinting(); err != nil {
             return err
@@ -252,21 +308,20 @@ func (e *Engine) generateFASTQFile(filename string, batch, read int) error {
     if err != nil {
         return err
     }
-    if err := e.writeFASTQRecords(file, batch, read); err != nil {
-        file.Close() // #nosec G104 -- the write error is returned
+    if err := e.writeFileStream(file, batch, read, filename, obs); err != nil {
+        file.Close()        // #nosec G104 -- the write error is returned
         os.Remove(filename) // #nosec G104 -- best effort cleanup of a partial file
         return err
     }
     if err := file.Close(); err != nil {
         return fmt.Errorf("closing %s: %w", filepath.Base(filename), err)
     }
-    if e.qualityFingerprintingEnabled() {
-        if err := e.embedFileFingerprint(filename); err != nil {
-            return err
-        }
+    final, err := e.finalize(filename)
+    if err != nil {
+        return err
     }
     e.filesMu.Lock()
-    e.files = append(e.files, filename)
+    e.files = append(e.files, final)
     e.filesMu.Unlock()
     return nil
 }
@@ -278,99 +333,59 @@ func (e *Engine) GeneratedFiles() []string {
     return append([]string(nil), e.files...)
 }
 
-// writeFASTQRecords writes one batch of FASTQ records to w.
-func (e *Engine) writeFASTQRecords(w io.Writer, batch, read int) error {
-    bw := bufio.NewWriterSize(w, 256*1024)
-    qualityChars := "!\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJ"
-    
-    for readNum := 1; readNum <= e.config.ReadsPerBatch; readNum++ {
-        // Generate read ID with batch and read info
-        baseReadID := fmt.Sprintf("@%s:%d:HXXXXXX:%d:1101:%d:%d %d:N:0:1", 
-            e.config.SampleName, e.config.Lane, batch, readNum*1000, readNum*2000, read)
-        
-        // Apply fingerprinting to read ID if enabled
-        readID := baseReadID
-        if e.config.Fingerprinting.Enable && e.fingerprintingEngine != nil {
-            if e.config.Fingerprinting.CustomerFingerprint {
-                readID = e.fingerprintingEngine.EmbedCustomerID(baseReadID)
-            }
-            if e.config.Fingerprinting.DatasetFingerprint && e.config.DatasetID != "" {
-                readID = e.fingerprintingEngine.EmbedDatasetFingerprint(readID, e.config.DatasetID)
-            }
-        }
-        
-        // Generate DNA sequence (HMM model if configured, else crypto/rand).
-        sequence, hmmQuals, err := e.generateSequence(e.config.ReadLength)
-        if err != nil {
-            return fmt.Errorf("failed to generate sequence: %w", err)
-        }
-
-        // Encode quality scores.
-        qualities := make([]byte, e.config.ReadLength)
-        if hmmQuals != nil {
-            // HMM emission model provides per-base Phred scores (0–41).
-            for i, q := range hmmQuals {
-                idx := int(q)
-                if idx >= len(qualityChars) {
-                    idx = len(qualityChars) - 1
-                }
-                qualities[i] = qualityChars[idx]
-            }
-        } else {
-            // Config-based quality decay (original path).
-            for i := 0; i < e.config.ReadLength; i++ {
-                qualityValue := e.config.BaseQuality - int(float64(i)*e.config.QualityDecay)
-                if qualityValue < 2 {
-                    qualityValue = 2
-                }
-                if qualityValue > len(qualityChars)-1 {
-                    qualityValue = len(qualityChars) - 1
-                }
-                qualities[i] = qualityChars[qualityValue]
-            }
-        }
-        
-        if _, err := fmt.Fprintf(bw, "%s\n%s\n+\n%s\n", readID, sequence, qualities); err != nil {
-            return fmt.Errorf("writing FASTQ record: %w", err)
-        }
-    }
-
-    return bw.Flush()
+// SkippedVariantOverlaps returns how many positioned variant applications
+// were skipped because the variant overlapped another variant already
+// applied to the same read.
+func (e *Engine) SkippedVariantOverlaps() int64 {
+    return e.overlapSkips.Load()
 }
 
-// generateSequence returns a DNA sequence and optional per-base Phred quality scores.
-// It tries the HMM model first; if unavailable or erroring, falls back to crypto/rand.
-// When falling back, quals is nil (signals the caller to use config-based quality decay).
-func (e *Engine) generateSequence(length int) ([]byte, []byte, error) {
+// writeFileStream writes one file's batch of FASTQ records (one mate) to w.
+func (e *Engine) writeFileStream(w io.Writer, batch, mate int, filename string, obs ReadObserver) error {
+    p, err := e.newPipeline(GenerateOpts{}, obs)
+    if err != nil {
+        return err
+    }
+    ww, err := e.wrapOutput(w)
+    if err != nil {
+        return err
+    }
+    r := newStream(e.seed, streamID(batch, mate))
+    e.reseedModel(r)
+    bw := bufio.NewWriterSize(ww, 256*1024)
+    var serial int64
+    if err := p.writeBatch(bw, r, batch, []int{mate}, filename, &serial); err != nil {
+        return err
+    }
+    if err := bw.Flush(); err != nil {
+        return fmt.Errorf("writing FASTQ record: %w", err)
+    }
+    return ww.Close()
+}
+
+// reseedModel reseeds the HMM model (when it supports seeding) from r, so
+// HMM-generated reads are reproducible from the run seed as well. The model
+// is shared by the engine's streams; generating streams concurrently needs a
+// model per stream.
+func (e *Engine) reseedModel(r *rand.Rand) {
+    if s, ok := e.hmmModel.(seedable); ok {
+        s.SetSeed(r.Int64())
+    }
+}
+
+// generateWith returns n bases and their Phred qualities. It uses the HMM
+// model when one is loaded, and falls back to uniform random bases drawn from
+// r when there is none or it fails; qualities are then nil, and the pipeline
+// applies the quality model.
+func (e *Engine) generateWith(r *rand.Rand, n int) ([]byte, []byte, error) {
     if e.hmmModel != nil {
-        result, err := e.hmmModel.GenerateSequence(length)
+        result, err := e.hmmModel.GenerateSequence(n)
         if err == nil {
             return result.Sequence, result.Qualities, nil
         }
-        // fall through to crypto/rand on per-call HMM failure
+        // fall through to uniform bases on per-call HMM failure
     }
-    seq, err := e.generateSecureSequence(length)
-    return seq, nil, err
-}
-
-// generateSecureSequence creates a cryptographically secure random DNA sequence
-func (e *Engine) generateSecureSequence(length int) ([]byte, error) {
-    bases := []byte("ATCG")
-    sequence := make([]byte, length)
-    
-    // Generate cryptographically secure random bytes
-    randomBytes := make([]byte, length)
-    _, err := rand.Read(randomBytes)
-    if err != nil {
-        return nil, fmt.Errorf("failed to generate random bytes: %w", err)
-    }
-    
-    // Convert random bytes to DNA bases
-    for i := 0; i < length; i++ {
-        sequence[i] = bases[randomBytes[i]%4]
-    }
-    
-    return sequence, nil
+    return randomBases(r, n), nil, nil
 }
 
 // VariantRecord holds a single variant for controlled injection into synthetic reads.
@@ -401,13 +416,15 @@ type GenerateOpts struct {
     SampleID string
     // RefRegion, when non-nil, enables coordinate-aware injection. Reads are
     // assigned random start positions within the region, and variants with
-    // Chromosome+Position set are injected at their exact genomic offsets.
+    // Chromosome+Position set (on the region's chromosome) are injected at
+    // their exact genomic offsets; position-blind variants are ignored.
     RefRegion *GenomicRegion // nil → legacy position-blind injection
 }
 
 // GenerateToWriter streams all synthetic FASTQ reads to w without writing local
 // files. Variant injection and per-read RG tagging are controlled via opts.
-// Config-level fingerprinting is applied when enabled.
+// Config-level fingerprinting is applied when enabled. Each batch draws from
+// its own RNG stream, so output is reproducible from the seed.
 func (e *Engine) GenerateToWriter(w io.Writer, opts GenerateOpts) error {
     if e.config.ReadLength <= 0 {
         return fmt.Errorf("invalid read length: %d", e.config.ReadLength)
@@ -421,204 +438,78 @@ func (e *Engine) GenerateToWriter(w io.Writer, opts GenerateOpts) error {
     if e.qualityFingerprintingEnabled() {
         return fmt.Errorf("steganography layer %q needs file output: a fingerprint cannot be embedded in streamed output; write files instead, or remove %q from steganography_layers", qualityLayer, qualityLayer)
     }
-
-    qualityChars := "!\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJ"
-    bw, ok := w.(*bufio.Writer)
-    if !ok {
-        bw = bufio.NewWriterSize(w, 256*1024)
+    if err := e.checkExtensions(); err != nil {
+        return err
     }
+    e.logSeed()
 
+    obs, err := e.observer()
+    if err != nil {
+        return err
+    }
+    before := e.SkippedVariantOverlaps()
+    if err := e.writeStreams(w, opts, obs); err != nil {
+        closeObserver(obs) // #nosec G104 -- the generation error is returned
+        return err
+    }
+    if n := e.SkippedVariantOverlaps() - before; n > 0 {
+        fmt.Fprintf(e.logw, "   [warn] %d variant applications skipped: the variant overlapped another variant in the same read\n", n)
+    }
+    return closeObserver(obs)
+}
+
+// writeStreams writes every batch to w, one RNG stream per batch.
+func (e *Engine) writeStreams(w io.Writer, opts GenerateOpts, obs ReadObserver) error {
+    ww, err := e.wrapOutput(w)
+    if err != nil {
+        return err
+    }
+    // Reuse the caller's buffer when the output is passed through unchanged.
+    var bw *bufio.Writer
+    if nw, isNop := ww.(nopWriteCloser); isNop {
+        bw, _ = nw.Writer.(*bufio.Writer)
+    }
+    if bw == nil {
+        bw = bufio.NewWriterSize(ww, 256*1024)
+    }
+    mates := []int{1}
+    if e.config.PairedEnd {
+        mates = []int{1, 2}
+    }
+    var serial int64
     for batch := 1; batch <= e.config.TotalBatches; batch++ {
-        for readNum := 1; readNum <= e.config.ReadsPerBatch; readNum++ {
-            // Compute read start position for coordinate-aware injection.
-            var readStart int64
-            if opts.RefRegion != nil {
-                regionLen := opts.RefRegion.End - opts.RefRegion.Start - int64(e.config.ReadLength)
-                if regionLen <= 0 {
-                    return fmt.Errorf("region [%s:%d-%d) too small for read length %d",
-                        opts.RefRegion.Chromosome, opts.RefRegion.Start, opts.RefRegion.End, e.config.ReadLength)
-                }
-                readStart = opts.RefRegion.Start + cryptoRandInt63n(regionLen)
-            }
-            sides := 1
-            if e.config.PairedEnd {
-                sides = 2
-            }
-            for side := 1; side <= sides; side++ {
-                var readID string
-                if opts.RefRegion != nil {
-                    readID = fmt.Sprintf("@%s:%d:HXXXXXX:%d:1101:%d:%d %d:N:0:1",
-                        e.config.SampleName, e.config.Lane, batch,
-                        int(readStart%100000), int((readStart/100000)%100000), side)
-                } else {
-                    readID = fmt.Sprintf("@%s:%d:HXXXXXX:%d:1101:%d:%d %d:N:0:1",
-                        e.config.SampleName, e.config.Lane, batch, readNum*1000, readNum*2000, side)
-                }
-                if opts.SampleID != "" {
-                    readID += "\tRG:Z:" + opts.SampleID
-                }
-
-                // Apply fingerprinting to read ID if enabled.
-                if e.config.Fingerprinting.Enable && e.fingerprintingEngine != nil {
-                    if e.config.Fingerprinting.CustomerFingerprint {
-                        readID = e.fingerprintingEngine.EmbedCustomerID(readID)
-                    }
-                    if e.config.Fingerprinting.DatasetFingerprint && e.config.DatasetID != "" {
-                        readID = e.fingerprintingEngine.EmbedDatasetFingerprint(readID, e.config.DatasetID)
-                    }
-                }
-
-                sequence, hmmQuals, err := e.generateSequence(e.config.ReadLength)
-                if err != nil {
-                    return fmt.Errorf("failed to generate sequence: %w", err)
-                }
-
-                // Inject controlled variants.
-                if len(opts.Variants) > 0 {
-                    if opts.RefRegion != nil {
-                        sequence = injectAtPosition(sequence, readStart, opts.Variants)
-                    } else {
-                        sequence = injectVariants(sequence, opts.Variants)
-                    }
-                }
-
-                // Encode quality scores.
-                qualities := make([]byte, e.config.ReadLength)
-                if hmmQuals != nil {
-                    for i, q := range hmmQuals {
-                        idx := int(q)
-                        if idx >= len(qualityChars) {
-                            idx = len(qualityChars) - 1
-                        }
-                        qualities[i] = qualityChars[idx]
-                    }
-                } else {
-                    for i := 0; i < e.config.ReadLength; i++ {
-                        qv := e.config.BaseQuality - int(float64(i)*e.config.QualityDecay)
-                        if qv < 2 {
-                            qv = 2
-                        }
-                        if qv > len(qualityChars)-1 {
-                            qv = len(qualityChars) - 1
-                        }
-                        qualities[i] = qualityChars[qv]
-                    }
-                }
-
-                if _, err := fmt.Fprintf(bw, "%s\n%s\n+\n%s\n", readID, sequence, qualities); err != nil {
-                    return fmt.Errorf("writing FASTQ record: %w", err)
-                }
-            }
+        p, err := e.newPipeline(opts, obs)
+        if err != nil {
+            return err
+        }
+        r := newStream(e.seed, streamID(batch, 0))
+        e.reseedModel(r)
+        if err := p.writeBatch(bw, r, batch, mates, "", &serial); err != nil {
+            return err
         }
     }
-    return bw.Flush()
-}
-
-// injectVariants probabilistically substitutes REF alleles with ALT in a read.
-// For each variant, a single random byte from crypto/rand determines whether to
-// inject (byte/255 < Freq). The read is always returned at the original length:
-// longer ALTs are truncated, shorter ALTs are padded with the following bases.
-func injectVariants(seq []byte, variants []VariantRecord) []byte {
-    result := make([]byte, len(seq))
-    copy(result, seq)
-    rng := make([]byte, 1)
-    for _, v := range variants {
-        if len(v.Ref) == 0 || len(v.Alt) == 0 {
-            continue
-        }
-        rand.Read(rng) // #nosec G104 -- crypto/rand never errors on Linux/macOS
-        if float64(rng[0])/255.0 >= v.Freq {
-            continue
-        }
-        idx := bytes.Index(result, []byte(v.Ref))
-        if idx < 0 {
-            continue
-        }
-        // Splice ALT over REF.
-        after := make([]byte, 0, len(seq))
-        after = append(after, result[:idx]...)
-        after = append(after, []byte(v.Alt)...)
-        after = append(after, result[idx+len(v.Ref):]...)
-        // Trim or pad to original length.
-        if len(after) > len(seq) {
-            after = after[:len(seq)]
-        }
-        for len(after) < len(seq) {
-            after = append(after, 'N')
-        }
-        result = after
+    if err := bw.Flush(); err != nil {
+        return fmt.Errorf("writing FASTQ record: %w", err)
     }
-    return result
-}
-
-// cryptoRandInt63n returns a cryptographically random int64 in [0, n).
-// Returns 0 when n <= 0.
-func cryptoRandInt63n(n int64) int64 {
-    if n <= 0 {
-        return 0
-    }
-    b := make([]byte, 8)
-    rand.Read(b) // #nosec G104
-    v := uint64(b[0])<<56 | uint64(b[1])<<48 | uint64(b[2])<<40 | uint64(b[3])<<32 |
-        uint64(b[4])<<24 | uint64(b[5])<<16 | uint64(b[6])<<8 | uint64(b[7])
-    v &= 0x7fffffffffffffff // clear sign bit
-    return int64(v % uint64(n))
-}
-
-// injectAtPosition injects variants at their exact genomic offsets within a read
-// that starts at readStart (0-based). For each variant with Chromosome and Position
-// set, the base at offset (Position-1 - readStart) is deterministically set to
-// either ALT (with probability Freq) or REF (otherwise), ensuring VAF = Freq.
-// Variants without Chromosome/Position are skipped.
-func injectAtPosition(seq []byte, readStart int64, variants []VariantRecord) []byte {
-    result := make([]byte, len(seq))
-    copy(result, seq)
-    rng := make([]byte, 1)
-    for _, v := range variants {
-        if v.Chromosome == "" || v.Position == 0 {
-            continue
-        }
-        if len(v.Ref) == 0 || len(v.Alt) == 0 {
-            continue
-        }
-        // v.Position is 1-based; convert to 0-based offset within this read.
-        offset := (v.Position - 1) - readStart
-        if offset < 0 || int(offset)+len(v.Ref) > len(result) {
-            continue
-        }
-        rand.Read(rng) // #nosec G104
-        var inject []byte
-        if float64(rng[0])/255.0 < v.Freq {
-            inject = []byte(v.Alt)
-        } else {
-            inject = []byte(v.Ref)
-        }
-        ioff := int(offset)
-        after := make([]byte, 0, len(result))
-        after = append(after, result[:ioff]...)
-        after = append(after, inject...)
-        after = append(after, result[ioff+len(v.Ref):]...)
-        if len(after) > len(result) {
-            after = after[:len(result)]
-        }
-        for len(after) < len(result) {
-            after = append(after, 'N')
-        }
-        result = after
-    }
-    return result
+    return ww.Close()
 }
 
 // GenerateRawSequence exposes the internal sequence generator for packages that
 // build custom read loops (e.g., haplotype-aware clinical scenario generation).
 // Returns DNA bytes and optional per-base quality indices (nil when no HMM model).
+// It draws from an engine-wide stream; GenerateRawSequenceWith takes the
+// generator explicitly.
 func (e *Engine) GenerateRawSequence(readLength int) ([]byte, []byte, error) {
-    return e.generateSequence(readLength)
+    e.rawMu.Lock()
+    defer e.rawMu.Unlock()
+    if e.rawRand == nil {
+        e.rawRand = newStream(e.seed, rawStream|1)
+    }
+    return e.generateWith(e.rawRand, readLength)
 }
 
-func boolToInt(b bool) int {
-    if b {
-        return 1
-    }
-    return 0
+// GenerateRawSequenceWith is GenerateRawSequence drawing uniform bases from r
+// (for example a generator from Engine.Rand).
+func (e *Engine) GenerateRawSequenceWith(r *rand.Rand, readLength int) ([]byte, []byte, error) {
+    return e.generateWith(r, readLength)
 }
