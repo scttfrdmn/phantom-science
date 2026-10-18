@@ -16,6 +16,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `phantom-science verify FILE...` extracts and reports each FASTQ file's fingerprint (customer, dataset, creation time, stegano version). `--customer` and `--dataset` require specific values. It exits non-zero if any file has no fingerprint, a mismatched one, or cannot be read (#2).
 - `phantom-science validate FILE...` runs the validation framework on FASTQ files: the phantom config's tests, or a built-in suite of nine format, quality and composition checks (#2).
 - `fingerprinting.ParseFingerprint` and `FormatFingerprint`.
+- `--seed` (or `seed:` in the config) makes generation byte-reproducible; without it a seed is drawn and logged to stderr so any run can be repeated (#17).
+- `generate --region chr:start-end`. `--stdout` with a positioned VCF now places reads around the variants automatically (#17).
+- Config fields and flags for platform, read-length distribution, basecaller tier, ONT run metadata, output compression and summary file, and output targets and workers. Values not implemented yet fail with "not implemented yet (#N)".
+- Multi-population structured coalescent (`SimulateJointPanel`) with per-population demographic presets for YRI, CEU, CHB and MXL, `NewJointPanels` for panels that share one site set, and `NewPresetPopulationPanel` (#5).
+- `testing.GCSkewed` positive-control helper (#7). `E2EFramework.WriteSAM` and `testing.ErrBAMUnsupported` (#18).
+- Container image `deploy/production/docker/Dockerfile` (Debian bookworm, stegano built at the go.mod version, non-root user 65532) and `.dockerignore` (#4).
+- CI jobs for `go vet`, `govulncheck`, the full test suite with and without CGO, a `-tags release` build, and a Docker image build with a smoke test (#9).
 
 ### Changed
 - **BREAKING:** the `quality_scores` steganography layer requires an encryption key and refuses to run without one, unless `plaintext: true` is set. Generation checks the key before writing anything (#3).
@@ -28,10 +35,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - without the stegano library (`CGO_ENABLED=0` or release builds), before any file is written
   - when a file is too small to hold the fingerprint; the file is removed
   - for `generate --stdout`, which cannot carry the fingerprint (#1)
+- **BREAKING:** read generation uses seeded math/rand/v2 PCG streams instead of crypto/rand; output formats are unchanged (#17).
+- File and streamed output share one read pipeline; Illumina headers, file names and qualities are unchanged (#17).
+- HMM model messages go to stderr, so `generate --stdout` emits clean FASTQ.
+- `--variants` or `--region` without `--stdout` is an error instead of being ignored.
+- Go toolchain pinned to go1.26.9 (`toolchain` directive): go1.24.4 had 39 reachable standard-library vulnerabilities; the `go` directive stays 1.24.4 (#9).
+- `run_e2e_tests` runs an ML calibration (1000 train and 1000 holdout reads per class): null accuracy with its 4σ band around 0.5, plus a GC-skew positive control that must exceed 0.9. Failed platforms are reported and the command exits non-zero (#7).
+- `stream_vcf -target` defaults to 50.0, the neutral point of its k-mer diversity heuristic (#7).
+- The e2e benchmark enforces absolute throughput, latency and CPU thresholds only with `PHANTOM_PERF_STRICT=1`, since they depend on the machine and its load (#7).
+- `run_workflow_tests` and the workflow integration tests run Cromwell, Nextflow and Snakemake for real and pass a workflow only when its outputs check out; missing engines are reported as skipped (#18).
+- `deploy/production/README.md` documents only the container image and real commands (#4).
 
 ### Removed
 - Unused "business" Prometheus metrics in `internal/monitoring` (`phantom_customers_active`, `phantom_datasets_processed_total`, `phantom_revenue_generated_total`, `phantom_sla_compliance_percent`, `phantom_customer_satisfaction_score`). Nothing recorded values to them.
 - Rust pre-commit hooks and Makefile steps for the removed `crypto-engine/` crate.
+- `.github/workflows/enterprise-ci.yml`, which could not pass (#9), and `deploy/production/docker/Dockerfile.enterprise`, which could not build (#4).
+- The retired "~50.3%" accuracy target and its grading (#7).
+- "mock output" workflow results, always-true engine availability, forced `success = true` and hardcoded workflow metrics (#18).
 
 ### Fixed
 - `--command verify` printed "Verification completed" without checking anything, and `NewVerifier` returned a mock that reported every file as verified (#2).
@@ -48,6 +68,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - FASTQ write and close errors were ignored.
 - `make build` failed with "cannot write multiple packages to non-directory"; it now builds `bin/phantom-science` from the main package. `make build-all` now runs `make stegano` and then `make build`.
 - The README's install instructions pointed at a release download that does not exist. They now use `CGO_ENABLED=0 go install` for a pure-Go build, or `make stegano && make build` for fingerprinting.
+- Variant allele draws are exact: Freq=1.0 gave REF in 1 of 256 reads, and every VAF was quantised to 1/256 (#17).
+- Several variants in one read are applied right to left, so an earlier indel no longer shifts later variants; overlapping variants are skipped and counted (#17).
+- Reads with deletions are extended from generated bases instead of padded with `N`, in the engine and in clinical haplotype reads (#17).
+- `generate --stdout --variants` injects VCF variants at their coordinates instead of at the first REF match.
+- Clinical scenarios are reproducible from the seed, and homozygous variants have VAF exactly 1.0 (#17).
+- The `generate` subcommand did not validate its output when the phantom config enabled validation (#2).
+- `NewPopulationPanel` ignored the population name, so every population was the same model. Panels now use per-population presets, and `LoadFromSimulation` builds variants, frequencies and genotypes from one seeded simulation (#5).
+- Coalescent demography: bottlenecks ignored their duration, expansions were applied backwards in time, there was no exponential growth, and coalescence used a haploid rate (E[T2] = N instead of 2N). Tajima's D used the wrong variance (#5).
+- The training pipeline uses the presets instead of hardcoded events older than the coalescent's TMRCA (#5).
+- The cross-population F_ST test compared panels with no shared sites (≈0.33 for any pair). It now uses joint panels and Weir–Cockerham F_ST, checks literature ranges and a same-population null (#6).
+- `WriteBAM` wrote a two-line SAM header stub; it now writes a real BAM via `samtools view -b`, or returns `ErrBAMUnsupported` (#18).
+- `run_e2e_tests` silently skipped platforms whose generation or training failed (#7).
+- `stream_vcf` printed "NOT ACHIEVED" in its summary regardless of the result (#7).
+- `go vet` lock-copy findings in `internal/gpu` (#8).
 
 ## [0.7.0] - 2026-10-17
 
