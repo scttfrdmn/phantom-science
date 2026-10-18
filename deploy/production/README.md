@@ -1,91 +1,87 @@
-# Phantom Science Production Deployment
+# Phantom Science Container Image
 
-## Enterprise-Grade Deployment Pipeline
+`docker/Dockerfile` builds a Phantom Science image with steganographic
+fingerprinting. It needs no GPU, CUDA or credentials: the stegano library is
+fetched from its public repository at the version pinned in `go.mod` and built
+during the image build.
 
-### Prerequisites
+## Building
 
-- **GPU Hardware**: NVIDIA TITAN RTX or better (24GB+ VRAM)
-- **CUDA**: Version 12.9+
-- **Go**: Version 1.21+
-- **Rust**: Version 1.88+ with cargo
-- **OS**: Linux (Rocky 9+ recommended for enterprise)
-
-### Quick Deployment
+From the repository root:
 
 ```bash
-# 1. Clone and build
-git clone git@github.com:scttfrdmn/phantom-science.git
-cd phantom-science
-
-# 2. Build stegano library with GPU support
-cd stegano
-cargo build --release --features gpu,metal
-cd ..
-
-# 3. Build main application
-go build -o phantom-science .
-
-# 4. Verify installation
-./phantom-science --version
+docker build -f deploy/production/docker/Dockerfile -t phantom-science .
 ```
 
-### Production Configuration
+The build has two Debian bookworm stages:
 
-```yaml
-# deploy/production/phantom-enterprise.yaml
-schema_version: "1.0"
-config_type: "enterprise"
+1. **build** (`golang:1.24-bookworm`): installs Rust, runs
+   `scripts/build-stegano.sh` to build `libstegano.so`, and builds the
+   `phantom-science` binary with CGO linked against it.
+2. **runtime** (`debian:bookworm-slim`): the binary in `/usr/local/bin`,
+   `libstegano.so` in `/usr/local/lib`, and the example configurations from
+   `configs/` in `/usr/share/phantom-science/configs`.
 
-enterprise:
-  customer_id: "${CUSTOMER_ID}"
-  license_key: "${LICENSE_KEY}"
-  service_tier: "enterprise"
-  compliance_level: "regulatory"
-  
-gpu_acceleration:
-  enable: true
-  memory_limit_gb: 20  # Leave 4GB for system
-  parallel_streams: 4
-  
-monitoring:
-  telemetry: true
-  performance_logging: true
-  health_checks: true
-  alert_thresholds:
-    memory_usage: 85
-    gpu_utilization: 90
-```
-
-### Security Hardening
+The container runs as an unprivileged user (UID/GID 65532) with `/data` as its
+working directory. Its entrypoint is `phantom-science`, and with no arguments it
+prints the help text. The health check runs `phantom-science --version`.
 
 ```bash
-# Set up service account
-sudo useradd -r -s /bin/false phantom-science
-
-# Secure file permissions
-sudo chown -R phantom-science:phantom-science /opt/phantom-science
-sudo chmod 750 /opt/phantom-science
-sudo chmod 640 /opt/phantom-science/config/*.yaml
-
-# GPU access
-sudo usermod -a -G video phantom-science
+docker run --rm phantom-science --version
 ```
 
-### Performance Verification
+## Running
+
+The container can only read and write the directories you mount, so mount a
+host directory on `/data`. It must be writable by UID 65532, or you can run the
+container with `--user "$(id -u):$(id -g)"`. Relative paths in a config, such as
+`output_dir`, resolve against `/data`.
+
+### Generating reads
+
+Start from one of the example configs in the image (or in `configs/` in the
+repository) and edit it for your run, for example `total_batches`,
+`reads_per_batch` and `batch_interval`:
 
 ```bash
-# Run performance benchmarks
-./phantom-science benchmark --gpu --dataset-size 10GB
-# Expected: >400MB/s extraction, >176MB/s embedding
+mkdir -p work && cd work
+docker run --rm --entrypoint cat phantom-science \
+  /usr/share/phantom-science/configs/sequencer/simple-run.json > my-run.json
+# edit my-run.json
 
-# Health check
-./phantom-science health --comprehensive
-# Expected: All systems operational, GPU available
+docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/data" \
+  phantom-science generate --config my-run.json
 ```
 
-### Enterprise Support
+The output lands in `work/` under the config's `output_dir`. A trained HMM
+model can be placed in the same directory and passed with `--hmm-model-path`,
+or a directory of models with `--model-dir` and `--population`.
 
-- **24/7 Support**: support@phantom-science.com
-- **Security Incidents**: security@phantom-science.com  
-- **Performance Issues**: performance@phantom-science.com
-- **Documentation**: https://docs.phantom-science.com/enterprise
+### Fingerprinting and verifying
+
+When the config enables the `quality_scores` fingerprinting layer, generation
+needs a key. Either mount a key file (mode `0600`, named by `key_file` in the
+config, relative to `/data`), or pass the key in the `PHANTOM_FINGERPRINT_KEY`
+environment variable. Use the same key to verify. From `work/`:
+
+```bash
+openssl rand -base64 32 > fingerprint.key && chmod 600 fingerprint.key
+
+docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/data" \
+  -e PHANTOM_FINGERPRINT_KEY="$(cat fingerprint.key)" \
+  phantom-science generate --config my-run.json
+
+docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/data" \
+  -e PHANTOM_FINGERPRINT_KEY="$(cat fingerprint.key)" \
+  phantom-science verify sequencer_output/*.fastq
+```
+
+The glob in the `verify` example expands on the host, which works because the
+host directory and `/data` have the same layout. `verify` also accepts
+`--key-file`, `--customer` and `--dataset`; see `phantom-science verify --help`.
+
+### Other commands
+
+The image contains the same CLI as a local build: `generate`, `scenario`,
+`train`, `tui`, `validate` and `verify`. Run `phantom-science <command> --help`
+for each command's flags. `tui` needs an interactive terminal (`docker run -it`).

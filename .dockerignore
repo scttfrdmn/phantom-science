@@ -1,0 +1,34 @@
+# Keep the Docker build context small and free of local artifacts.
+# .stegano is rebuilt inside the image at the go.mod version.
+.git
+.github
+.claude
+.stegano
+.idea
+.vscode
+bin/
+dist/
+vendor/
+outputs/
+output/
+*_output/
+sequencer_output/
+/phantom-science
+*.fastq
+*.fastq.gz
+*.fq
+*.fq.gz
+*.sam
+*.bam
+*.vcf
+*.vcf.gz
+*.so
+*.dylib
+*.a
+*.test
+*.out
+*.prof
+coverage.html
+*.key
+.env
+.DS_Store
