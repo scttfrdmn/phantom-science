@@ -16,7 +16,7 @@
 #       [--model sup] [--real-pod5 real.pod5] [--outdir DIR] [--threads N] \
 #       [--device DEV] [--rna]
 #
-#   --blow5      synthetic signal (BLOW5/SLOW5); converted with slow5tools s2p
+#   --blow5      synthetic signal (BLOW5/SLOW5); converted to pod5 with blue-crab s2p
 #   --truth      source sequences (FASTA or FASTQ) whose names are the read IDs
 #                or at least the sequences reads were drawn from
 #   --model      Dorado model or complex (default: sup)
@@ -26,7 +26,10 @@
 #   --device     Dorado --device (e.g. cpu, metal, cuda:0)
 #   --rna        direct RNA: minimap2 -x splice -uf -k14 instead of map-ont
 #
-# Requires: slow5tools, dorado, minimap2, samtools, awk. The level
+# Requires: blue-crab (pip install blue-crab; slow5tools itself has no s2p),
+# dorado, minimap2, samtools, awk. slow5tools is optional: when present the
+# input is first re-encoded to zlib + svb-zd, because the PyPI blue-crab build
+# cannot read zstd-compressed BLOW5. The level
 # comparison additionally needs python3 with the pod5 and numpy packages
 # (skipped otherwise). Exits 0 if the median identity is in [95%, 99.9%],
 # 1 otherwise, 2 on usage/tool errors.
@@ -58,12 +61,12 @@ done
 [[ -z "$REAL" || -e "$REAL" ]] || die "no such file: $REAL"
 
 missing=()
-for tool in slow5tools dorado minimap2 samtools awk; do
+for tool in blue-crab dorado minimap2 samtools awk; do
   command -v "$tool" >/dev/null 2>&1 || missing+=("$tool")
 done
 if [[ ${#missing[@]} -gt 0 ]]; then
   echo "error: missing tools: ${missing[*]}" >&2
-  echo "  slow5tools: https://github.com/hasindu2008/slow5tools" >&2
+  echo "  blue-crab: pip install blue-crab (https://github.com/Psy-Fer/blue-crab)" >&2
   echo "  dorado:     https://github.com/nanoporetech/dorado" >&2
   echo "  minimap2:   https://github.com/lh3/minimap2   samtools: https://www.htslib.org" >&2
   exit 2
@@ -75,9 +78,15 @@ CALLS="$OUTDIR/calls.bam"
 FASTQ="$OUTDIR/calls.fastq"
 PAF="$OUTDIR/calls.paf"
 
-echo "== slow5tools s2p" >&2
+S2P_IN="$BLOW5"
+if command -v slow5tools >/dev/null 2>&1; then
+  echo "== slow5tools view -c zlib -s svb-zd (re-encode for blue-crab)" >&2
+  S2P_IN="$OUTDIR/reencoded.blow5"
+  slow5tools view "$BLOW5" -c zlib -s svb-zd -o "$S2P_IN"
+fi
+echo "== blue-crab s2p" >&2
 rm -f "$POD5"
-slow5tools s2p "$BLOW5" -o "$POD5"
+blue-crab s2p "$S2P_IN" -o "$POD5"
 
 dorado_args=(basecaller --emit-moves "$MODEL" "$OUTDIR/pod5")
 [[ -n "$DEVICE" ]] && dorado_args+=(--device "$DEVICE")
