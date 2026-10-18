@@ -1,284 +1,136 @@
-# Development Guidelines
+# Development
 
-This document outlines the development standards and practices for the Phantom Science project.
+## Requirements
 
-## Version
+- Go 1.24.4 or later. `go.mod` pins the go1.26.9 toolchain, which the `go`
+  command downloads automatically.
+- For fingerprinting (CGO builds): a C toolchain and Rust (`cargo`), to build
+  the stegano library.
+- Optional: `make`, `pre-commit`, `golangci-lint`, `staticcheck`, `gosec`,
+  `yamllint` (`make install-tools` installs most of them).
 
-**Current Version**: 0.1.0
+## Building
 
-## Development Rules
-
-### 1. Code Coverage Requirements
-
-**Mandatory coverage standards that must be met before any code is merged:**
-
-- **Overall Project Coverage**: Minimum 85%
-- **Individual File Coverage**: Minimum 80% per file
-- **Critical Components**: 90%+ coverage required for:
-  - `internal/genomics/` (core FASTQ generation)
-  - `internal/fingerprinting/` (security features)
-  - `internal/validation/` (quality assurance)
-  - `pkg/types/` (configuration handling)
-
-### 2. Testing Standards
-
-- **Unit Tests**: Required for all public functions
-- **Integration Tests**: Required for CLI commands and config loading
-- **Performance Tests**: Required for file generation at scale
-- **Security Tests**: Required for fingerprinting and encryption features
-
-### 3. Pre-commit Requirements
-
-All commits must pass the following automated checks:
-
-#### Code Quality
-- **Go**: `gofmt`, `golint`, `go vet`, `staticcheck`
-- **Rust**: `rustfmt`, `clippy`
-- **YAML**: `yamllint`
-- **General**: `pre-commit-hooks` (trailing whitespace, large files, etc.)
-
-#### Security Checks
-- **Go**: `gosec` (security linter)
-- **Rust**: `cargo audit` (dependency vulnerabilities)
-- **Secrets**: `detect-secrets` (prevent credential commits)
-
-#### Test Coverage
-- **Coverage Report**: Generate and validate coverage meets minimums
-- **Coverage Diff**: Ensure new code doesn't reduce overall coverage
-- **Test Execution**: All tests must pass
-
-### 4. Code Quality Standards
-
-#### Go Code Standards
-- Follow effective Go practices
-- Use meaningful variable and function names
-- Include godoc comments for all exported functions
-- Handle all errors explicitly
-- Use structured logging with consistent fields
-
-#### Rust Code Standards
-- Follow Rust idioms and best practices
-- Use `#[derive]` for common traits when appropriate
-- Prefer owned types over borrowed in public APIs
-- Use `Result<T, E>` for fallible operations
-
-#### Configuration Standards
-- Use YAML for new configurations (JSON supported for legacy)
-- Include schema version in all config files
-- Document all parameters with inline comments
-- Validate against vendor specifications
-
-## Development Workflow
-
-### 1. Feature Development
 ```bash
-# 1. Create feature branch
-git checkout -b feature/your-feature-name
+make stegano   # builds the stegano version pinned in go.mod into .stegano/
+make build     # bin/phantom-science, linked against .stegano/
+```
 
-# 2. Install pre-commit hooks (first time only)
-pre-commit install
+`make` exports `CGO_LDFLAGS` for `.stegano/`. Outside make:
 
-# 3. Develop with tests
-go test ./... -v -cover
-cargo test
+```bash
+L="$PWD/.stegano/target/release"
+CGO_LDFLAGS="-L$L -Wl,-rpath,$L" go build -o phantom-science .
+```
 
-# 4. Run pre-commit checks
+Without the library, build with `CGO_ENABLED=0`. That build cannot embed or
+extract quality-score fingerprints, and generation refuses to run when the
+`quality_scores` layer is enabled.
+
+`scripts/build-stegano.sh` builds into `.stegano/target`, not a shared
+`CARGO_TARGET_DIR`, so another stegano checkout cannot overwrite the library.
+
+### Build tags
+
+| Tag | Effect |
+|---|---|
+| `cgo` (CGO_ENABLED=1) | stegano fingerprinting engine (`engine_stegano.go`); without it, `engine_nocgo.go` |
+| `release` | excludes all `_test.go` files (they are `//go:build !release`) and uses the legacy fingerprinting engine, which cannot write extractable fingerprints |
+| `cuda` | CUDA k-mer kernels in `internal/genomics/acceleration/cuda`; needs the CUDA Toolkit (`Makefile.cuda`) |
+
+Metal acceleration (`internal/genomics/acceleration/metal`) builds only with
+CGO on macOS; elsewhere a stub is used.
+
+## Testing
+
+CI runs the suite both ways (see [../VERSIONING_AND_CI.md](../VERSIONING_AND_CI.md)):
+
+```bash
+CGO_ENABLED=0 go test -tags '!release' ./... -timeout 15m
+
+L="$PWD/.stegano/target/release"
+CGO_LDFLAGS="-L$L -Wl,-rpath,$L" go test -tags '!release' ./... -timeout 20m
+```
+
+`-tags '!release'` is what CI passes. It sets no tag, so the `!release` test
+files are included, as they are without it.
+
+- `go test -short` shortens some slow tests, such as the coalescent presets.
+- `tests/e2e` and `tests/integration` hold the cross-package tests.
+- Tests that need external programs skip without them. The slow5tools
+  interoperability test in `internal/genomics/slow5` runs only when
+  `SLOW5TOOLS` names a slow5tools binary.
+- `PHANTOM_PERF_STRICT=1` makes the e2e benchmark enforce absolute
+  throughput, latency and CPU thresholds, which depend on the machine.
+- `scripts/acceptance/` checks output with external nanopore tools and is run
+  by hand. See [../../scripts/acceptance/README.md](../../scripts/acceptance/README.md).
+
+### Writing tests
+
+- Put `//go:build !release` at the top of every test file.
+- Use `package X` for white-box tests of unexported code and `package X_test`
+  for tests of the public API.
+- Test behaviour that can catch a real bug: known values from the literature
+  or a specification (F_ST in [0, 1], Hardy-Weinberg p-values, SLOW5 byte
+  layouts), round trips, and the error paths. Coverage percentage is not a
+  goal. `make coverage` and the pre-commit coverage hook use
+  `scripts/check-coverage.sh 85 80`, but the current tree does not meet those
+  thresholds (75.8% overall from
+  `CGO_ENABLED=0 go test -tags '!release' -coverprofile=c.out ./...` and
+  `go tool cover -func=c.out`, 2026-10-18) and CI does not enforce them.
+- Generation must be reproducible from the seed. Draw randomness from the
+  engine's seeded streams, never from `crypto/rand` or the global `math/rand`.
+
+## Pre-commit hooks
+
+`.pre-commit-config.yaml` configures hooks for whitespace, YAML and JSON
+syntax, `gofmt`, `goimports`, `go vet`, `go mod tidy`, unit tests,
+`golangci-lint`, `gosec`, `staticcheck`, `yamllint`, `detect-secrets` (with
+`.secrets.baseline`) and the coverage script. They are optional and are not
+run in CI.
+
+```bash
+make install-pre-commit
 pre-commit run --all-files
-
-# 5. Commit with coverage verification
-git commit -m "feat: your feature description"
 ```
 
-### 2. Pull Request Requirements
+## Changes and pull requests
 
-Before submitting a PR, ensure:
+- Branch from `main`. Use conventional commit messages (`feat:`, `fix:`,
+  `docs:`, `test:`, `chore:`) with the issue number, for example
+  `fix: ... (#21)`.
+- Add a line under `## [Unreleased]` in `CHANGELOG.md` and run
+  `make validate-changelog`.
+- Run `go vet` and both test configurations before opening a pull request.
+- Document new commands and flags in the command's `--help` text and in the
+  README. Every documented command must run, and every number must come from
+  a test or command in the repository.
 
-- [ ] All tests pass: `make test`
-- [ ] Coverage meets requirements: `make coverage`
-- [ ] Pre-commit hooks pass: `pre-commit run --all-files`
-- [ ] Documentation updated for new features
-- [ ] CHANGELOG.md updated with changes
-- [ ] No security vulnerabilities: `make security-check`
+## Repository layout
 
-### 3. Code Review Standards
-
-#### Reviewer Checklist
-- [ ] Code follows project standards
-- [ ] Tests adequately cover new functionality
-- [ ] Documentation is clear and complete
-- [ ] No performance regressions
-- [ ] Security implications considered
-- [ ] Configuration changes are backward compatible
-
-## Project Structure Standards
-
-### Directory Organization
 ```
-phantom-science/
-├── cmd/                    # Application entry points
-├── internal/               # Private application code
-│   ├── cli/               # Command-line interface
-│   ├── genomics/          # Core FASTQ generation
-│   ├── fingerprinting/    # Security features
-│   └── validation/        # Quality assurance
-├── pkg/                   # Public library code
-│   └── types/            # Shared type definitions
-├── configs/              # Configuration files
-│   ├── sequencer/v1.0/   # Device-specific configs
-│   └── phantom/v1.0/     # Enterprise configs
-├── docs/                 # Documentation
-└── scripts/              # Build and utility scripts
+main.go                  CLI entry point
+cmd/                     cobra commands (generate, validate, verify, train,
+                         scenario, transcriptome, signal, bench, tui)
+cmd/run_e2e_tests/       end-to-end harness and ML calibration
+cmd/run_workflow_tests/  Cromwell / Nextflow / Snakemake checks
+cmd/experiments/         one-off research programs, not maintained with the CLI
+internal/cli/            config loading and command plumbing
+internal/fingerprinting/ stegano engine, keys, verifier
+internal/genomics/       generation engine and read pipeline
+  authenticity/          HMM models and statistics
+  nanopore/              ONT headers, run metadata, summary, errmodel/
+  readlen/               read-length distributions
+  population/            structured coalescent and presets
+  signal/ slow5/         raw-signal synthesis and the BLOW5 writer
+  transcriptome/         cDNA sampler and isoform truth
+  clinical/              clinical scenarios
+internal/storage/s3sink/ S3 upload of finished files
+internal/tui/ timing/    terminal UI and its run-timing simulator
+internal/validation/     validation framework used by `validate`
+pkg/types/               configuration types
+configs/                 example sequencer and phantom configs
+scripts/                 build, release, acceptance and data scripts
+deploy/production/       container image
+docs/                    this documentation
 ```
-
-### File Naming Conventions
-- **Go files**: `snake_case.go`
-- **Test files**: `*_test.go`
-- **Config files**: `kebab-case.yaml`
-- **Documentation**: `UPPERCASE.md` for root-level docs
-
-## Quality Assurance
-
-### 1. Automated Testing
-
-#### Unit Test Requirements
-```go
-// Example test structure
-func TestFunctionName(t *testing.T) {
-    // Arrange
-    input := "test input"
-    expected := "expected output"
-    
-    // Act
-    result := FunctionName(input)
-    
-    // Assert
-    if result != expected {
-        t.Errorf("Expected %s, got %s", expected, result)
-    }
-}
-```
-
-#### Coverage Measurement
-```bash
-# Generate coverage report
-go test ./... -coverprofile=coverage.out
-go tool cover -html=coverage.out -o coverage.html
-
-# Check coverage thresholds
-go tool cover -func=coverage.out | grep "total:" | awk '{print $3}'
-```
-
-### 2. Performance Standards
-
-#### FASTQ Generation Performance
-- **Throughput**: Minimum 1M reads/minute for volume testing
-- **Memory Usage**: Maximum 4GB for standard operations
-- **File Size**: Support files up to 10GB without memory issues
-
-#### Benchmarking Requirements
-```go
-// Example benchmark
-func BenchmarkFASTQGeneration(b *testing.B) {
-    for i := 0; i < b.N; i++ {
-        generateFASTQFile(testConfig)
-    }
-}
-```
-
-### 3. Security Standards
-
-#### Data Protection
-- All customer data must be encrypted at rest
-- Steganographic fingerprints must be undetectable
-- Audit logs must be tamper-evident
-- No secrets in configuration files or code
-
-#### Vulnerability Management
-- Monthly dependency security scans
-- SAST (Static Application Security Testing) in CI/CD
-- Security code review for all changes to:
-  - Fingerprinting modules
-  - Encryption/decryption functions
-  - Authentication/authorization
-  - Data handling pipelines
-
-## Tools and Dependencies
-
-### Required Development Tools
-- **Go**: 1.21+ with modules enabled
-- **Rust**: 1.70+ with Cargo
-- **pre-commit**: For automated quality checks
-- **golangci-lint**: Advanced Go linting
-- **yamllint**: YAML file validation
-
-### Installation
-```bash
-# Install Go tools
-go install honnef.co/go/tools/cmd/staticcheck@latest
-go install github.com/securecodewarrior/gosec/v2/cmd/gosec@latest
-
-# Install pre-commit
-pip install pre-commit
-pre-commit install
-
-# Install Rust tools
-rustup component add clippy rustfmt
-cargo install cargo-audit
-```
-
-## Release Process
-
-### Version Numbering
-- Follow semantic versioning (SemVer)
-- Format: `MAJOR.MINOR.PATCH`
-- Current: `0.1.0` (initial release)
-
-### Release Checklist
-- [ ] All tests pass with required coverage
-- [ ] Security scan shows no critical vulnerabilities
-- [ ] Performance benchmarks meet standards
-- [ ] Documentation is up to date
-- [ ] CHANGELOG.md includes all changes
-- [ ] Version number updated in `main.go`
-- [ ] Git tag created and pushed
-
-### Branch Strategy
-- **main**: Production-ready code
-- **develop**: Integration branch for features
-- **feature/***: Individual feature development
-- **hotfix/***: Critical bug fixes
-- **release/***: Release preparation
-
-## Troubleshooting
-
-### Common Issues
-
-#### Coverage Too Low
-```bash
-# Identify uncovered code
-go test ./... -coverprofile=coverage.out
-go tool cover -func=coverage.out | grep -v "100.0%"
-```
-
-#### Pre-commit Failures
-```bash
-# Run individual hooks
-pre-commit run gofmt --all-files
-pre-commit run golint --all-files
-pre-commit run yamllint --all-files
-```
-
-#### Build Issues
-```bash
-# Clean and rebuild
-go clean -cache
-go mod tidy
-go build ./...
-```
-
-## Contact
-
-For questions about development standards or processes:
-- **Technical Lead**: Create GitHub issue with `development` label
-- **Security Issues**: Create GitHub issue with `security` label
-- **Documentation**: Create GitHub issue with `documentation` label

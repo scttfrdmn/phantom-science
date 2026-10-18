@@ -1,113 +1,174 @@
 # Scientific Validation Methodology
 
-This document describes the mathematical foundations of every statistical metric
-implemented in Phantom Science. It distinguishes between metrics that are fully
-implemented, those that require real VCF data to produce a meaningful number, and
-those that are documented approximations.
+This document describes the statistical and simulation models in Phantom
+Science: what each computes, where it is implemented, which test checks it,
+and what has not been validated. Every number quoted here comes from a test
+or command named next to it.
+
+Tests use the `!release` build tag. To run the ones cited below:
+
+```bash
+CGO_ENABLED=0 go test -tags '!release' -v ./internal/genomics/population/ \
+    ./internal/genomics/authenticity/statistics/ ./internal/testing/ \
+    ./internal/genomics/nanopore/errmodel/
+```
 
 ---
 
-## 1. What is Statistical Indistinguishability?
+## 1. Real versus synthetic: the goal and its status
 
-Two distributions P (real genomic sequences) and Q (synthetic sequences) are
-**statistically indistinguishable** if no classifier trained on samples from P and Q
-can predict the source label with accuracy significantly above 50%. Formally:
+The aim is synthetic data that a classifier cannot tell from real data. Two
+distributions P (real) and Q (synthetic) are indistinguishable when
 
-    TV(P, Q) = ½ · Σ |P(x) − Q(x)| ≈ 0
+    TV(P, Q) = ½ · Σ |P(x) − Q(x)| = 0
 
-where TV is the total variation distance. When TV(P, Q) = 0, P and Q are identical, and
-the optimal classifier achieves exactly 50% accuracy (random guessing).
+where TV is the total variation distance. The best classifier then has an
+accuracy of exactly 50%.
 
-We operationalise this via a **Multinomial Naive Bayes classifier on 4-mer frequency
-vectors** with 5-fold stratified cross-validation. If the measured accuracy is not
-significantly above 50%, the sequences are considered indistinguishable at the k-mer level.
+The repository has a classifier for this, a Multinomial Naive Bayes on 4-mer
+frequency vectors (Section 4.5). **It has not been run against real reads.**
+No real data is bundled, so no indistinguishability result exists, and none is
+claimed. `cmd/run_e2e_tests` calibrates the measurement instead:
+
+- **Null comparison:** two independent draws from one generator, 1000
+  training and 1000 holdout reads per class. It passes if the accuracy is
+  within 0.5 ± 4σ.
+- **Positive control:** one class GC-skewed (`testing.GCSkewed`, p = 0.4). It
+  passes if the accuracy is above 0.9.
+
+```bash
+CGO_ENABLED=0 go run ./cmd/run_e2e_tests -quick -platforms novaseq \
+    -benchmark=false -report=false
+```
+
+One run on 2026-10-18 gave a null accuracy of 0.507 ± 0.045 and a control
+accuracy of 0.996. These show that the classifier detects a known difference
+and reports chance on no difference. They say nothing about how close the
+output is to real sequencing data.
 
 ---
 
-## 2. HMM Model Architecture
+## 2. HMM sequence model
 
-### States
-All (k−1)-mers over {A, T, G, C} form the hidden states.
-For k=4 (the default), there are 4³ = 64 states.
+`phantom-science train` builds a model and `generate --hmm-model-path` draws
+bases from it. Without a model, bases are uniform random.
 
-### Transitions
-T\[s\]\[b\] = P(next base = b | current state = s), giving 4 transition probabilities per state.
+### States and transitions
 
-### Emissions
-E\[s\]\[q\] = P(Phred quality = q | state = s), for q ∈ {0, …, 41} — 42 values per state.
-
-### Biological constraints enforced during generation
-
-| Constraint | Value | Source |
-|------------|-------|--------|
-| GC content | 42% ± 1.5% | Lander et al. 2001 (human genome average) |
-| CpG depletion | 25% of neutral expectation | Bird 1980 |
-| Homopolymer limit | max run length 8 | Illumina accuracy ceiling |
+The hidden states are all (k−1)-mers over {A, C, G, T}. For k = 4 (the
+default) there are 4³ = 64 states. T[s][b] = P(next base = b | state s), so
+each state has 4 transition probabilities. Each state also has a 42-entry
+emission vector for Phred qualities 0 to 41.
 
 ### Training
 
-Parameters are estimated in a **single pass** from k-mer frequencies observed in the
-VCF REF + first ALT alleles, streamed in 100 KB chunks, with Laplace smoothing (α=0.1).
-This is **not** iterative EM — the model is a direct frequency estimator.
+Training is a single counting pass, not iterative EM.
+
+- `train` reads each VCF record's REF allele and first ALT allele and
+  concatenates them. It does not read a reference genome, so the sequence
+  context around variants is not learned.
+- The adaptive model (`--model-type adaptive`, the default) streams that
+  sequence in 100 KB chunks and adds 1 to T[s][b] for every observed
+  transition. There is no smoothing, so unobserved transitions keep
+  probability 0.
+- The k-mer model (`--model-type kmer`, k from 2 to 8) holds the sequence in
+  memory and trains with `TrainFromReferenceGenome`.
+- A VCF carries no base qualities, so emissions are not learned from it.
+
+A model trained on little data produces degenerate output. For example, a
+model trained on three short alleles generated reads of a single repeated
+base.
+
+### Constraints in the adaptive model
+
+`NewAdaptiveHMMModel` (`internal/genomics/authenticity/adaptive_hmm_model.go`)
+reweights transitions during generation towards these targets:
+
+| Constraint | Value | Source of the value |
+|---|---|---|
+| GC content | 42% ± 1.5% | Lander et al. 2001 (human genome average) |
+| CpG depletion | transition weight × 0.25 | Bird 1980 |
+| Homopolymer limit | runs of at most 8 bases | modelling choice |
+
+These are generation-time targets. No test compares their effect with real
+data.
 
 ---
 
-## 3. Population-Specific Modeling
+## 3. Population genetics: structured coalescent
 
-Allele frequencies are sourced from the **1000 Genomes Project Phase 3**
-(Auton et al. 2015, *Nature* 526, 68–74) for 11 superpopulations:
+`internal/genomics/population` simulates unlinked loci under a
+multi-population coalescent with exponential growth, bottlenecks and
+population splits (`SimulateJointPanel`). Coalescence uses the diploid rate,
+with E[T₂] = 2N generations for a pair of lineages
+(`TestStructured_ConstantN_PairwiseCoalescence`).
 
-| Code | Population |
-|------|-----------|
-| YRI | Yoruba in Ibadan, Nigeria |
-| LWK | Luhya in Webuye, Kenya |
-| GWD | Gambian in Western Divisions, The Gambia |
-| CEU | Utah residents (CEPH) with N/W European ancestry |
-| GBR | British in England and Scotland |
-| TSI | Toscani in Italy |
-| IBS | Iberian populations in Spain |
-| CHB | Han Chinese in Beijing |
-| JPT | Japanese in Tokyo |
-| CHS | Southern Han Chinese |
-| MXL | Mexican Ancestry in Los Angeles |
+### Presets
 
-Selected variants with known population differentiation include:
+`PresetDemography` (`presets.go`) models four 1000 Genomes populations as one
+tree, with no migration and no admixture:
 
-- **APOE4** (rs429358): risk variant for Alzheimer's; elevated in YRI (~22%) vs CEU (~14%)
-- **ACTN3** R577X (rs1815739): athletic performance; variable across populations
-- **LCT** (rs4988235): lactase persistence; high in CEU (~77%), absent in CHB
-- **CYP2C19** *2 (rs4244285): drug metabolism; elevated in CHB/JPT vs CEU
+| Population | Ne | Growth per generation (last 204 generations) | Bottleneck | Split |
+|---|---|---|---|---|
+| YRI | 12,300 | 1.66% | 1000 for 20 generations from 2000 | root |
+| CEU | 11,418 | 0.38% | 2000 for 400 generations from 1600 | from YRI, 2800 generations ago |
+| CHB | 9,025 | 0.48% | 1500 for 100 generations from 1800 | from CEU, 1800 generations ago |
+| MXL | 8,500 | 0.45% | 1200 for 100 generations from 1500 | from CHB, 600 generations ago |
 
-LD structure uses coalescent simulation via **msprime** (Kelleher et al. 2016,
-*PLOS Computational Biology*).
+Mutation rate 1.25 × 10⁻⁸ per bp per generation. Loci are simulated without
+recombination, so the coalescent produces no linkage disequilibrium within a
+locus. Other codes map to the closest preset as proxies: LWK, GWD and AFR to
+YRI; GBR, TSI and EUR to CEU; JPT, CHS, EAS and ASN to CHB; PUR and AMR to
+MXL. MXL is a Native-American-like branch, and its European and African
+admixture is not modelled. `presets.go` documents where each parameter comes
+from and which were calibrated.
+
+### What the tests check
+
+`presets_test.go` simulates YRI, CEU and CHB together (50 diploids each, 2000
+loci of 10 kb). From one run on 2026-10-18:
+
+| Check | Test | Result |
+|---|---|---|
+| π ordering YRI > CEU, CHB (at 4σ) | `TestPresets_DiversityOrdering` | π = 6.04, 5.62, 5.81 × 10⁻⁴ per bp |
+| WC F_ST YRI–CEU in 0.10–0.16 | `TestPresets_FSTLiteratureRanges` | 0.143 ± 0.004 |
+| WC F_ST YRI–CHB in 0.09–0.15 | same | 0.136 ± 0.003 |
+| WC F_ST CEU–CHB in 0.06–0.12 | same | 0.096 ± 0.002 |
+| Two samples of one population: F_ST < 0.02 | `TestPresets_SamePopulationNullFST` | 0.000 |
+
+The literature ranges are the ones recorded in
+`internal/population/fst_analysis.py`. Split times and bottleneck durations
+were calibrated to fall inside them, so these checks confirm the calibration
+rather than test it independently.
+
+### Where it is used
+
+`NewPopulationPanel` and `NewJointPanels` build variant panels (sites,
+frequencies, genotypes) from one seeded simulation, and the training pipeline
+library (`internal/genomics/training`) uses them. `generate` and `train` do
+not use the coalescent. Their `--population` flag only names a model file.
+Trio generation in `scenario` uses a separate msprime simulation in Python
+(`internal/population/haplotypes.py`), which needs a local virtualenv (see the
+README).
 
 ---
 
-## 4. Statistical Validation Suite
+## 4. Statistics
 
-### 4.1 Jensen-Shannon Divergence
-
-**Formula:**
+### 4.1 Jensen-Shannon divergence
 
     JS(P ‖ Q) = ½ KL(P ‖ M) + ½ KL(Q ‖ M)    where M = (P + Q) / 2
-
     KL(P ‖ Q) = Σ P(x) log₂(P(x) / Q(x))
 
-**Range:** [0, 1] (in bits when using log₂).
+Range [0, 1] in bits (the default base is 2).
 
-**Implementation:** `internal/genomics/authenticity/statistics/jensen_shannon.go`
+Implementation: `internal/genomics/authenticity/statistics/jensen_shannon.go`.
+Tests: `jensen_shannon_test.go`.
 
-**Status:** ✅ Fully implemented and tested.
+### 4.2 F_ST (Weir and Cockerham 1984)
 
----
-
-### 4.2 F_ST — Population Differentiation
-
-Implements the **Weir-Cockerham (1984)** F_ST estimator.
-
-**Inputs:** Allele frequency pⱼ and diploid sample size nⱼ for each of r populations.
-
-**Derivation:**
+Inputs: allele frequency pⱼ and diploid sample size nⱼ for each of r
+populations.
 
     N   = Σ nⱼ                                  total individuals
     p̄   = Σ nⱼ·pⱼ / N                           weighted mean frequency
@@ -118,175 +179,143 @@ Implements the **Weir-Cockerham (1984)** F_ST estimator.
 
     F_ST = (MSG − MSW) / (MSG + (nᶜ−1)·MSW)
 
-Result clamped to [0, 1]. Returns `Valid=false` when MSG ≤ 0 (no between-population variance).
+The result is clamped to [0, 1]. `Valid` is false when MSG ≤ 0 (no
+between-population variance). `ComputeMultiLocusFST` averages valid loci.
 
-**Implementation:** `internal/genomics/authenticity/statistics/fst.go`
+Implementation: `statistics/fst.go`. Tests: `fst_test.go`.
 
-**Status:** ✅ Fully implemented and tested.
+### 4.3 Hardy-Weinberg equilibrium test
 
-**Reference:** Weir, B.S. & Cockerham, C.C. (1984). Estimating F-statistics for the
-analysis of population structure. *Evolution* 38(6), 1358–1370.
+Inputs: genotype counts n_AA, n_Aa, n_aa (N individuals).
 
----
+    p̂    = (2·n_AA + n_Aa) / (2·N)
+    E_AA = N·p̂²,  E_Aa = 2·N·p̂·(1−p̂),  E_aa = N·(1−p̂)²
 
-### 4.3 Hardy-Weinberg Equilibrium Test
+    χ² = Σ (O − E)² / E    (1 degree of freedom)
+    p  = erfc(√(χ²/2))     (exact for 1 df)
 
-**Inputs:** Observed genotype counts n_AA, n_Aa, n_aa (N = total individuals).
+Implementation: `statistics/hwe.go`. Tests: `hwe_test.go`.
 
-**Derivation:**
+### 4.4 Linkage disequilibrium (r², D, D′)
 
-    p̂  = (2·n_AA + n_Aa) / (2·N)    MLE allele frequency
-    E_AA = N·p̂²
-    E_Aa = 2·N·p̂·(1−p̂)
-    E_aa = N·(1−p̂)²
-
-    χ² = (n_AA−E_AA)²/E_AA + (n_Aa−E_Aa)²/E_Aa + (n_aa−E_aa)²/E_aa    (df = 1)
-
-    p-value = erfc(√(χ²/2))    [exact for df=1 via math.Erfc from Go stdlib]
-
-**Implementation:** `internal/genomics/authenticity/statistics/hwe.go`
-
-**Status:** ✅ Fully implemented and tested.
-
-**Reference:** Wigginton, J.E., Cutler, D.J. & Abecasis, G.R. (2005). A note on exact
-tests of Hardy-Weinberg equilibrium. *Am. J. Hum. Genet.* 76, 887–893.
-
----
-
-### 4.4 Linkage Disequilibrium (r², D, D')
-
-**Inputs:** Phased haplotype counts n_AB, n_Ab, n_aB, n_ab (N = total haplotypes).
-
-**Derivation:**
+Inputs: phased haplotype counts n_AB, n_Ab, n_aB, n_ab (N haplotypes).
 
     p_A = (n_AB + n_Ab) / N,    q_a = 1 − p_A
     p_B = (n_AB + n_aB) / N,    q_b = 1 − p_B
-    p_AB = n_AB / N
 
-    D    = p_AB − p_A·p_B
+    D    = n_AB/N − p_A·p_B
     r²   = D² / (p_A·q_a·p_B·q_b)
+    D_max = min(p_A·q_b, q_a·p_B)    if D > 0
+          = max(−p_A·p_B, −q_a·q_b)  if D ≤ 0
+    D′   = D / D_max                  (range [−1, 1])
 
-    D_max = min(p_A·q_b, q_a·p_B)       if D > 0
-          = max(−p_A·p_B, −q_a·q_b)     if D ≤ 0
-    D'   = D / D_max                     (range [−1, 1])
+Implementation: `statistics/ld.go`. Tests: `ld_test.go`.
 
-**Implementation:** `internal/genomics/authenticity/statistics/ld.go`
+### 4.5 Multinomial Naive Bayes classifier
 
-**Status:** ✅ Fully implemented and tested.
+Features: a 256-element 4-mer count vector. A sequence of length L gives L−3
+counts.
 
-**References:**
-- Lewontin, R.C. (1964). The interaction of selection and linkage. *Genetics* 49(1), 49–67.
-- Hill, W.G. & Robertson, A. (1968). Linkage disequilibrium in finite populations.
-  *Theoretical and Applied Genetics* 38(6), 226–231.
+    θ_{c,k} = (count_k(c) + α) / (Σⱼ count_j(c) + α·256)    with α = 1
+    class   = argmax_c  [ log P(c) + Σₖ xₖ · log θ_{c,k} ]
 
----
+`CrossValidate` runs k-fold stratified cross-validation and returns the mean
+and standard deviation of the per-fold accuracy.
 
-### 4.5 ML Classifier Accuracy (Multinomial Naive Bayes)
+Implementation: `internal/testing/naive_bayes.go`. Tests:
+`naive_bayes_test.go`.
 
-**Purpose:** Directly measure the ability of a classifier to distinguish real from
-synthetic sequences. Accuracy ≈ 50% indicates indistinguishability.
+### 4.6 1-Wasserstein distance (supplementary)
 
-**Feature extraction:** 256-element 4-mer frequency count vector. For a sequence
-of length L, the vector has L−3 total counts (sliding window of width 4).
-
-**Smoothed log-probabilities (Laplace, α=1):**
-
-    θ_{c,k} = (count_k(c) + α) / (Σⱼ count_j(c) + α·256)
-
-**Prediction:**
-
-    log P(c | x) = log P(c) + Σₖ xₖ · log θ_{c,k}
-    class = argmax_c  log P(c | x)
-
-**Evaluation:** 5-fold stratified cross-validation. Returns mean ± std accuracy per fold.
-
-**Implementation:** `internal/testing/naive_bayes.go`
-
-**Status:** ✅ Implemented. Measured indistinguishability requires real VCF input.
+`CompareDistributions` reports it next to the JS divergence. It integrates
+|CDF_P − CDF_Q| over the N k-mers sorted lexicographically and divides by
+N − 1. This is a Wasserstein distance with uniform cost on lexicographic rank,
+not an earth-mover distance with Hamming cost between k-mers. Use the JS
+divergence for biological comparisons.
 
 ---
 
-### 4.6 1-Wasserstein Distance (Supplementary Metric)
+## 5. Nanopore models
 
-Implemented in `CompareDistributions` as a supplementary metric alongside JS divergence.
+### 5.1 Basecaller error and quality model
 
-**Note on normalisation:** The implementation integrates |CDF_P − CDF_Q| over N
-lexicographically sorted support points and divides by N−1 (the correct maximum for
-N ordered points). This is the 1-Wasserstein distance with **uniform transport cost
-on lexicographic rank**. It is **not** the earth-mover distance with Hamming cost
-between k-mer strings. For biological comparisons, JS divergence is preferred.
+`internal/genomics/nanopore/errmodel` (since 0.8.0) applies per-base errors
+in one pass over the true sequence. Each base is deleted with probability
+Del + homopolymer excess, substituted with probability Sub, and followed by an
+inserted base with probability Ins:
 
-**Status:** ✅ Implemented (normalisation corrected in v0.7.0).
+| Tier | Sub | Ins | Del | Homopolymer excess cap | Modal read Q |
+|---|---|---|---|---|---|
+| sup | 0.8% | 0.8% | 1.0% | 4% | 20 |
+| hac | 1.6% | 1.4% | 2.0% | 6% | 15 |
+| fast | 5.0% | 3.5% | 6.5% | 10% | 10 |
+
+The homopolymer excess grows with run length L as cap · (1 − exp(−(L−1)/4)).
+Read quality is the ONT mean Q, −10·log10(mean(10^(−q/10))). These values are
+taken from the project roadmap and published ranges (sources are in the
+package comment). They are not fitted to real data, and no test compares
+the output with real basecalls. `errmodel_test.go` checks that the realised
+rates, homopolymer deletions and qualities match the parameters
+(`TestRatesPerTier`, `TestHomopolymerDeletions`, `TestQualities`).
+
+### 5.2 Read lengths
+
+`internal/genomics/readlen` samples fixed, log-normal (from N50 and median,
+or mean and SD), gamma or empirical lengths, with optional truncation.
+After generation, reads are checked against the configured distribution
+(bounds and a 4σ test on the mean). A standalone `validate` reports length
+statistics (count, min, max, mean, N50), since it does not know the intended
+distribution.
+
+### 5.3 Raw signal
+
+`internal/genomics/signal` reimplements squigulator's algorithm: k-mer
+pore-model levels, gamma dwell, level and white noise, baseline drift,
+stalls, skips, an adapter leader, poly-A/T plateaus and int16 digitisation.
+The pore models are ONT's published tables. Basecalling identity with Dorado
+(`scripts/acceptance/dorado_identity.sh`, pass if the median identity is in
+[95%, 99.9%)) **has not been measured yet**.
 
 ---
 
-## 5. Current Validation Status
+## 6. Summary
 
-| Metric | Implementation | Requires Real Data | Notes |
-|--------|---------------|-------------------|-------|
-| k-mer JS divergence | ✅ | No (runs on generated data) | Mathematically correct |
-| F_ST (Weir-Cockerham) | ✅ | Yes (real population allele frequencies) | Correct estimator |
-| Hardy-Weinberg χ² | ✅ | Yes (real genotype counts) | Correct test |
-| LD r²/D' | ✅ | Yes (real phased haplotypes) | Correct formula |
-| ML accuracy (MNB, 5-fold CV) | ✅ | Yes (real sequences to test against) | ~50% = indistinguishable |
-| Platform error models | Approximation | No | Reasonable; not empirically fitted |
-| Population LD patterns | Approximation | No | Coalescent simulation; not matched to specific VCF |
-
----
-
-## 6. How to Run Validation on Real Data
-
-### Train a model from a VCF file
-
-```bash
-phantom-science train \
-  --vcf chr22.vcf.gz \
-  --out chr22_CEU.hmm.json \
-  --population CEU
-```
-
-### Generate synthetic sequences
-
-```bash
-phantom-science generate \
-  --hmm-model-path chr22_CEU.hmm.json \
-  --population CEU \
-  --reads 10000 \
-  --output synthetic_CEU.fastq
-```
-
-### Measure indistinguishability (planned subcommand)
-
-A `validate-indistinguishability` subcommand is planned for a future release.
-It will run the Multinomial Naive Bayes cross-validation comparing real vs synthetic
-sequences and report the measured accuracy.
+| Model or metric | Implemented | Validated against | Not validated |
+|---|---|---|---|
+| JS divergence, F_ST, HWE, LD, Wasserstein | yes | unit tests of the formulas | — |
+| Naive Bayes classifier | yes | null and GC-skew calibration | real vs synthetic accuracy |
+| HMM sequence model | yes | unit tests | resemblance to real sequence |
+| Structured coalescent presets | yes | literature F_ST ranges, π ordering (calibrated) | LD, admixture, other populations |
+| Illumina qualities and errors | fixed quality ramp, no errors | — | everything |
+| ONT error and quality model | yes | parameter round trip | real basecalls |
+| Raw signal | yes | BLOW5 format (slow5tools, blue-crab) | Dorado identity |
 
 ---
 
 ## 7. References
 
-1. **Weir & Cockerham (1984):** Estimating F-statistics for the analysis of population
-   structure. *Evolution* 38(6), 1358–1370.
-
-2. **Lewontin (1964):** The interaction of selection and linkage. *Genetics* 49(1), 49–67.
-
-3. **Hill & Robertson (1968):** Linkage disequilibrium in finite populations.
-   *Theoretical and Applied Genetics* 38(6), 226–231.
-
-4. **Bird (1980):** DNA methylation and the frequency of CpG in animal DNA.
+1. Weir, B.S. & Cockerham, C.C. (1984). Estimating F-statistics for the
+   analysis of population structure. *Evolution* 38(6), 1358–1370.
+2. Lewontin, R.C. (1964). The interaction of selection and linkage.
+   *Genetics* 49(1), 49–67.
+3. Hill, W.G. & Robertson, A. (1968). Linkage disequilibrium in finite
+   populations. *Theoretical and Applied Genetics* 38(6), 226–231.
+4. Bird, A.P. (1980). DNA methylation and the frequency of CpG in animal DNA.
    *Nucleic Acids Research* 8(7), 1499–1504.
-
-5. **Lander et al. (2001):** Initial sequencing and analysis of the human genome.
-   *Nature* 409, 860–921.
-
-6. **Auton et al. / 1000 Genomes Project Consortium (2015):** A global reference for
-   human genetic variation. *Nature* 526, 68–74.
-
-7. **Kelleher, Etheridge & McVean (2016):** Efficient coalescent simulation and
-   genealogical analysis for large sample sizes. *PLOS Computational Biology* 12(5).
-
-8. **Wigginton, Cutler & Abecasis (2005):** A note on exact tests of Hardy-Weinberg
-   equilibrium. *Am. J. Hum. Genet.* 76, 887–893.
-
-9. **McCallum & Nigam (1998):** A comparison of event models for Naive Bayes text
-   classification. *AAAI Workshop on Learning for Text Categorization.*
+5. Lander, E.S. et al. (2001). Initial sequencing and analysis of the human
+   genome. *Nature* 409, 860–921.
+6. Wigginton, J.E., Cutler, D.J. & Abecasis, G.R. (2005). A note on exact
+   tests of Hardy-Weinberg equilibrium. *Am. J. Hum. Genet.* 76, 887–893.
+7. McCallum, A. & Nigam, K. (1998). A comparison of event models for Naive
+   Bayes text classification. *AAAI Workshop on Learning for Text
+   Categorization.*
+8. Tennessen, J.A. et al. (2012). Evolution and functional impact of rare
+   coding variation from deep sequencing of human exomes. *Science* 337,
+   64–69.
+9. Gravel, S. et al. (2011). Demographic history and rare allele sharing
+   among human populations. *PNAS* 108(29), 11983–11988.
+10. Delahaye, C. & Nicolas, J. (2021). Sequencing DNA with nanopores:
+    Troubles and biases. *PLoS One* 16, e0257521.
+11. squigulator, the nanopore signal simulator whose algorithm
+    `internal/genomics/signal` reimplements:
+    https://github.com/hasindu2008/squigulator

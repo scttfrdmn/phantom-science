@@ -5,13 +5,17 @@ nanopore ecosystem. They need external software, so they are run by hand,
 not in CI. Each one checks for its tools before doing any work and says what
 is missing.
 
-| Script | Checks | Issue |
-|---|---|---|
-| `slow5_validate.sh` | BLOW5/SLOW5 files pass slow5tools and convert to pod5 | #15 |
-| `dorado_identity.sh` | Dorado basecalls of synthetic signal match the source sequences | #14 |
-| `transcriptome_bambu.sh` | Bambu quantification and novel-isoform discovery on simulated cDNA | #13 |
-| `pycoqc.sh` | PycoQC reads a generated `sequencing_summary.txt` | #16 |
-| `../fetch-pore-model.sh` | Downloads an ONT k-mer pore model for `signal` | #14 |
+| Script | Checks | Issue | Status |
+|---|---|---|---|
+| `slow5_validate.sh` | BLOW5/SLOW5 files pass slow5tools and convert to pod5 | #15 | Passed: 132/132 checks with slow5tools 1.5.0 and blue-crab 0.6.0 (recorded in #15) |
+| `dorado_identity.sh` | Dorado basecalls of synthetic signal match the source sequences | #14 | Not run yet |
+| `transcriptome_bambu.sh` | Bambu quantification and novel-isoform discovery on simulated cDNA | #13 | Not run yet |
+| `pycoqc.sh` | PycoQC reads a generated `sequencing_summary.txt` | #16 | Not run yet |
+| `../fetch-pore-model.sh` | Downloads an ONT k-mer pore model for `signal` | #14 | Used for the end-to-end example below |
+
+Until a script has been run, the feature it checks has only the repository's
+own tests behind it. S3 output (#16) is tested only against a fake uploader,
+not against real AWS.
 
 Commands below are run from the repository root. Build the binary first with
 `make build` or `CGO_ENABLED=0 go build -o phantom-science .`.

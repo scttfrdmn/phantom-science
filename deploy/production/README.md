@@ -15,7 +15,7 @@ docker build -f deploy/production/docker/Dockerfile -t phantom-science .
 
 The build has two Debian bookworm stages:
 
-1. **build** (`golang:1.24-bookworm`): installs Rust, runs
+1. **build** (`golang:1.26-bookworm`): installs Rust, runs
    `scripts/build-stegano.sh` to build `libstegano.so`, and builds the
    `phantom-science` binary with CGO linked against it.
 2. **runtime** (`debian:bookworm-slim`): the binary in `/usr/local/bin`,
@@ -82,6 +82,10 @@ host directory and `/data` have the same layout. `verify` also accepts
 
 ### Other commands
 
-The image contains the same CLI as a local build: `generate`, `scenario`,
-`train`, `tui`, `validate` and `verify`. Run `phantom-science <command> --help`
-for each command's flags. `tui` needs an interactive terminal (`docker run -it`).
+The image contains the same CLI as a local build: `generate`, `validate`,
+`verify`, `train`, `scenario`, `transcriptome`, `signal`, `bench` and `tui`.
+Run `phantom-science <command> --help` for each command's flags. `tui` needs an
+interactive terminal (`docker run -it`). `signal` needs an ONT pore model
+(`scripts/fetch-pore-model.sh`, run on the host) in the mounted directory.
+Trio scenarios need a Python environment with msprime, which the image does
+not have.
