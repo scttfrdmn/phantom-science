@@ -20,20 +20,36 @@ package genomics
 // ErrNotImplemented for planned features).
 
 import (
-	"fmt"
 	"math/rand/v2"
+
+	"github.com/scttfrdmn/phantom-science/internal/genomics/nanopore/errmodel"
 )
 
-// Basecaller tiers for ErrorModelSpec.Tier.
-const (
-	tierSup  = "sup"
-	tierHac  = "hac"
-	tierFast = "fast"
-)
+// tierModel returns the ONT error model of the configured basecaller tier,
+// or nil when no tier is set.
+func (e *Engine) tierModel() (*errmodel.Model, error) {
+	tier := e.config.ErrorModel.Tier
+	if tier == "" {
+		return nil, nil
+	}
+	t, err := errmodel.ParseTier(tier)
+	if err != nil {
+		return nil, err
+	}
+	return errmodel.New(t)
+}
 
 // qualityModel returns the quality generator for reads without HMM
-// qualities.
+// qualities: the basecaller tier's distribution when a tier is set, else the
+// linear decay.
 func (e *Engine) qualityModel() (func(r *rand.Rand, n int) []byte, error) {
+	m, err := e.tierModel()
+	if err != nil {
+		return nil, err
+	}
+	if m != nil {
+		return m.Qualities, nil
+	}
 	base, decay := e.config.BaseQuality, e.config.QualityDecay
 	return func(_ *rand.Rand, n int) []byte {
 		q := make([]byte, n)
@@ -51,14 +67,14 @@ func (e *Engine) qualityModel() (func(r *rand.Rand, n int) []byte, error) {
 	}, nil
 }
 
-// errorModel returns the sequencing-error model, or nil for none.
+// errorModel returns the sequencing-error model, or nil for none. With a
+// basecaller tier set it applies that tier's substitution, insertion,
+// deletion and homopolymer-deletion rates; the read's qualities are kept as
+// baselines and penalised at and next to errors (see package errmodel).
 func (e *Engine) errorModel() (func(r *rand.Rand, seq, qual []byte) ([]byte, []byte), error) {
-	switch tier := e.config.ErrorModel.Tier; tier {
-	case "":
-		return nil, nil
-	case tierSup, tierHac, tierFast:
-		return nil, fmt.Errorf("basecaller tier %q error model is %w (#11)", tier, ErrNotImplemented)
-	default:
-		return nil, fmt.Errorf("unknown basecaller tier %q: want sup, hac or fast", tier)
+	m, err := e.tierModel()
+	if err != nil || m == nil {
+		return nil, err
 	}
+	return m.ApplyQualities, nil
 }
