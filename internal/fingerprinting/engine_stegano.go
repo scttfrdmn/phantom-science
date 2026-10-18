@@ -16,8 +16,8 @@ import (
 // SteganoEngine implements Engine and SAMFingerprintingEngine on top of the
 // stegano library (github.com/scttfrdmn/stegano/go).
 //
-// With WithKey, payloads are encrypted (Argon2id key derivation and an AEAD
-// cipher, as implemented by stegano) and can only be read back with the same
+// With WithKey, payloads are encrypted (Argon2id key derivation and
+// AES-256-GCM, as implemented by stegano) and can only be read back with the same
 // key. Without a key they are embedded in plaintext and anyone with the
 // library can read them. Payloads written by stegano 0.5.x and earlier use an
 // older wire format and cannot be extracted.

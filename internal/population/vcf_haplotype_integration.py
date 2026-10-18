@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 VCF-Haplotype Integration Module
-Connects 888M+ processed variants from VCF training to haplotype simulation
-Integrates authentic variant data with coalescent-based demographic models
+Connects variants from VCF training to haplotype simulation
+Combines VCF variant positions with coalescent-based demographic models
 """
 
 import msprime

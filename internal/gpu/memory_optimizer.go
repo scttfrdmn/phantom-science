@@ -1,4 +1,12 @@
-// Package gpu provides GPU memory optimization for large dataset processing
+// Package gpu is a simulation of GPU memory pooling and chunked dataset
+// processing. It does not use a GPU.
+//
+// MemoryPool "detects" one simulated 24 GB device per CPU core (at most 8)
+// and only does bookkeeping of allocations; StreamingProcessor splits a
+// dataset into chunks and waits a time proportional to each chunk's size
+// instead of processing it, and writes no output. Nothing in phantom-science
+// uses the package. Real GPU acceleration lives in
+// internal/genomics/acceleration.
 package gpu
 
 import (
@@ -9,7 +17,8 @@ import (
 	"time"
 )
 
-// MemoryPool manages GPU memory allocation with optimization for large datasets
+// MemoryPool tracks allocations against simulated GPU devices; no device
+// memory is allocated.
 type MemoryPool struct {
 	maxMemoryGB    float64
 	currentUsageGB float64
@@ -22,12 +31,12 @@ type MemoryPool struct {
 
 // DevicePool manages memory for a specific GPU device
 type DevicePool struct {
-	deviceID       int
-	totalMemoryGB  float64
-	availableGB    float64
-	allocations    map[string]*Allocation
-	lastUsed       time.Time
-	mu             sync.RWMutex
+	deviceID      int
+	totalMemoryGB float64
+	availableGB   float64
+	allocations   map[string]*Allocation
+	lastUsed      time.Time
+	mu            sync.RWMutex
 }
 
 // Allocation represents a GPU memory allocation
@@ -57,95 +66,96 @@ type OptimizationConfig struct {
 	MaxMemoryUsagePercent float64 // Max % of GPU memory to use
 	PreallocationSizeGB   float64 // Memory to preallocate for performance
 	GCThresholdPercent    float64 // Trigger garbage collection threshold
-	
+
 	// Performance tuning
-	StreamingEnabled      bool    // Enable streaming for large datasets
-	ChunkSizeGB          float64 // Size of data chunks for streaming
-	ConcurrentStreams    int     // Number of concurrent CUDA streams
-	
+	StreamingEnabled  bool    // Enable streaming for large datasets
+	ChunkSizeGB       float64 // Size of data chunks for streaming
+	ConcurrentStreams int     // Number of concurrent CUDA streams
+
 	// Caching
-	CacheEnabled         bool    // Enable intelligent caching
-	CacheMaxSizeGB       float64 // Maximum cache size
-	CacheTTL             time.Duration // Cache time-to-live
-	
+	CacheEnabled   bool          // Enable intelligent caching
+	CacheMaxSizeGB float64       // Maximum cache size
+	CacheTTL       time.Duration // Cache time-to-live
+
 	// Auto-optimization
-	AdaptiveEnabled      bool    // Enable adaptive optimization
-	ProfilingEnabled     bool    // Enable performance profiling
+	AdaptiveEnabled      bool          // Enable adaptive optimization
+	ProfilingEnabled     bool          // Enable performance profiling
 	OptimizationInterval time.Duration // How often to optimize
 }
 
 // MemoryMetrics tracks GPU memory usage statistics
 type MemoryMetrics struct {
-	TotalAllocationsGB   float64
-	PeakUsageGB         float64
-	AllocationCount     int
-	EvictionCount       int
-	CacheHitRate        float64
-	AverageLatency      time.Duration
-	LastOptimization    time.Time
+	TotalAllocationsGB float64
+	PeakUsageGB        float64
+	AllocationCount    int
+	EvictionCount      int
+	CacheHitRate       float64
+	AverageLatency     time.Duration
+	LastOptimization   time.Time
 }
 
-// DefaultOptimizationConfig returns enterprise-grade default configuration
+// DefaultOptimizationConfig returns the default pool configuration.
 func DefaultOptimizationConfig() *OptimizationConfig {
 	return &OptimizationConfig{
 		MaxMemoryUsagePercent: 85.0, // Leave 15% for system
 		PreallocationSizeGB:   2.0,  // 2GB preallocated pool
 		GCThresholdPercent:    75.0, // GC when 75% full
-		
-		StreamingEnabled:      true,
-		ChunkSizeGB:          1.0,   // 1GB chunks for streaming
-		ConcurrentStreams:    4,     // 4 concurrent streams
-		
-		CacheEnabled:         true,
-		CacheMaxSizeGB:       4.0,   // 4GB cache
-		CacheTTL:             30 * time.Minute,
-		
+
+		StreamingEnabled:  true,
+		ChunkSizeGB:       1.0, // 1GB chunks for streaming
+		ConcurrentStreams: 4,   // 4 concurrent streams
+
+		CacheEnabled:   true,
+		CacheMaxSizeGB: 4.0, // 4GB cache
+		CacheTTL:       30 * time.Minute,
+
 		AdaptiveEnabled:      true,
 		ProfilingEnabled:     true,
 		OptimizationInterval: 5 * time.Minute,
 	}
 }
 
-// NewMemoryPool creates a new GPU memory pool manager
+// NewMemoryPool creates a pool over the simulated devices.
 func NewMemoryPool(maxMemoryGB float64, config *OptimizationConfig) (*MemoryPool, error) {
 	if config == nil {
 		config = DefaultOptimizationConfig()
 	}
-	
+
 	pool := &MemoryPool{
 		maxMemoryGB: maxMemoryGB,
 		pools:       make(map[string]*DevicePool),
 		config:      config,
 		metrics:     &MemoryMetrics{},
 	}
-	
+
 	// Initialize GPU devices
 	if err := pool.initializeDevices(); err != nil {
 		return nil, fmt.Errorf("failed to initialize GPU devices: %w", err)
 	}
-	
+
 	// Start background optimization if enabled
 	if config.AdaptiveEnabled {
 		go pool.optimizationLoop()
 	}
-	
+
 	return pool, nil
 }
 
-// initializeDevices discovers and initializes available GPU devices
+// initializeDevices creates simulated devices: one per CPU core, at most 8,
+// each with 24 GB. No GPU is queried.
 func (mp *MemoryPool) initializeDevices() error {
 	// In a real implementation, this would query CUDA/OpenCL for available devices
 	// For now, simulate detection of available GPUs
-	
+
 	// Simulated GPU detection (replace with actual NVIDIA ML/CUDA calls)
 	gpuCount := runtime.NumCPU() // Placeholder - would be nvidia-ml-py equivalent
 	if gpuCount > 8 {
 		gpuCount = 8 // Reasonable limit for enterprise
 	}
-	
+
 	for i := 0; i < gpuCount; i++ {
 		deviceMemoryGB := 24.0 // NVIDIA TITAN RTX has 24GB
-		
+
 		device := &DevicePool{
 			deviceID:      i,
 			totalMemoryGB: deviceMemoryGB,
@@ -153,19 +163,19 @@ func (mp *MemoryPool) initializeDevices() error {
 			allocations:   make(map[string]*Allocation),
 			lastUsed:      time.Now(),
 		}
-		
+
 		mp.pools[fmt.Sprintf("cuda:%d", i)] = device
 		log.Printf("Initialized GPU device %d with %.1fGB available memory", i, device.availableGB)
 	}
-	
+
 	return nil
 }
 
-// AllocateMemory allocates GPU memory with optimization
+// AllocateMemory records an allocation of sizeGB on a simulated device.
 func (mp *MemoryPool) AllocateMemory(sizeGB float64, purpose string, priority Priority) (*Allocation, error) {
 	mp.mu.Lock()
 	defer mp.mu.Unlock()
-	
+
 	// Find best device for allocation
 	deviceKey, device, err := mp.findBestDevice(sizeGB)
 	if err != nil {
@@ -177,7 +187,7 @@ func (mp *MemoryPool) AllocateMemory(sizeGB float64, purpose string, priority Pr
 			return nil, fmt.Errorf("cannot allocate %.2fGB: %w", sizeGB, err)
 		}
 	}
-	
+
 	// Create allocation
 	allocation := &Allocation{
 		ID:           generateAllocationID(),
@@ -188,17 +198,17 @@ func (mp *MemoryPool) AllocateMemory(sizeGB float64, purpose string, priority Pr
 		Priority:     priority,
 		DeviceID:     device.deviceID,
 	}
-	
+
 	// Update device state
 	device.mu.Lock()
 	device.allocations[allocation.ID] = allocation
 	device.availableGB -= sizeGB
 	device.lastUsed = time.Now()
 	device.mu.Unlock()
-	
+
 	// Update metrics
 	mp.updateMetrics(allocation, true)
-	
+
 	log.Printf("Allocated %.2fGB on %s for %s (ID: %s)", sizeGB, deviceKey, purpose, allocation.ID)
 	return allocation, nil
 }
@@ -208,36 +218,36 @@ func (mp *MemoryPool) findBestDevice(sizeGB float64) (string, *DevicePool, error
 	var bestDevice *DevicePool
 	var bestKey string
 	var bestScore float64
-	
+
 	for key, device := range mp.pools {
 		device.mu.RLock()
-		
+
 		// Check if device has enough memory
 		if device.availableGB < sizeGB {
 			device.mu.RUnlock()
 			continue
 		}
-		
+
 		// Calculate allocation score (higher is better)
 		utilizationRatio := (device.totalMemoryGB - device.availableGB) / device.totalMemoryGB
 		timeSinceLastUse := time.Since(device.lastUsed).Seconds()
-		
+
 		// Prefer less utilized devices with recent usage
-		score := (1.0 - utilizationRatio) * 0.7 + (1.0/(timeSinceLastUse+1)) * 0.3
-		
+		score := (1.0-utilizationRatio)*0.7 + (1.0/(timeSinceLastUse+1))*0.3
+
 		device.mu.RUnlock()
-		
+
 		if bestDevice == nil || score > bestScore {
 			bestDevice = device
 			bestKey = key
 			bestScore = score
 		}
 	}
-	
+
 	if bestDevice == nil {
 		return "", nil, fmt.Errorf("no device found with %.2fGB available memory", sizeGB)
 	}
-	
+
 	return bestKey, bestDevice, nil
 }
 
@@ -245,7 +255,7 @@ func (mp *MemoryPool) findBestDevice(sizeGB float64) (string, *DevicePool, error
 func (mp *MemoryPool) tryFreeMemory(neededGB float64) bool {
 	var freedGB float64
 	var candidates []*Allocation
-	
+
 	// Collect eviction candidates
 	for _, device := range mp.pools {
 		device.mu.RLock()
@@ -256,24 +266,24 @@ func (mp *MemoryPool) tryFreeMemory(neededGB float64) bool {
 		}
 		device.mu.RUnlock()
 	}
-	
+
 	// Sort by priority and age (evict oldest low-priority first)
 	for i := 0; i < len(candidates); i++ {
 		for j := i + 1; j < len(candidates); j++ {
 			if candidates[i].Priority > candidates[j].Priority ||
-				(candidates[i].Priority == candidates[j].Priority && 
-				 candidates[i].CreatedAt.After(candidates[j].CreatedAt)) {
+				(candidates[i].Priority == candidates[j].Priority &&
+					candidates[i].CreatedAt.After(candidates[j].CreatedAt)) {
 				candidates[i], candidates[j] = candidates[j], candidates[i]
 			}
 		}
 	}
-	
+
 	// Evict allocations until we have enough memory
 	for _, allocation := range candidates {
 		if freedGB >= neededGB {
 			break
 		}
-		
+
 		if err := mp.FreeMemory(allocation.ID); err == nil {
 			freedGB += allocation.SizeGB
 			mp.metricsMu.Lock()
@@ -281,15 +291,15 @@ func (mp *MemoryPool) tryFreeMemory(neededGB float64) bool {
 			mp.metricsMu.Unlock()
 		}
 	}
-	
+
 	return freedGB >= neededGB
 }
 
-// FreeMemory releases allocated GPU memory
+// FreeMemory removes an allocation record.
 func (mp *MemoryPool) FreeMemory(allocationID string) error {
 	mp.mu.Lock()
 	defer mp.mu.Unlock()
-	
+
 	// Find allocation across all devices
 	for _, device := range mp.pools {
 		device.mu.Lock()
@@ -297,14 +307,14 @@ func (mp *MemoryPool) FreeMemory(allocationID string) error {
 			delete(device.allocations, allocationID)
 			device.availableGB += allocation.SizeGB
 			device.mu.Unlock()
-			
+
 			mp.updateMetrics(allocation, false)
 			log.Printf("Freed %.2fGB (ID: %s)", allocation.SizeGB, allocationID)
 			return nil
 		}
 		device.mu.Unlock()
 	}
-	
+
 	return fmt.Errorf("allocation %s not found", allocationID)
 }
 
@@ -312,7 +322,7 @@ func (mp *MemoryPool) FreeMemory(allocationID string) error {
 func (mp *MemoryPool) optimizationLoop() {
 	ticker := time.NewTicker(mp.config.OptimizationInterval)
 	defer ticker.Stop()
-	
+
 	for range ticker.C {
 		mp.runOptimization()
 	}
@@ -322,32 +332,32 @@ func (mp *MemoryPool) optimizationLoop() {
 func (mp *MemoryPool) runOptimization() {
 	mp.mu.Lock()
 	defer mp.mu.Unlock()
-	
+
 	// Clean up expired cache entries
 	if mp.config.CacheEnabled {
 		mp.cleanupCache()
 	}
-	
+
 	// Rebalance allocations across devices if needed
 	mp.rebalanceAllocations()
-	
+
 	// Update optimization timestamp
 	mp.metricsMu.Lock()
 	mp.metrics.LastOptimization = time.Now()
 	mp.metricsMu.Unlock()
-	
+
 	log.Printf("GPU memory optimization completed")
 }
 
 // cleanupCache removes expired cache entries
 func (mp *MemoryPool) cleanupCache() {
 	now := time.Now()
-	
+
 	for _, device := range mp.pools {
 		device.mu.Lock()
 		for id, allocation := range device.allocations {
-			if allocation.Purpose == "cache" && 
-			   now.Sub(allocation.LastAccessed) > mp.config.CacheTTL {
+			if allocation.Purpose == "cache" &&
+				now.Sub(allocation.LastAccessed) > mp.config.CacheTTL {
 				delete(device.allocations, id)
 				device.availableGB += allocation.SizeGB
 			}
@@ -361,7 +371,7 @@ func (mp *MemoryPool) rebalanceAllocations() {
 	// Calculate load imbalance
 	var totalUsed, totalAvailable float64
 	deviceLoads := make(map[string]float64)
-	
+
 	for key, device := range mp.pools {
 		device.mu.RLock()
 		used := device.totalMemoryGB - device.availableGB
@@ -370,9 +380,9 @@ func (mp *MemoryPool) rebalanceAllocations() {
 		totalAvailable += device.totalMemoryGB
 		device.mu.RUnlock()
 	}
-	
+
 	avgLoad := totalUsed / totalAvailable
-	
+
 	// If load imbalance > 20%, consider rebalancing
 	for key, load := range deviceLoads {
 		if load > avgLoad*1.2 {
@@ -386,11 +396,11 @@ func (mp *MemoryPool) rebalanceAllocations() {
 func (mp *MemoryPool) updateMetrics(allocation *Allocation, isAllocation bool) {
 	mp.metricsMu.Lock()
 	defer mp.metricsMu.Unlock()
-	
+
 	if isAllocation {
 		mp.metrics.TotalAllocationsGB += allocation.SizeGB
 		mp.metrics.AllocationCount++
-		
+
 		if mp.metrics.TotalAllocationsGB > mp.metrics.PeakUsageGB {
 			mp.metrics.PeakUsageGB = mp.metrics.TotalAllocationsGB
 		}
@@ -410,14 +420,14 @@ func (mp *MemoryPool) GetMetrics() MemoryMetrics {
 func (mp *MemoryPool) GetDeviceStatus() map[string]DeviceStatus {
 	mp.mu.RLock()
 	defer mp.mu.RUnlock()
-	
+
 	status := make(map[string]DeviceStatus)
-	
+
 	for key, device := range mp.pools {
 		device.mu.RLock()
-		
+
 		utilizationPercent := ((device.totalMemoryGB - device.availableGB) / device.totalMemoryGB) * 100
-		
+
 		status[key] = DeviceStatus{
 			DeviceID:           device.deviceID,
 			TotalMemoryGB:      device.totalMemoryGB,
@@ -426,10 +436,10 @@ func (mp *MemoryPool) GetDeviceStatus() map[string]DeviceStatus {
 			AllocationCount:    len(device.allocations),
 			LastUsed:           device.lastUsed,
 		}
-		
+
 		device.mu.RUnlock()
 	}
-	
+
 	return status
 }
 

@@ -310,7 +310,10 @@ func (cl *ConfigLoader) loadPhantomAuto(content []byte) (*types.PhantomConfig, e
 	return nil, fmt.Errorf("unable to parse phantom config file as YAML or JSON")
 }
 
-// convertPhantomV1ToLegacy converts v1 phantom config to legacy format
+// convertPhantomV1ToLegacy converts a v1 phantom config to the legacy
+// format. Settings with no legacy equivalent, such as the security,
+// volume_testing, output_customization, performance_targets,
+// testing_scenarios and simplified_quality sections, are dropped.
 func (cl *ConfigLoader) convertPhantomV1ToLegacy(v1 *types.PhantomConfigV1) *types.PhantomConfig {
 	return &types.PhantomConfig{
 		Enterprise: types.EnterpriseConfig{
@@ -358,8 +361,8 @@ func (cl *ConfigLoader) convertPhantomV1ToLegacy(v1 *types.PhantomConfigV1) *typ
 }
 
 // warnIfHMMModelInvalid prints a warning when HMMModelPath is set but the file
-// is not accessible. The engine will fall back to crypto/rand regardless; this
-// is an early pre-flight notice for the operator.
+// is not accessible. The engine falls back to uniform random bases regardless;
+// this is an early pre-flight notice for the operator.
 func (cl *ConfigLoader) warnIfHMMModelInvalid(path string) {
 	if path == "" {
 		return

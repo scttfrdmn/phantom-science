@@ -1,3 +1,7 @@
+// Package errors defines GenomicsError, a typed error with operation,
+// component, context and stack trace, plus an ErrorHandler that logs and
+// counts errors, panic recovery and a retry helper. It is used by the
+// internal/genomics packages.
 package errors
 
 import (
@@ -9,14 +13,14 @@ import (
 
 // GenomicsError represents a standardized error type for the genomics authenticity engine
 type GenomicsError struct {
-	Type        ErrorType
-	Operation   string
-	Component   string
-	Message     string
-	Cause       error
-	Context     map[string]interface{}
-	StackTrace  []string
-	Timestamp   int64
+	Type       ErrorType
+	Operation  string
+	Component  string
+	Message    string
+	Cause      error
+	Context    map[string]interface{}
+	StackTrace []string
+	Timestamp  int64
 }
 
 // ErrorType represents different categories of errors in the genomics system
@@ -28,46 +32,46 @@ const (
 	ConfigurationError
 	InitializationError
 	ResourceError
-	
+
 	// Data processing errors
 	ParseError
 	FormatError
 	CorruptedDataError
 	InvalidInputError
-	
+
 	// Performance/Resource errors
 	MemoryError
 	GPUError
 	CacheError
 	TimeoutError
-	
+
 	// Biological analysis errors
 	BiologicalModelError
 	PhylogeneticError
 	ChromatinError
 	MutationalSignatureError
 	SelectionPressureError
-	
+
 	// K-mer analysis errors
 	KmerExtractionError
 	KmerValidationError
 	PackedArrayError
-	
+
 	// Reference genome errors
 	ReferenceLoadError
 	IndexError
 	SequenceNotFoundError
-	
+
 	// VCF processing errors
 	VCFParseError
 	VCFFormatError
 	VariantProcessingError
-	
+
 	// Integration errors
 	ExternalToolError
 	DatabaseError
 	NetworkError
-	
+
 	// Authentication/Security errors
 	AuthenticityValidationError
 	SecurityError
@@ -77,63 +81,63 @@ const (
 // Error implements the error interface
 func (ge *GenomicsError) Error() string {
 	var parts []string
-	
+
 	// Add error type and component
 	parts = append(parts, fmt.Sprintf("[%s:%s]", ge.Type.String(), ge.Component))
-	
+
 	// Add operation if specified
 	if ge.Operation != "" {
 		parts = append(parts, fmt.Sprintf("operation=%s", ge.Operation))
 	}
-	
+
 	// Add main message
 	parts = append(parts, ge.Message)
-	
+
 	// Add cause if present
 	if ge.Cause != nil {
 		parts = append(parts, fmt.Sprintf("cause: %v", ge.Cause))
 	}
-	
+
 	return strings.Join(parts, " ")
 }
 
 // String returns a string representation of the error type
 func (et ErrorType) String() string {
 	errorTypeNames := map[ErrorType]string{
-		ValidationError:            "VALIDATION_ERROR",
-		ConfigurationError:         "CONFIGURATION_ERROR", 
-		InitializationError:        "INITIALIZATION_ERROR",
-		ResourceError:              "RESOURCE_ERROR",
-		ParseError:                 "PARSE_ERROR",
-		FormatError:                "FORMAT_ERROR",
-		CorruptedDataError:         "CORRUPTED_DATA_ERROR",
-		InvalidInputError:          "INVALID_INPUT_ERROR",
-		MemoryError:                "MEMORY_ERROR",
-		GPUError:                   "GPU_ERROR",
-		CacheError:                 "CACHE_ERROR",
-		TimeoutError:               "TIMEOUT_ERROR",
-		BiologicalModelError:       "BIOLOGICAL_MODEL_ERROR",
-		PhylogeneticError:          "PHYLOGENETIC_ERROR",
-		ChromatinError:             "CHROMATIN_ERROR",
-		MutationalSignatureError:   "MUTATIONAL_SIGNATURE_ERROR",
-		SelectionPressureError:     "SELECTION_PRESSURE_ERROR",
-		KmerExtractionError:        "KMER_EXTRACTION_ERROR",
-		KmerValidationError:        "KMER_VALIDATION_ERROR",
-		PackedArrayError:           "PACKED_ARRAY_ERROR",
-		ReferenceLoadError:         "REFERENCE_LOAD_ERROR",
-		IndexError:                 "INDEX_ERROR",
-		SequenceNotFoundError:      "SEQUENCE_NOT_FOUND_ERROR",
-		VCFParseError:              "VCF_PARSE_ERROR",
-		VCFFormatError:             "VCF_FORMAT_ERROR",
-		VariantProcessingError:     "VARIANT_PROCESSING_ERROR",
-		ExternalToolError:          "EXTERNAL_TOOL_ERROR",
-		DatabaseError:              "DATABASE_ERROR",
-		NetworkError:               "NETWORK_ERROR",
+		ValidationError:             "VALIDATION_ERROR",
+		ConfigurationError:          "CONFIGURATION_ERROR",
+		InitializationError:         "INITIALIZATION_ERROR",
+		ResourceError:               "RESOURCE_ERROR",
+		ParseError:                  "PARSE_ERROR",
+		FormatError:                 "FORMAT_ERROR",
+		CorruptedDataError:          "CORRUPTED_DATA_ERROR",
+		InvalidInputError:           "INVALID_INPUT_ERROR",
+		MemoryError:                 "MEMORY_ERROR",
+		GPUError:                    "GPU_ERROR",
+		CacheError:                  "CACHE_ERROR",
+		TimeoutError:                "TIMEOUT_ERROR",
+		BiologicalModelError:        "BIOLOGICAL_MODEL_ERROR",
+		PhylogeneticError:           "PHYLOGENETIC_ERROR",
+		ChromatinError:              "CHROMATIN_ERROR",
+		MutationalSignatureError:    "MUTATIONAL_SIGNATURE_ERROR",
+		SelectionPressureError:      "SELECTION_PRESSURE_ERROR",
+		KmerExtractionError:         "KMER_EXTRACTION_ERROR",
+		KmerValidationError:         "KMER_VALIDATION_ERROR",
+		PackedArrayError:            "PACKED_ARRAY_ERROR",
+		ReferenceLoadError:          "REFERENCE_LOAD_ERROR",
+		IndexError:                  "INDEX_ERROR",
+		SequenceNotFoundError:       "SEQUENCE_NOT_FOUND_ERROR",
+		VCFParseError:               "VCF_PARSE_ERROR",
+		VCFFormatError:              "VCF_FORMAT_ERROR",
+		VariantProcessingError:      "VARIANT_PROCESSING_ERROR",
+		ExternalToolError:           "EXTERNAL_TOOL_ERROR",
+		DatabaseError:               "DATABASE_ERROR",
+		NetworkError:                "NETWORK_ERROR",
 		AuthenticityValidationError: "AUTHENTICITY_VALIDATION_ERROR",
-		SecurityError:              "SECURITY_ERROR",
-		AccessDeniedError:          "ACCESS_DENIED_ERROR",
+		SecurityError:               "SECURITY_ERROR",
+		AccessDeniedError:           "ACCESS_DENIED_ERROR",
 	}
-	
+
 	if name, exists := errorTypeNames[et]; exists {
 		return name
 	}
@@ -158,13 +162,13 @@ func WrapError(err error, errorType ErrorType, component, operation, message str
 	if err == nil {
 		return nil
 	}
-	
+
 	// If it's already a GenomicsError, add context
 	if ge, ok := err.(*GenomicsError); ok {
 		ge.Context["wrapped_at"] = fmt.Sprintf("%s:%s", component, operation)
 		return ge
 	}
-	
+
 	return &GenomicsError{
 		Type:       errorType,
 		Component:  component,
@@ -219,14 +223,14 @@ func (ge *GenomicsError) GetStackTrace() string {
 // captureStackTrace captures the current stack trace
 func captureStackTrace() []string {
 	var stackTrace []string
-	
+
 	// Skip the first few frames (this function and error creation)
 	for i := 2; i < 10; i++ {
 		pc, file, line, ok := runtime.Caller(i)
 		if !ok {
 			break
 		}
-		
+
 		// Get function name
 		fn := runtime.FuncForPC(pc)
 		var funcName string
@@ -235,15 +239,15 @@ func captureStackTrace() []string {
 		} else {
 			funcName = "unknown"
 		}
-		
+
 		// Simplify file path
 		if idx := strings.LastIndex(file, "/"); idx >= 0 {
 			file = file[idx+1:]
 		}
-		
+
 		stackTrace = append(stackTrace, fmt.Sprintf("%s:%d %s", file, line, funcName))
 	}
-	
+
 	return stackTrace
 }
 
@@ -315,8 +319,8 @@ func IsResourceError(err error) bool {
 // IsDataError checks if an error is related to data processing
 func IsDataError(err error) bool {
 	if ge, ok := err.(*GenomicsError); ok {
-		return ge.IsType(ParseError) || ge.IsType(FormatError) || 
-			   ge.IsType(CorruptedDataError) || ge.IsType(InvalidInputError)
+		return ge.IsType(ParseError) || ge.IsType(FormatError) ||
+			ge.IsType(CorruptedDataError) || ge.IsType(InvalidInputError)
 	}
 	return false
 }
@@ -325,8 +329,8 @@ func IsDataError(err error) bool {
 func IsBiologicalError(err error) bool {
 	if ge, ok := err.(*GenomicsError); ok {
 		return ge.IsType(BiologicalModelError) || ge.IsType(PhylogeneticError) ||
-			   ge.IsType(ChromatinError) || ge.IsType(MutationalSignatureError) ||
-			   ge.IsType(SelectionPressureError)
+			ge.IsType(ChromatinError) || ge.IsType(MutationalSignatureError) ||
+			ge.IsType(SelectionPressureError)
 	}
 	return false
 }
@@ -345,31 +349,31 @@ const (
 func (et ErrorType) GetSeverity() ErrorSeverity {
 	severityMap := map[ErrorType]ErrorSeverity{
 		// Critical errors - system cannot continue
-		MemoryError:                SeverityCritical,
-		CorruptedDataError:         SeverityCritical,
-		SecurityError:              SeverityCritical,
-		AccessDeniedError:          SeverityCritical,
-		
+		MemoryError:        SeverityCritical,
+		CorruptedDataError: SeverityCritical,
+		SecurityError:      SeverityCritical,
+		AccessDeniedError:  SeverityCritical,
+
 		// High severity - major functionality impacted
-		InitializationError:        SeverityHigh,
-		GPUError:                   SeverityHigh,
-		ReferenceLoadError:         SeverityHigh,
-		DatabaseError:              SeverityHigh,
-		
+		InitializationError: SeverityHigh,
+		GPUError:            SeverityHigh,
+		ReferenceLoadError:  SeverityHigh,
+		DatabaseError:       SeverityHigh,
+
 		// Medium severity - some functionality impacted
-		ValidationError:            SeverityMedium,
-		ConfigurationError:         SeverityMedium,
-		BiologicalModelError:       SeverityMedium,
-		VCFParseError:              SeverityMedium,
-		ExternalToolError:          SeverityMedium,
-		
+		ValidationError:      SeverityMedium,
+		ConfigurationError:   SeverityMedium,
+		BiologicalModelError: SeverityMedium,
+		VCFParseError:        SeverityMedium,
+		ExternalToolError:    SeverityMedium,
+
 		// Low severity - minor issues, system can continue
-		ParseError:                 SeverityLow,
-		FormatError:                SeverityLow,
-		CacheError:                 SeverityLow,
-		TimeoutError:               SeverityLow,
+		ParseError:   SeverityLow,
+		FormatError:  SeverityLow,
+		CacheError:   SeverityLow,
+		TimeoutError: SeverityLow,
 	}
-	
+
 	if severity, exists := severityMap[et]; exists {
 		return severity
 	}

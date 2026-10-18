@@ -1,4 +1,14 @@
-// Package monitoring provides enterprise-grade monitoring and alerting for Phantom Science
+// Package monitoring exposes host metrics on a Prometheus endpoint, runs
+// registered health checks and raises alerts through Slack (incoming
+// webhook) and PagerDuty (Events API v2).
+//
+// Nothing in phantom-science starts an EnterpriseMonitor; the package is a
+// library for embedding programs. Host CPU, memory, disk and load figures are
+// read on Linux and macOS (zero elsewhere); GPU metrics always read zero.
+// The email notifier only logs. The compliance settings and metrics
+// (ComplianceLogging, AuditTrailEnabled, RegulatorySLAEnabled,
+// ComplianceMetrics) are declared but nothing records or acts on them, and
+// no audit trail is kept.
 package monitoring
 
 import (
@@ -13,109 +23,113 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
-// EnterpriseMonitor provides comprehensive monitoring and alerting
+// EnterpriseMonitor collects host metrics, serves them for Prometheus, runs
+// health checks and, with alerting enabled, raises alerts.
 type EnterpriseMonitor struct {
-	config         *MonitoringConfig
-	metrics        *EnterpriseMetrics
-	alerts         *AlertManager
-	healthChecks   map[string]HealthCheck
-	dashboards     map[string]*Dashboard
-	mu             sync.RWMutex
-	running        bool
-	stopChan       chan struct{}
+	config       *MonitoringConfig
+	metrics      *EnterpriseMetrics
+	alerts       *AlertManager
+	healthChecks map[string]HealthCheck
+	dashboards   map[string]*Dashboard
+	mu           sync.RWMutex
+	running      bool
+	stopChan     chan struct{}
 }
 
-// MonitoringConfig defines enterprise monitoring configuration
+// MonitoringConfig configures an EnterpriseMonitor. MetricsRetention and the
+// Compliance fields are not used.
 type MonitoringConfig struct {
 	// Metrics collection
-	MetricsEnabled       bool          `yaml:"metrics_enabled"`
-	MetricsInterval      time.Duration `yaml:"metrics_interval"`
-	MetricsRetention     time.Duration `yaml:"metrics_retention"`
-	PrometheusPort       int           `yaml:"prometheus_port"`
-	
+	MetricsEnabled   bool          `yaml:"metrics_enabled"`
+	MetricsInterval  time.Duration `yaml:"metrics_interval"`
+	MetricsRetention time.Duration `yaml:"metrics_retention"`
+	PrometheusPort   int           `yaml:"prometheus_port"`
+
 	// Health checks
-	HealthCheckInterval  time.Duration `yaml:"health_check_interval"`
-	HealthCheckTimeout   time.Duration `yaml:"health_check_timeout"`
-	
+	HealthCheckInterval time.Duration `yaml:"health_check_interval"`
+	HealthCheckTimeout  time.Duration `yaml:"health_check_timeout"`
+
 	// Alerting
-	AlertingEnabled      bool          `yaml:"alerting_enabled"`
-	AlertManagerURL      string        `json:"-" yaml:"-"`
-	PagerDutyKey         string        `json:"-" yaml:"-"`
-	SlackWebhookURL      string        `json:"-" yaml:"-"`
-	
+	AlertingEnabled bool   `yaml:"alerting_enabled"`
+	AlertManagerURL string `json:"-" yaml:"-"`
+	PagerDutyKey    string `json:"-" yaml:"-"`
+	SlackWebhookURL string `json:"-" yaml:"-"`
+
 	// Compliance
-	ComplianceLogging    bool          `yaml:"compliance_logging"`
-	AuditTrailEnabled    bool          `yaml:"audit_trail_enabled"`
-	RegulatorySLAEnabled bool          `yaml:"regulatory_sla_enabled"`
-	
+	ComplianceLogging    bool `yaml:"compliance_logging"`
+	AuditTrailEnabled    bool `yaml:"audit_trail_enabled"`
+	RegulatorySLAEnabled bool `yaml:"regulatory_sla_enabled"`
+
 	// Performance thresholds
-	Thresholds           AlertThresholds `yaml:"thresholds"`
+	Thresholds AlertThresholds `yaml:"thresholds"`
 }
 
 // AlertThresholds defines performance and health thresholds
 type AlertThresholds struct {
-	CPUUsagePercent        float64 `yaml:"cpu_usage_percent"`
-	MemoryUsagePercent     float64 `yaml:"memory_usage_percent"`
-	GPUUsagePercent        float64 `yaml:"gpu_usage_percent"`
-	DiskUsagePercent       float64 `yaml:"disk_usage_percent"`
-	ResponseTimeMs         float64 `yaml:"response_time_ms"`
-	ErrorRatePercent       float64 `yaml:"error_rate_percent"`
-	ThroughputMBps         float64 `yaml:"throughput_mbps"`
-	QueueDepth             int     `yaml:"queue_depth"`
-	ConcurrentConnections  int     `yaml:"concurrent_connections"`
+	CPUUsagePercent       float64 `yaml:"cpu_usage_percent"`
+	MemoryUsagePercent    float64 `yaml:"memory_usage_percent"`
+	GPUUsagePercent       float64 `yaml:"gpu_usage_percent"`
+	DiskUsagePercent      float64 `yaml:"disk_usage_percent"`
+	ResponseTimeMs        float64 `yaml:"response_time_ms"`
+	ErrorRatePercent      float64 `yaml:"error_rate_percent"`
+	ThroughputMBps        float64 `yaml:"throughput_mbps"`
+	QueueDepth            int     `yaml:"queue_depth"`
+	ConcurrentConnections int     `yaml:"concurrent_connections"`
 }
 
 // EnterpriseMetrics contains all monitoring metrics
 type EnterpriseMetrics struct {
 	// System metrics
-	SystemMetrics    *SystemMetrics
-	
-	// Application metrics  
-	AppMetrics       *ApplicationMetrics
-	
+	SystemMetrics *SystemMetrics
+
+	// Application metrics
+	AppMetrics *ApplicationMetrics
+
 	// GPU metrics
-	GPUMetrics       *GPUMetrics
-	
+	GPUMetrics *GPUMetrics
+
 	// Compliance metrics
 	ComplianceMetrics *ComplianceMetrics
-	
+
 	// Prometheus metrics
 	PrometheusMetrics *PrometheusMetrics
 }
 
 // SystemMetrics tracks system-level performance
 type SystemMetrics struct {
-	CPUUsagePercent    prometheus.Gauge
-	MemoryUsagePercent prometheus.Gauge
-	DiskUsagePercent   prometheus.Gauge
-	NetworkBytesIn     prometheus.Counter
-	NetworkBytesOut    prometheus.Counter
-	LoadAverage        prometheus.Gauge
+	CPUUsagePercent     prometheus.Gauge
+	MemoryUsagePercent  prometheus.Gauge
+	DiskUsagePercent    prometheus.Gauge
+	NetworkBytesIn      prometheus.Counter
+	NetworkBytesOut     prometheus.Counter
+	LoadAverage         prometheus.Gauge
 	OpenFileDescriptors prometheus.Gauge
 }
 
 // ApplicationMetrics tracks application-specific metrics
 type ApplicationMetrics struct {
-	RequestsTotal         prometheus.Counter
-	RequestDuration       prometheus.Histogram
-	ResponseSize          prometheus.Histogram
-	ErrorsTotal           prometheus.Counter
-	ActiveConnections     prometheus.Gauge
-	QueueDepth           prometheus.Gauge
-	ProcessingLatency    prometheus.Histogram
+	RequestsTotal     prometheus.Counter
+	RequestDuration   prometheus.Histogram
+	ResponseSize      prometheus.Histogram
+	ErrorsTotal       prometheus.Counter
+	ActiveConnections prometheus.Gauge
+	QueueDepth        prometheus.Gauge
+	ProcessingLatency prometheus.Histogram
 }
 
-// GPUMetrics tracks GPU performance and utilization
+// GPUMetrics holds per-device GPU gauges. No GPU reader is implemented, so
+// they stay at zero.
 type GPUMetrics struct {
 	GPUUtilization       prometheus.GaugeVec
 	GPUMemoryUsage       prometheus.GaugeVec
 	GPUTemperature       prometheus.GaugeVec
 	GPUPowerConsumption  prometheus.GaugeVec
-	CUDAErrors          prometheus.Counter
+	CUDAErrors           prometheus.Counter
 	ProcessingThroughput prometheus.Gauge
 }
 
-// ComplianceMetrics tracks regulatory compliance metrics
+// ComplianceMetrics holds counters that are registered but never
+// incremented.
 type ComplianceMetrics struct {
 	AuditEventsTotal     prometheus.Counter
 	ComplianceViolations prometheus.Counter
@@ -140,30 +154,31 @@ type Dashboard struct {
 	LastUpdate  time.Time
 }
 
-// DashboardPanel represents a panel in a monitoring dashboard  
+// DashboardPanel represents a panel in a monitoring dashboard
 type DashboardPanel struct {
-	Title       string
-	Type        string
-	Query       string
-	Thresholds  map[string]float64
+	Title      string
+	Type       string
+	Query      string
+	Thresholds map[string]float64
 }
 
-// DefaultMonitoringConfig returns enterprise-grade monitoring configuration
+// DefaultMonitoringConfig returns a configuration with metrics, health checks
+// and alerting enabled, Prometheus on port 9090 and default thresholds.
 func DefaultMonitoringConfig() *MonitoringConfig {
 	return &MonitoringConfig{
-		MetricsEnabled:       true,
-		MetricsInterval:      15 * time.Second,
-		MetricsRetention:     30 * 24 * time.Hour, // 30 days
-		PrometheusPort:       9090,
-		
-		HealthCheckInterval:  30 * time.Second,
-		HealthCheckTimeout:   10 * time.Second,
-		
+		MetricsEnabled:   true,
+		MetricsInterval:  15 * time.Second,
+		MetricsRetention: 30 * 24 * time.Hour, // 30 days
+		PrometheusPort:   9090,
+
+		HealthCheckInterval: 30 * time.Second,
+		HealthCheckTimeout:  10 * time.Second,
+
 		AlertingEnabled:      true,
 		ComplianceLogging:    true,
 		AuditTrailEnabled:    true,
 		RegulatorySLAEnabled: true,
-		
+
 		Thresholds: AlertThresholds{
 			CPUUsagePercent:       85.0,
 			MemoryUsagePercent:    90.0,
@@ -178,36 +193,37 @@ func DefaultMonitoringConfig() *MonitoringConfig {
 	}
 }
 
-// NewEnterpriseMonitor creates a new enterprise monitoring system
+// NewEnterpriseMonitor creates a monitor for config, or for
+// DefaultMonitoringConfig when config is nil.
 func NewEnterpriseMonitor(config *MonitoringConfig) (*EnterpriseMonitor, error) {
 	if config == nil {
 		config = DefaultMonitoringConfig()
 	}
-	
+
 	monitor := &EnterpriseMonitor{
 		config:       config,
 		healthChecks: make(map[string]HealthCheck),
 		dashboards:   make(map[string]*Dashboard),
 		stopChan:     make(chan struct{}),
 	}
-	
+
 	// Initialize metrics
 	if err := monitor.initializeMetrics(); err != nil {
 		return nil, fmt.Errorf("failed to initialize metrics: %w", err)
 	}
-	
+
 	// Initialize alert manager
 	if config.AlertingEnabled {
 		monitor.alerts = NewAlertManager(config)
 	}
-	
+
 	return monitor, nil
 }
 
 // initializeMetrics sets up all Prometheus metrics
 func (em *EnterpriseMonitor) initializeMetrics() error {
 	registry := prometheus.NewRegistry()
-	
+
 	// System metrics
 	systemMetrics := &SystemMetrics{
 		CPUUsagePercent: prometheus.NewGauge(prometheus.GaugeOpts{
@@ -215,7 +231,7 @@ func (em *EnterpriseMonitor) initializeMetrics() error {
 			Help: "Current CPU usage percentage",
 		}),
 		MemoryUsagePercent: prometheus.NewGauge(prometheus.GaugeOpts{
-			Name: "phantom_memory_usage_percent", 
+			Name: "phantom_memory_usage_percent",
 			Help: "Current memory usage percentage",
 		}),
 		DiskUsagePercent: prometheus.NewGauge(prometheus.GaugeOpts{
@@ -239,7 +255,7 @@ func (em *EnterpriseMonitor) initializeMetrics() error {
 			Help: "Number of open file descriptors",
 		}),
 	}
-	
+
 	// Application metrics
 	appMetrics := &ApplicationMetrics{
 		RequestsTotal: prometheus.NewCounter(prometheus.CounterOpts{
@@ -274,7 +290,7 @@ func (em *EnterpriseMonitor) initializeMetrics() error {
 			Buckets: prometheus.ExponentialBuckets(0.1, 2, 10),
 		}),
 	}
-	
+
 	// GPU metrics
 	gpuMetrics := &GPUMetrics{
 		GPUUtilization: *prometheus.NewGaugeVec(
@@ -314,7 +330,7 @@ func (em *EnterpriseMonitor) initializeMetrics() error {
 			Help: "Current processing throughput in MB/s",
 		}),
 	}
-	
+
 	// Compliance metrics
 	complianceMetrics := &ComplianceMetrics{
 		AuditEventsTotal: prometheus.NewCounter(prometheus.CounterOpts{
@@ -338,7 +354,7 @@ func (em *EnterpriseMonitor) initializeMetrics() error {
 			Help: "Total number of validation failures",
 		}),
 	}
-	
+
 	// Register all metrics
 	metrics := []*SystemMetrics{systemMetrics}
 	for _, m := range metrics {
@@ -352,7 +368,7 @@ func (em *EnterpriseMonitor) initializeMetrics() error {
 			m.OpenFileDescriptors,
 		)
 	}
-	
+
 	registry.MustRegister(
 		appMetrics.RequestsTotal,
 		appMetrics.RequestDuration,
@@ -361,21 +377,21 @@ func (em *EnterpriseMonitor) initializeMetrics() error {
 		appMetrics.ActiveConnections,
 		appMetrics.QueueDepth,
 		appMetrics.ProcessingLatency,
-		
+
 		&gpuMetrics.GPUUtilization,
 		&gpuMetrics.GPUMemoryUsage,
 		&gpuMetrics.GPUTemperature,
 		&gpuMetrics.GPUPowerConsumption,
 		gpuMetrics.CUDAErrors,
 		gpuMetrics.ProcessingThroughput,
-		
+
 		complianceMetrics.AuditEventsTotal,
 		complianceMetrics.ComplianceViolations,
 		complianceMetrics.DataRetentionDays,
 		complianceMetrics.SecurityIncidents,
 		complianceMetrics.ValidationFailures,
 	)
-	
+
 	em.metrics = &EnterpriseMetrics{
 		SystemMetrics:     systemMetrics,
 		AppMetrics:        appMetrics,
@@ -383,7 +399,7 @@ func (em *EnterpriseMonitor) initializeMetrics() error {
 		ComplianceMetrics: complianceMetrics,
 		PrometheusMetrics: &PrometheusMetrics{Registry: registry},
 	}
-	
+
 	return nil
 }
 
@@ -391,24 +407,24 @@ func (em *EnterpriseMonitor) initializeMetrics() error {
 func (em *EnterpriseMonitor) Start(ctx context.Context) error {
 	em.mu.Lock()
 	defer em.mu.Unlock()
-	
+
 	if em.running {
 		return fmt.Errorf("monitor already running")
 	}
-	
+
 	em.running = true
-	
+
 	// Start metrics collection
 	go em.metricsCollectionLoop(ctx)
-	
+
 	// Start health checks
 	go em.healthCheckLoop(ctx)
-	
+
 	// Start Prometheus metrics server
 	if em.config.MetricsEnabled {
 		go em.startPrometheusServer()
 	}
-	
+
 	log.Printf("Enterprise monitoring started on port %d", em.config.PrometheusPort)
 	return nil
 }
@@ -417,14 +433,14 @@ func (em *EnterpriseMonitor) Start(ctx context.Context) error {
 func (em *EnterpriseMonitor) Stop() error {
 	em.mu.Lock()
 	defer em.mu.Unlock()
-	
+
 	if !em.running {
 		return nil
 	}
-	
+
 	close(em.stopChan)
 	em.running = false
-	
+
 	log.Printf("Enterprise monitoring stopped")
 	return nil
 }
@@ -433,7 +449,7 @@ func (em *EnterpriseMonitor) Stop() error {
 func (em *EnterpriseMonitor) metricsCollectionLoop(ctx context.Context) {
 	ticker := time.NewTicker(em.config.MetricsInterval)
 	defer ticker.Stop()
-	
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -453,7 +469,7 @@ func (em *EnterpriseMonitor) collectMetrics() {
 	em.metrics.SystemMetrics.MemoryUsagePercent.Set(getMemoryUsage())
 	em.metrics.SystemMetrics.DiskUsagePercent.Set(getDiskUsage())
 	em.metrics.SystemMetrics.LoadAverage.Set(getLoadAverage())
-	
+
 	// Collect GPU metrics
 	for deviceID := 0; deviceID < getGPUCount(); deviceID++ {
 		deviceStr := fmt.Sprintf("%d", deviceID)
@@ -468,7 +484,7 @@ func (em *EnterpriseMonitor) collectMetrics() {
 func (em *EnterpriseMonitor) healthCheckLoop(ctx context.Context) {
 	ticker := time.NewTicker(em.config.HealthCheckInterval)
 	defer ticker.Stop()
-	
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -489,12 +505,12 @@ func (em *EnterpriseMonitor) performHealthChecks(ctx context.Context) {
 		checks[name] = check
 	}
 	em.mu.RUnlock()
-	
+
 	for name, check := range checks {
 		go func(checkName string, checkFunc HealthCheck) {
 			checkCtx, cancel := context.WithTimeout(ctx, em.config.HealthCheckTimeout)
 			defer cancel()
-			
+
 			if err := checkFunc(checkCtx); err != nil {
 				log.Printf("Health check failed: %s - %v", checkName, err)
 				// Trigger alert if alerting is enabled
@@ -510,7 +526,7 @@ func (em *EnterpriseMonitor) performHealthChecks(ctx context.Context) {
 func (em *EnterpriseMonitor) startPrometheusServer() {
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", promhttp.HandlerFor(em.metrics.PrometheusMetrics.Registry, promhttp.HandlerOpts{}))
-	
+
 	server := &http.Server{
 		Addr:              fmt.Sprintf(":%d", em.config.PrometheusPort),
 		Handler:           mux,
@@ -519,7 +535,7 @@ func (em *EnterpriseMonitor) startPrometheusServer() {
 		IdleTimeout:       60 * time.Second,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
-	
+
 	log.Printf("Starting Prometheus metrics server on port %d", em.config.PrometheusPort)
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Printf("Prometheus server error: %v", err)

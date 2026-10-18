@@ -1,4 +1,3 @@
-// Package gpu provides streaming processing for large genomic datasets
 package gpu
 
 import (
@@ -12,25 +11,26 @@ import (
 	"time"
 )
 
-// StreamingProcessor handles large dataset processing with GPU acceleration
+// StreamingProcessor simulates chunked processing of a dataset against a
+// MemoryPool; see the package comment.
 type StreamingProcessor struct {
-	memoryPool     *MemoryPool
-	config         *StreamingConfig
-	activeStreams  map[string]*ProcessingStream
-	mu             sync.RWMutex
-	metricsMu      sync.RWMutex // guards metrics; kept off StreamingMetrics so GetMetrics can return a plain copy
-	metrics        *StreamingMetrics
+	memoryPool    *MemoryPool
+	config        *StreamingConfig
+	activeStreams map[string]*ProcessingStream
+	mu            sync.RWMutex
+	metricsMu     sync.RWMutex // guards metrics; kept off StreamingMetrics so GetMetrics can return a plain copy
+	metrics       *StreamingMetrics
 }
 
 // StreamingConfig defines configuration for streaming processing
 type StreamingConfig struct {
 	MaxConcurrentStreams int           // Maximum concurrent processing streams
-	ChunkSizeGB         float64       // Size of each processing chunk
-	BufferSizeGB        float64       // Size of input/output buffers
-	TimeoutDuration     time.Duration // Timeout for processing operations
-	RetryAttempts       int           // Number of retry attempts on failure
-	CompressionEnabled  bool          // Enable data compression
-	ChecksumValidation  bool          // Enable data integrity validation
+	ChunkSizeGB          float64       // Size of each processing chunk
+	BufferSizeGB         float64       // Size of input/output buffers
+	TimeoutDuration      time.Duration // Timeout for processing operations
+	RetryAttempts        int           // Number of retry attempts on failure
+	CompressionEnabled   bool          // Enable data compression
+	ChecksumValidation   bool          // Enable data integrity validation
 }
 
 // ProcessingStream represents an active streaming processing operation
@@ -61,36 +61,36 @@ const (
 
 // ProcessingResult contains the result of a chunk processing operation
 type ProcessingResult struct {
-	ChunkID     string
-	SizeGB      float64
-	Duration    time.Duration
-	OutputPath  string
-	Checksum    string
-	Error       error
-	Metadata    map[string]interface{}
+	ChunkID    string
+	SizeGB     float64
+	Duration   time.Duration
+	OutputPath string
+	Checksum   string
+	Error      error
+	Metadata   map[string]interface{}
 }
 
 // StreamingMetrics tracks streaming processing performance
 type StreamingMetrics struct {
-	TotalStreams        int
-	ActiveStreams       int
-	CompletedStreams    int
-	FailedStreams       int
-	TotalDataProcessed  float64
-	AverageThroughput   float64
-	PeakThroughput      float64
+	TotalStreams       int
+	ActiveStreams      int
+	CompletedStreams   int
+	FailedStreams      int
+	TotalDataProcessed float64
+	AverageThroughput  float64
+	PeakThroughput     float64
 }
 
-// DefaultStreamingConfig returns enterprise-grade streaming configuration
+// DefaultStreamingConfig returns the default streaming configuration.
 func DefaultStreamingConfig() *StreamingConfig {
 	return &StreamingConfig{
 		MaxConcurrentStreams: 4,
-		ChunkSizeGB:         1.0,
-		BufferSizeGB:        2.0,
-		TimeoutDuration:     30 * time.Minute,
-		RetryAttempts:       3,
-		CompressionEnabled:  true,
-		ChecksumValidation:  true,
+		ChunkSizeGB:          1.0,
+		BufferSizeGB:         2.0,
+		TimeoutDuration:      30 * time.Minute,
+		RetryAttempts:        3,
+		CompressionEnabled:   true,
+		ChecksumValidation:   true,
 	}
 }
 
@@ -99,7 +99,7 @@ func NewStreamingProcessor(memoryPool *MemoryPool, config *StreamingConfig) *Str
 	if config == nil {
 		config = DefaultStreamingConfig()
 	}
-	
+
 	return &StreamingProcessor{
 		memoryPool:    memoryPool,
 		config:        config,
@@ -108,46 +108,47 @@ func NewStreamingProcessor(memoryPool *MemoryPool, config *StreamingConfig) *Str
 	}
 }
 
-// ProcessDataset processes a large dataset using streaming with GPU acceleration
+// ProcessDataset starts a simulated processing stream for input and returns
+// it; chunks are "processed" asynchronously by waiting, not by computation.
 func (sp *StreamingProcessor) ProcessDataset(ctx context.Context, input DatasetInput) (*ProcessingStream, error) {
 	sp.mu.Lock()
 	defer sp.mu.Unlock()
-	
+
 	// Check concurrent stream limit
 	if len(sp.activeStreams) >= sp.config.MaxConcurrentStreams {
 		return nil, fmt.Errorf("maximum concurrent streams (%d) reached", sp.config.MaxConcurrentStreams)
 	}
-	
+
 	// Create processing stream
 	streamID := generateStreamID()
 	chunksTotal := int((input.SizeGB / sp.config.ChunkSizeGB) + 1)
-	
+
 	ctx, cancel := context.WithTimeout(ctx, sp.config.TimeoutDuration)
-	
+
 	stream := &ProcessingStream{
-		ID:           streamID,
-		DatasetSize:  input.SizeGB,
-		ChunksTotal:  chunksTotal,
-		StartTime:    time.Now(),
-		Status:       StatusInitializing,
-		ResultChan:   make(chan *ProcessingResult, chunksTotal),
-		CancelFunc:   cancel,
+		ID:          streamID,
+		DatasetSize: input.SizeGB,
+		ChunksTotal: chunksTotal,
+		StartTime:   time.Now(),
+		Status:      StatusInitializing,
+		ResultChan:  make(chan *ProcessingResult, chunksTotal),
+		CancelFunc:  cancel,
 	}
-	
+
 	sp.activeStreams[streamID] = stream
-	
+
 	// Update metrics
 	sp.metricsMu.Lock()
 	sp.metrics.TotalStreams++
 	sp.metrics.ActiveStreams++
 	sp.metricsMu.Unlock()
-	
+
 	// Start processing in background
 	go sp.processStreamAsync(ctx, stream, input)
-	
-	log.Printf("Started streaming processing for dataset %.2fGB (Stream ID: %s, %d chunks)", 
+
+	log.Printf("Started streaming processing for dataset %.2fGB (Stream ID: %s, %d chunks)",
 		input.SizeGB, streamID, chunksTotal)
-	
+
 	return stream, nil
 }
 
@@ -157,11 +158,11 @@ func (sp *StreamingProcessor) processStreamAsync(ctx context.Context, stream *Pr
 		close(stream.ResultChan)
 		sp.cleanupStream(stream.ID)
 	}()
-	
+
 	stream.mu.Lock()
 	stream.Status = StatusProcessing
 	stream.mu.Unlock()
-	
+
 	// Process dataset in chunks
 	for chunkIndex := 0; chunkIndex < stream.ChunksTotal; chunkIndex++ {
 		select {
@@ -173,15 +174,15 @@ func (sp *StreamingProcessor) processStreamAsync(ctx context.Context, stream *Pr
 			return
 		default:
 		}
-		
+
 		// Process individual chunk
 		result := sp.processChunk(ctx, stream, chunkIndex, input)
-		
+
 		// Update stream progress
 		stream.mu.Lock()
 		stream.ChunksProcessed++
 		stream.ProcessedSize += result.SizeGB
-		
+
 		if result.Error != nil {
 			stream.Status = StatusFailed
 			stream.Error = result.Error
@@ -190,19 +191,19 @@ func (sp *StreamingProcessor) processStreamAsync(ctx context.Context, stream *Pr
 			return
 		}
 		stream.mu.Unlock()
-		
+
 		// Send result
 		stream.ResultChan <- result
-		
+
 		// Update metrics
 		sp.updateThroughputMetrics(result.SizeGB, result.Duration)
 	}
-	
+
 	// Mark stream as completed
 	stream.mu.Lock()
 	stream.Status = StatusCompleted
 	stream.mu.Unlock()
-	
+
 	log.Printf("Completed streaming processing for Stream ID: %s", stream.ID)
 }
 
@@ -210,14 +211,14 @@ func (sp *StreamingProcessor) processStreamAsync(ctx context.Context, stream *Pr
 func (sp *StreamingProcessor) processChunk(ctx context.Context, stream *ProcessingStream, chunkIndex int, input DatasetInput) *ProcessingResult {
 	chunkID := fmt.Sprintf("%s-chunk-%d", stream.ID, chunkIndex)
 	startTime := time.Now()
-	
+
 	// Calculate chunk parameters
 	chunkOffset := float64(chunkIndex) * sp.config.ChunkSizeGB
 	chunkSize := sp.config.ChunkSizeGB
 	if chunkOffset+chunkSize > input.SizeGB {
 		chunkSize = input.SizeGB - chunkOffset
 	}
-	
+
 	// Allocate GPU memory for chunk processing
 	allocation, err := sp.memoryPool.AllocateMemory(chunkSize*2, // Input + output buffers
 		fmt.Sprintf("chunk-processing-%s", chunkID), PriorityNormal)
@@ -229,37 +230,38 @@ func (sp *StreamingProcessor) processChunk(ctx context.Context, stream *Processi
 			Error:    fmt.Errorf("GPU memory allocation failed: %w", err),
 		}
 	}
-	
+
 	defer func() {
 		if err := sp.memoryPool.FreeMemory(allocation.ID); err != nil {
 			log.Printf("Warning: Failed to free GPU memory for chunk %s: %v", chunkID, err)
 		}
 	}()
-	
+
 	// Process chunk with retry logic
 	var result *ProcessingResult
 	for attempt := 0; attempt <= sp.config.RetryAttempts; attempt++ {
 		result = sp.executeChunkProcessing(ctx, chunkID, chunkSize, chunkOffset, input, allocation)
-		
+
 		if result.Error == nil {
 			break
 		}
-		
+
 		if attempt < sp.config.RetryAttempts {
-			log.Printf("Chunk processing failed (attempt %d/%d): %v", 
+			log.Printf("Chunk processing failed (attempt %d/%d): %v",
 				attempt+1, sp.config.RetryAttempts+1, result.Error)
 			time.Sleep(time.Duration(attempt+1) * time.Second) // Exponential backoff
 		}
 	}
-	
+
 	result.Duration = time.Since(startTime)
 	return result
 }
 
-// executeChunkProcessing performs the actual chunk processing
-func (sp *StreamingProcessor) executeChunkProcessing(ctx context.Context, chunkID string, chunkSize, chunkOffset float64, 
+// executeChunkProcessing simulates one chunk: it waits 100 ms per GB and
+// returns a result naming an output file that is never written.
+func (sp *StreamingProcessor) executeChunkProcessing(ctx context.Context, chunkID string, chunkSize, chunkOffset float64,
 	input DatasetInput, allocation *Allocation) *ProcessingResult {
-	
+
 	// Simulate chunk processing (replace with actual GPU processing)
 	result := &ProcessingResult{
 		ChunkID:    chunkID,
@@ -267,7 +269,7 @@ func (sp *StreamingProcessor) executeChunkProcessing(ctx context.Context, chunkI
 		OutputPath: fmt.Sprintf("%s/%s.fastq", input.OutputDir, chunkID),
 		Metadata:   make(map[string]interface{}),
 	}
-	
+
 	// Simulate processing time based on chunk size
 	processingTime := time.Duration(chunkSize*100) * time.Millisecond
 	select {
@@ -277,18 +279,18 @@ func (sp *StreamingProcessor) executeChunkProcessing(ctx context.Context, chunkI
 	case <-time.After(processingTime):
 		// Processing completed
 	}
-	
+
 	// Calculate checksum if enabled
 	if sp.config.ChecksumValidation {
 		result.Checksum = calculateChecksum(result.OutputPath)
 	}
-	
+
 	// Add processing metadata
 	result.Metadata["device_id"] = allocation.DeviceID
 	result.Metadata["allocation_id"] = allocation.ID
 	result.Metadata["compression_enabled"] = sp.config.CompressionEnabled
 	result.Metadata["chunk_offset"] = chunkOffset
-	
+
 	return result
 }
 
@@ -296,16 +298,16 @@ func (sp *StreamingProcessor) executeChunkProcessing(ctx context.Context, chunkI
 func (sp *StreamingProcessor) GetStreamStatus(streamID string) (*ProcessingStream, error) {
 	sp.mu.RLock()
 	defer sp.mu.RUnlock()
-	
+
 	stream, exists := sp.activeStreams[streamID]
 	if !exists {
 		return nil, fmt.Errorf("stream %s not found", streamID)
 	}
-	
+
 	// Return a copy to avoid race conditions
 	stream.mu.RLock()
 	defer stream.mu.RUnlock()
-	
+
 	return &ProcessingStream{
 		ID:              stream.ID,
 		DatasetSize:     stream.DatasetSize,
@@ -323,11 +325,11 @@ func (sp *StreamingProcessor) CancelStream(streamID string) error {
 	sp.mu.RLock()
 	stream, exists := sp.activeStreams[streamID]
 	sp.mu.RUnlock()
-	
+
 	if !exists {
 		return fmt.Errorf("stream %s not found", streamID)
 	}
-	
+
 	stream.CancelFunc()
 	log.Printf("Cancelled processing stream: %s", streamID)
 	return nil
@@ -337,15 +339,15 @@ func (sp *StreamingProcessor) CancelStream(streamID string) error {
 func (sp *StreamingProcessor) cleanupStream(streamID string) {
 	sp.mu.Lock()
 	defer sp.mu.Unlock()
-	
+
 	if stream, exists := sp.activeStreams[streamID]; exists {
 		delete(sp.activeStreams, streamID)
-		
+
 		// Update metrics
 		sp.metricsMu.Lock()
 		sp.metrics.ActiveStreams--
 		sp.metrics.TotalDataProcessed += stream.ProcessedSize
-		
+
 		switch stream.Status {
 		case StatusCompleted:
 			sp.metrics.CompletedStreams++
@@ -359,17 +361,17 @@ func (sp *StreamingProcessor) cleanupStream(streamID string) {
 // updateThroughputMetrics updates throughput statistics
 func (sp *StreamingProcessor) updateThroughputMetrics(sizeGB float64, duration time.Duration) {
 	throughput := sizeGB / duration.Seconds() * 1024 // MB/s
-	
+
 	sp.metricsMu.Lock()
 	defer sp.metricsMu.Unlock()
-	
+
 	// Update average throughput (simple moving average)
 	if sp.metrics.AverageThroughput == 0 {
 		sp.metrics.AverageThroughput = throughput
 	} else {
 		sp.metrics.AverageThroughput = (sp.metrics.AverageThroughput + throughput) / 2
 	}
-	
+
 	// Update peak throughput
 	if throughput > sp.metrics.PeakThroughput {
 		sp.metrics.PeakThroughput = throughput
@@ -385,11 +387,11 @@ func (sp *StreamingProcessor) GetMetrics() StreamingMetrics {
 
 // DatasetInput represents input parameters for dataset processing
 type DatasetInput struct {
-	InputPath   string
-	OutputDir   string
-	SizeGB      float64
-	Format      string
-	Parameters  map[string]interface{}
+	InputPath  string
+	OutputDir  string
+	SizeGB     float64
+	Format     string
+	Parameters map[string]interface{}
 }
 
 // Helper functions

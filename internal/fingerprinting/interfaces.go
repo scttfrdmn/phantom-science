@@ -1,6 +1,23 @@
+// Package fingerprinting marks generated data with a customer and dataset
+// fingerprint.
+//
+// SteganoEngine, built with CGO and without the release tag, uses the stegano
+// library (github.com/scttfrdmn/stegano/go, v0.8.0). Generation embeds one
+// fingerprint per FASTQ file in its quality scores with EmbedInFASTQFile;
+// SAM data carries it in a zs:Z: tag. With WithKey the payload is encrypted
+// (Argon2id key derivation, AES-256-GCM); ResolveKey reads the key from a key
+// file or the PHANTOM_FINGERPRINT_KEY environment variable. Without a key the
+// payload is plaintext and anyone with the library can read it; generation
+// writes plaintext fingerprints only when the configuration sets
+// plaintext: true. The Verifier returned by NewVerifier extracts
+// and, with a key, decrypts the fingerprint from a FASTQ file.
+//
+// Builds without the stegano library (CGO_ENABLED=0 or -tags release) fall
+// back to LegacyEngine, which only tags read IDs; it cannot embed or recover
+// a fingerprint, and NewVerifier returns an error.
 package fingerprinting
 
-// Engine interface defines the fingerprinting operations
+// Engine is the set of fingerprinting operations used by the generator.
 type Engine interface {
 	GenerateFingerprint(datasetID string) (string, error)
 	EmbedInQualities(qualities []byte, fingerprint string) ([]byte, error)

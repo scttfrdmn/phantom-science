@@ -1,3 +1,15 @@
+// Package population runs the Python demographic and haplotype simulators in
+// this directory (demographics.py, haplotype_cli.py) from Go and parses their
+// JSON output. The simulators need the phantom_science_env virtual
+// environment under the project root; see DemographicSimulator and
+// HaplotypeSimulator.
+//
+// privacy_preserving_genetics.go is an experimental mock and does not
+// implement the techniques its type names refer to; see
+// PrivacyPreservingGeneticsEngine.
+//
+// The Go-native coalescent simulator and population panels used by
+// generation and training are in internal/genomics/population.
 package population
 
 import (
@@ -47,45 +59,46 @@ type DemographicParameters struct {
 
 // SimulationResult holds the result of demographic simulation
 type SimulationResult struct {
-	Population       Population              `json:"population"`
-	NumVariants      int                     `json:"num_variants"`
-	NumTrees         int                     `json:"num_trees"`
-	NumSamples       int                     `json:"num_samples"`
-	SequenceLength   int                     `json:"sequence_length"`
-	SimulationTime   float64                 `json:"simulation_time"`
-	MemoryUsedMB     float64                 `json:"memory_used_mb"`
-	DemographicParams DemographicParameters  `json:"demographic_params"`
-	Variants         []VariantData           `json:"variants"`
-	Statistics       PopulationStatistics    `json:"statistics"`
+	Population        Population            `json:"population"`
+	NumVariants       int                   `json:"num_variants"`
+	NumTrees          int                   `json:"num_trees"`
+	NumSamples        int                   `json:"num_samples"`
+	SequenceLength    int                   `json:"sequence_length"`
+	SimulationTime    float64               `json:"simulation_time"`
+	MemoryUsedMB      float64               `json:"memory_used_mb"`
+	DemographicParams DemographicParameters `json:"demographic_params"`
+	Variants          []VariantData         `json:"variants"`
+	Statistics        PopulationStatistics  `json:"statistics"`
 }
 
 // VariantData represents a genetic variant
 type VariantData struct {
-	Position        int       `json:"position"`
-	Alleles         []string  `json:"alleles"`
-	Genotypes       []int     `json:"genotypes"`
-	Frequency       float64   `json:"frequency"`
-	AncestralState  string    `json:"ancestral_state"`
-	NumAlleles      int       `json:"num_alleles"`
+	Position       int      `json:"position"`
+	Alleles        []string `json:"alleles"`
+	Genotypes      []int    `json:"genotypes"`
+	Frequency      float64  `json:"frequency"`
+	AncestralState string   `json:"ancestral_state"`
+	NumAlleles     int      `json:"num_alleles"`
 }
 
 // PopulationStatistics holds population genetics statistics
 type PopulationStatistics struct {
-	Population             string                 `json:"population"`
-	NumVariants            int                    `json:"num_variants"`
-	NumSamples             int                    `json:"num_samples"`
-	DiversityPi            float64                `json:"diversity_pi"`
-	WattersonTheta         float64                `json:"watterson_theta"`
-	TajimaD                float64                `json:"tajima_d"`
-	SegregataingSites      int                    `json:"segregating_sites"`
-	RareVariantsCount      int                    `json:"rare_variants_count"`
-	CommonVariantsCount    int                    `json:"common_variants_count"`
-	SiteFrequencySpectrum  []int                  `json:"site_frequency_spectrum"`
-	MeanAlleleFrequency    float64                `json:"mean_allele_frequency"`
-	DemographicParams      map[string]interface{} `json:"demographic_params"`
+	Population            string                 `json:"population"`
+	NumVariants           int                    `json:"num_variants"`
+	NumSamples            int                    `json:"num_samples"`
+	DiversityPi           float64                `json:"diversity_pi"`
+	WattersonTheta        float64                `json:"watterson_theta"`
+	TajimaD               float64                `json:"tajima_d"`
+	SegregataingSites     int                    `json:"segregating_sites"`
+	RareVariantsCount     int                    `json:"rare_variants_count"`
+	CommonVariantsCount   int                    `json:"common_variants_count"`
+	SiteFrequencySpectrum []int                  `json:"site_frequency_spectrum"`
+	MeanAlleleFrequency   float64                `json:"mean_allele_frequency"`
+	DemographicParams     map[string]interface{} `json:"demographic_params"`
 }
 
-// DemographicSimulator provides interface to Python demographic models
+// DemographicSimulator runs demographics.py with the virtual environment's
+// python3.
 type DemographicSimulator struct {
 	pythonPath string
 	scriptPath string
@@ -101,14 +114,15 @@ func NewDemographicSimulator(projectRoot string) *DemographicSimulator {
 	}
 }
 
-// SimulatePopulation simulates a single population using coalescent models
+// SimulatePopulation runs demographics.py for one population and parses its
+// JSON result.
 func (ds *DemographicSimulator) SimulatePopulation(
 	population Population,
 	sampleSize int,
 	sequenceLength int,
 	randomSeed *int,
 ) (*SimulationResult, error) {
-	
+
 	// Prepare command arguments
 	args := []string{
 		ds.scriptPath,
@@ -117,30 +131,30 @@ func (ds *DemographicSimulator) SimulatePopulation(
 		"--sequence-length", strconv.Itoa(sequenceLength),
 		"--output-format", "json",
 	}
-	
+
 	if randomSeed != nil {
 		args = append(args, "--random-seed", strconv.Itoa(*randomSeed))
 	}
-	
+
 	// Set up command with virtual environment
 	cmd := exec.Command(ds.pythonPath, args...) // #nosec G204
 	cmd.Env = append(os.Environ(),
 		fmt.Sprintf("VIRTUAL_ENV=%s", ds.envPath),
 		fmt.Sprintf("PATH=%s/bin:%s", ds.envPath, os.Getenv("PATH")),
 	)
-	
+
 	// Execute simulation
 	output, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute demographic simulation: %w", err)
 	}
-	
+
 	// Parse JSON result
 	var result SimulationResult
 	if err := json.Unmarshal(output, &result); err != nil {
 		return nil, fmt.Errorf("failed to parse simulation result: %w", err)
 	}
-	
+
 	return &result, nil
 }
 
@@ -150,35 +164,36 @@ func (ds *DemographicSimulator) SimulateAllPopulations(
 	sequenceLength int,
 	randomSeed *int,
 ) (map[Population]*SimulationResult, error) {
-	
+
 	populations := []Population{YRI, LWK, GWD, CEU, GBR, TSI, CHB, JPT, CHS, MXL, PUR}
 	results := make(map[Population]*SimulationResult)
-	
+
 	fmt.Println("🌍 Simulating all 11 populations with demographic models...")
 	startTime := time.Now()
-	
+
 	for _, pop := range populations {
 		fmt.Printf("🧬 Simulating %s...\n", pop)
-		
+
 		result, err := ds.SimulatePopulation(pop, sampleSize, sequenceLength, randomSeed)
 		if err != nil {
 			return nil, fmt.Errorf("failed to simulate %s: %w", pop, err)
 		}
-		
+
 		results[pop] = result
-		fmt.Printf("   ✅ %s: %d variants, %.2fs\n", 
+		fmt.Printf("   ✅ %s: %d variants, %.2fs\n",
 			pop, result.NumVariants, result.SimulationTime)
 	}
-	
+
 	totalTime := time.Since(startTime)
 	fmt.Printf("🎉 All populations simulated in %.2fs\n", totalTime.Seconds())
-	
+
 	return results, nil
 }
 
-// GetPopulationParameters returns demographic parameters for a population
+// GetPopulationParameters returns a fixed table of demographic parameters.
+// Only YRI, CEU, CHB and MXL are defined; other populations return an error.
 func (ds *DemographicSimulator) GetPopulationParameters(population Population) (*DemographicParameters, error) {
-	// Static parameters based on literature
+	// Static parameter table; values are not cited to a specific source.
 	parameters := map[Population]DemographicParameters{
 		YRI: {
 			Population:              YRI,
@@ -238,91 +253,98 @@ func (ds *DemographicSimulator) GetPopulationParameters(population Population) (
 		},
 		// Add other populations as needed
 	}
-	
+
 	if params, exists := parameters[population]; exists {
 		return &params, nil
 	}
-	
+
 	return nil, fmt.Errorf("unknown population: %s", population)
 }
 
-// IntegrateWithHMMModel integrates demographic simulation with existing HMM k-mer model
+// IntegrateWithHMMModel is a stub: it runs the simulation and prints its
+// statistics, then returns a new, untrained HMMKmerModel. The simulated
+// variants are not used for training.
 func (ds *DemographicSimulator) IntegrateWithHMMModel(
 	population Population,
 	sampleSize int,
 	sequenceLength int,
 	kmerSize int,
 ) (*authenticity.HMMKmerModel, error) {
-	
-	fmt.Printf("🔗 Integrating %s demographic model with HMM k-mer model (k=%d)...\n", 
+
+	fmt.Printf("🔗 Integrating %s demographic model with HMM k-mer model (k=%d)...\n",
 		population, kmerSize)
-	
+
 	// Simulate population with demographic model
 	result, err := ds.SimulatePopulation(population, sampleSize, sequenceLength, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to simulate population: %w", err)
 	}
-	
+
 	// Create HMM k-mer model
 	model := authenticity.NewHMMKmerModel(kmerSize)
-	
+
 	// Convert demographic variants to training data for HMM
 	// This would require implementing a ChromosomeInterface that uses
 	// the simulated variants instead of VCF data
-	
+
 	fmt.Printf("   📊 Generated %d variants from demographic model\n", result.NumVariants)
 	fmt.Printf("   🧬 Diversity (π): %.6f\n", result.Statistics.DiversityPi)
 	fmt.Printf("   📈 Tajima's D: %.3f\n", result.Statistics.TajimaD)
-	
+
 	// For now, return the model - full integration would require
 	// implementing ChromosomeInterface for simulated data
 	return model, nil
 }
 
-// ValidatePopulationStatistics validates that simulated populations have realistic statistics
+// ValidatePopulationStatistics checks simulated statistics against fixed
+// ranges: nucleotide diversity for YRI, CEU and CHB, Tajima's D in
+// [-2.0, 0.5], and a rare-variant proportion of at least 0.7.
 func (ds *DemographicSimulator) ValidatePopulationStatistics(
 	results map[Population]*SimulationResult,
 ) error {
-	
+
 	fmt.Println("📊 Validating population statistics...")
-	
+
 	for pop, result := range results {
 		stats := result.Statistics
 		params := result.DemographicParams
-		
-		// Validate diversity levels.
-		// African populations (YRI) have the highest nucleotide diversity, followed by
-		// East Asian (CHB), then European (CEU) — consistent with 1000 Genomes Phase 3.
+
+		// Validate diversity levels. These ranges are tuned to the Python
+		// simulator's output, not taken from data: observed human π is about
+		// 1e-3 per site, two orders of magnitude higher. In 1000 Genomes,
+		// African populations have the highest diversity and East Asian
+		// populations the lowest, so the CEU < CHB ordering here does not
+		// match real data either.
 		expectedDiversity := map[Population]struct{ min, max float64 }{
 			YRI: {0.000010, 0.000030}, // African: highest diversity
-			CEU: {0.000005, 0.000015}, // European: lowest diversity
-			CHB: {0.000008, 0.000025}, // East Asian: intermediate
+			CEU: {0.000005, 0.000015},
+			CHB: {0.000008, 0.000025},
 		}
-		
+
 		if expected, exists := expectedDiversity[pop]; exists {
 			if stats.DiversityPi < expected.min || stats.DiversityPi > expected.max {
 				return fmt.Errorf("%s diversity (π=%.6f) outside expected range [%.6f, %.6f]",
 					pop, stats.DiversityPi, expected.min, expected.max)
 			}
 		}
-		
+
 		// Validate Tajima's D (should be slightly negative for most populations due to population growth)
 		if stats.TajimaD > 0.5 || stats.TajimaD < -2.0 {
 			return fmt.Errorf("%s Tajima's D (%.3f) outside reasonable range [-2.0, 0.5]",
 				pop, stats.TajimaD)
 		}
-		
+
 		// Validate rare variant proportion (should be majority)
 		rareVariantProp := float64(stats.RareVariantsCount) / float64(stats.NumVariants)
 		if rareVariantProp < 0.7 {
 			return fmt.Errorf("%s rare variant proportion (%.3f) too low, expected >0.7",
 				pop, rareVariantProp)
 		}
-		
+
 		fmt.Printf("   ✅ %s: π=%.6f, D=%.3f, rare=%.1f%%, Ne=%d\n",
 			pop, stats.DiversityPi, stats.TajimaD, rareVariantProp*100, params.EffectivePopulation)
 	}
-	
+
 	fmt.Println("   🎉 All population statistics validated!")
 	return nil
 }

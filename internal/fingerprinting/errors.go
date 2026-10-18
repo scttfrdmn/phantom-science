@@ -9,28 +9,28 @@ import (
 // Error types for different categories of fingerprinting failures
 var (
 	// Input validation errors
-	ErrEmptyInput          = errors.New("empty input data")
-	ErrInvalidFormat       = errors.New("invalid data format")
-	ErrInvalidFingerprint  = errors.New("invalid fingerprint")
-	ErrInsufficientData    = errors.New("insufficient data for embedding")
-	
+	ErrEmptyInput         = errors.New("empty input data")
+	ErrInvalidFormat      = errors.New("invalid data format")
+	ErrInvalidFingerprint = errors.New("invalid fingerprint")
+	ErrInsufficientData   = errors.New("insufficient data for embedding")
+
 	// System errors
-	ErrBridgeNotInitialized = errors.New("stegano bridge not initialized")
+	ErrBridgeNotInitialized = errors.New("stegano bridge not initialized") // unused since the bridge was removed; kept for API compatibility
 	ErrLibraryNotAvailable  = errors.New("stegano library not available")
-	ErrGPUNotAvailable     = errors.New("GPU acceleration not available")
-	
+	ErrGPUNotAvailable      = errors.New("GPU acceleration not available")
+
 	// Operation errors
-	ErrEmbeddingFailed     = errors.New("embedding operation failed")
-	ErrExtractionFailed    = errors.New("extraction operation failed")
-	ErrCapacityExceeded    = errors.New("fingerprint exceeds embedding capacity")
-	ErrCorruptedData       = errors.New("data appears to be corrupted")
-	ErrKeyRequired         = errors.New("fingerprint is encrypted: a key is required")
-	ErrWrongKey            = errors.New("fingerprint cannot be decrypted with this key")
-	
+	ErrEmbeddingFailed  = errors.New("embedding operation failed")
+	ErrExtractionFailed = errors.New("extraction operation failed")
+	ErrCapacityExceeded = errors.New("fingerprint exceeds embedding capacity")
+	ErrCorruptedData    = errors.New("data appears to be corrupted")
+	ErrKeyRequired      = errors.New("fingerprint is encrypted: a key is required")
+	ErrWrongKey         = errors.New("fingerprint cannot be decrypted with this key")
+
 	// Performance errors
-	ErrTimeout             = errors.New("operation timed out")
-	ErrMemoryExhausted     = errors.New("insufficient memory for operation")
-	ErrGPUError           = errors.New("GPU operation failed")
+	ErrTimeout         = errors.New("operation timed out")
+	ErrMemoryExhausted = errors.New("insufficient memory for operation")
+	ErrGPUError        = errors.New("GPU operation failed")
 )
 
 // FingerprintingError provides detailed error information with context
@@ -58,15 +58,15 @@ const (
 
 func (e *FingerprintingError) Error() string {
 	var parts []string
-	
+
 	if e.Op != "" {
 		parts = append(parts, fmt.Sprintf("operation %s", e.Op))
 	}
-	
+
 	if e.Err != nil {
 		parts = append(parts, e.Err.Error())
 	}
-	
+
 	if len(e.Context) > 0 {
 		var contextParts []string
 		for key, value := range e.Context {
@@ -74,7 +74,7 @@ func (e *FingerprintingError) Error() string {
 		}
 		parts = append(parts, fmt.Sprintf("context: %s", strings.Join(contextParts, ", ")))
 	}
-	
+
 	return strings.Join(parts, ": ")
 }
 
@@ -131,7 +131,8 @@ func isRecoverableError(code ErrorCode) bool {
 	}
 }
 
-// ValidateInput performs comprehensive input validation
+// ValidateInput checks that data is non-empty and starts like a FASTQ
+// record, and that fingerprint passes validateFingerprint.
 func ValidateInput(data []byte, fingerprint string, operation string) error {
 	if len(data) == 0 {
 		return NewFingerprintingError(operation, ErrEmptyInput, ErrorCodeValidation).
@@ -171,18 +172,20 @@ func validateFingerprint(fingerprint string, operation string) error {
 	return nil
 }
 
-// EstimateCapacity validates that the fingerprint can fit in the available data
+// EstimateCapacity is a rough pre-check: it assumes 40% of data is quality
+// scores and fails when the fingerprint has more bytes than that. It does not
+// model stegano's real capacity, which is lower (stegano reports
+// ErrInsufficientCapacity itself), and strategy is only recorded in the error.
 func EstimateCapacity(data []byte, fingerprint string, strategy string) error {
 	dataLength := len(data)
 	fingerprintLength := len(fingerprint)
-	
-	// Rough capacity estimation based on FASTQ structure
-	// Assumes approximately 40% of data is quality scores
+
+	// Assume approximately 40% of data is quality scores.
 	estimatedQualityBytes := int(float64(dataLength) * 0.4)
-	
-	// Conservative capacity estimation (1 bit per quality score)
+
+	// One payload byte per quality score.
 	conservativeCapacity := estimatedQualityBytes
-	
+
 	if fingerprintLength > conservativeCapacity {
 		return NewFingerprintingError("capacity_check", ErrCapacityExceeded, ErrorCodeCapacity).
 			WithContext("fingerprint_length", fingerprintLength).
@@ -190,7 +193,7 @@ func EstimateCapacity(data []byte, fingerprint string, strategy string) error {
 			WithContext("data_length", dataLength).
 			WithContext("strategy", strategy)
 	}
-	
+
 	return nil
 }
 
@@ -205,21 +208,21 @@ func isValidFASTQData(data []byte) bool {
 	if len(data) < MinDataLength {
 		return false
 	}
-	
+
 	// Check for FASTQ structure (starts with @, has + separator)
 	dataStr := string(data)
 	lines := strings.Split(dataStr, "\n")
-	
+
 	if len(lines) < 4 {
 		return false
 	}
-	
+
 	// Basic FASTQ validation: first line starts with @, third line starts with +
 	firstLine := strings.TrimSpace(lines[0])
 	if !strings.HasPrefix(firstLine, "@") {
 		return false
 	}
-	
+
 	// Look for quality separator
 	hasQualitySeparator := false
 	for _, line := range lines {
@@ -228,7 +231,7 @@ func isValidFASTQData(data []byte) bool {
 			break
 		}
 	}
-	
+
 	return hasQualitySeparator
 }
 
@@ -248,21 +251,21 @@ func containsInvalidCharacters(fingerprint string) bool {
 func RecoverableOperation[T any](operation func() (T, error), fallback func() (T, error), maxRetries int) (T, error) {
 	var lastErr error
 	var zero T
-	
+
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		result, err := operation()
 		if err == nil {
 			return result, nil
 		}
-		
+
 		lastErr = err
-		
+
 		// Check if error is recoverable
 		var fpErr *FingerprintingError
 		if errors.As(err, &fpErr) && fpErr.Recoverable && attempt < maxRetries {
 			continue // Retry the operation
 		}
-		
+
 		// If not recoverable or max retries reached, try fallback
 		if fallback != nil {
 			result, fallbackErr := fallback()
@@ -271,9 +274,9 @@ func RecoverableOperation[T any](operation func() (T, error), fallback func() (T
 			}
 			// If fallback also fails, return original error
 		}
-		
+
 		break
 	}
-	
+
 	return zero, lastErr
 }

@@ -31,10 +31,10 @@ type HaplotypeBlock struct {
 
 // HaplotypeVariant represents a variant in haplotype simulation
 type HaplotypeVariant struct {
-	Position        int      `json:"position"`
-	Alleles         []string `json:"alleles"`
-	AncestralState  string   `json:"ancestral_state"`
-	Frequency       float64  `json:"frequency"`
+	Position       int      `json:"position"`
+	Alleles        []string `json:"alleles"`
+	AncestralState string   `json:"ancestral_state"`
+	Frequency      float64  `json:"frequency"`
 }
 
 // HaplotypeStatistics holds comprehensive haplotype statistics
@@ -54,22 +54,23 @@ type HaplotypeStatistics struct {
 
 // HaplotypeSimulationResult holds complete haplotype simulation results
 type HaplotypeSimulationResult struct {
-	Population        Population             `json:"population"`
-	Chromosome        string                 `json:"chromosome"`
-	NumVariants       int                    `json:"num_variants"`
-	NumTrees          int                    `json:"num_trees"`
-	NumSamples        int                    `json:"num_samples"`
-	SequenceLength    int                    `json:"sequence_length"`
-	SimulationTime    float64                `json:"simulation_time"`
-	MemoryUsedMB      float64                `json:"memory_used_mb"`
-	Variants          []HaplotypeVariant     `json:"variants"`
-	RecombinationMap  RecombinationMap       `json:"recombination_map"`
-	LDBlocks          []HaplotypeBlock       `json:"ld_blocks"`
-	Statistics        HaplotypeStatistics    `json:"statistics"`
-	HaplotypeMatrix   [][]int                `json:"haplotype_matrix,omitempty"` // Optional - can be large
+	Population       Population          `json:"population"`
+	Chromosome       string              `json:"chromosome"`
+	NumVariants      int                 `json:"num_variants"`
+	NumTrees         int                 `json:"num_trees"`
+	NumSamples       int                 `json:"num_samples"`
+	SequenceLength   int                 `json:"sequence_length"`
+	SimulationTime   float64             `json:"simulation_time"`
+	MemoryUsedMB     float64             `json:"memory_used_mb"`
+	Variants         []HaplotypeVariant  `json:"variants"`
+	RecombinationMap RecombinationMap    `json:"recombination_map"`
+	LDBlocks         []HaplotypeBlock    `json:"ld_blocks"`
+	Statistics       HaplotypeStatistics `json:"statistics"`
+	HaplotypeMatrix  [][]int             `json:"haplotype_matrix,omitempty"` // Optional - can be large
 }
 
-// HaplotypeSimulator provides interface to Python haplotype simulation
+// HaplotypeSimulator runs haplotype_cli.py with the virtual environment's
+// python3.
 type HaplotypeSimulator struct {
 	pythonPath string
 	scriptPath string
@@ -85,7 +86,8 @@ func NewHaplotypeSimulator(projectRoot string) *HaplotypeSimulator {
 	}
 }
 
-// SimulateHaplotypes simulates haplotypes with LD structure for a population
+// SimulateHaplotypes runs haplotype_cli.py for one population and parses its
+// JSON result.
 func (hs *HaplotypeSimulator) SimulateHaplotypes(
 	population Population,
 	chromosome string,
@@ -94,7 +96,7 @@ func (hs *HaplotypeSimulator) SimulateHaplotypes(
 	randomSeed *int,
 	includeMatrix bool,
 ) (*HaplotypeSimulationResult, error) {
-	
+
 	// Prepare command arguments
 	args := []string{
 		hs.scriptPath,
@@ -104,39 +106,39 @@ func (hs *HaplotypeSimulator) SimulateHaplotypes(
 		"--sequence-length", strconv.Itoa(sequenceLength),
 		"--output-format", "json",
 	}
-	
+
 	if randomSeed != nil {
 		args = append(args, "--random-seed", strconv.Itoa(*randomSeed))
 	}
-	
+
 	if includeMatrix {
 		args = append(args, "--include-haplotype-matrix")
 	}
-	
+
 	// Set up command with virtual environment
 	cmd := exec.Command(hs.pythonPath, args...) // #nosec G204
 	cmd.Env = append(os.Environ(),
 		fmt.Sprintf("VIRTUAL_ENV=%s", hs.envPath),
 		fmt.Sprintf("PATH=%s/bin:%s", hs.envPath, os.Getenv("PATH")),
 	)
-	
+
 	fmt.Printf("🧬 Simulating %s haplotypes for %s...\n", population, chromosome)
-	
+
 	// Execute simulation
 	output, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute haplotype simulation: %w", err)
 	}
-	
+
 	// Parse JSON result
 	var result HaplotypeSimulationResult
 	if err := json.Unmarshal(output, &result); err != nil {
 		return nil, fmt.Errorf("failed to parse haplotype simulation result: %w", err)
 	}
-	
+
 	fmt.Printf("   ✅ %s: %d variants, %d LD blocks, r²=%.3f\n",
 		population, result.NumVariants, len(result.LDBlocks), result.Statistics.MeanRSquared)
-	
+
 	return &result, nil
 }
 
@@ -147,13 +149,13 @@ func (hs *HaplotypeSimulator) SimulateAllPopulationsHaplotypes(
 	sequenceLength int,
 	randomSeed *int,
 ) (map[Population]*HaplotypeSimulationResult, error) {
-	
+
 	populations := GetSupportedPopulations()
 	results := make(map[Population]*HaplotypeSimulationResult)
-	
+
 	fmt.Printf("🌍 Simulating haplotypes for all 11 populations (%s)...\n", chromosome)
 	startTime := time.Now()
-	
+
 	for _, pop := range populations {
 		result, err := hs.SimulateHaplotypes(
 			pop,
@@ -166,13 +168,13 @@ func (hs *HaplotypeSimulator) SimulateAllPopulationsHaplotypes(
 		if err != nil {
 			return nil, fmt.Errorf("failed to simulate %s haplotypes: %w", pop, err)
 		}
-		
+
 		results[pop] = result
 	}
-	
+
 	totalTime := time.Since(startTime)
 	fmt.Printf("🎉 All population haplotypes simulated in %.2fs\n", totalTime.Seconds())
-	
+
 	return results, nil
 }
 
@@ -180,25 +182,25 @@ func (hs *HaplotypeSimulator) SimulateAllPopulationsHaplotypes(
 func (hs *HaplotypeSimulator) ValidateLDPatterns(
 	results map[Population]*HaplotypeSimulationResult,
 ) (map[string]bool, error) {
-	
+
 	fmt.Println("📊 Validating LD patterns across populations...")
-	
+
 	validation := make(map[string]bool)
-	
+
 	// Extract statistics for analysis
 	africanPops := []Population{YRI, LWK, GWD}
 	europeanPops := []Population{CEU, GBR, TSI}
 	eastAsianPops := []Population{CHB, JPT, CHS}
-	
+
 	// Calculate population group statistics
 	africanDiversity := calculateGroupMeanDiversity(results, africanPops)
 	europeanDiversity := calculateGroupMeanDiversity(results, europeanPops)
 	eastAsianDiversity := calculateGroupMeanDiversity(results, eastAsianPops)
-	
+
 	// Test 1: African populations should have highest diversity
-	validation["african_highest_diversity"] = africanDiversity > europeanDiversity && 
-											  africanDiversity > eastAsianDiversity
-	
+	validation["african_highest_diversity"] = africanDiversity > europeanDiversity &&
+		africanDiversity > eastAsianDiversity
+
 	// Test 2: LD structure should be reasonable
 	allRSquared := []float64{}
 	for _, result := range results {
@@ -206,14 +208,14 @@ func (hs *HaplotypeSimulator) ValidateLDPatterns(
 	}
 	meanRSquared := calculateMean(allRSquared)
 	validation["reasonable_ld_structure"] = meanRSquared > 0.01 && meanRSquared < 0.1
-	
+
 	// Test 3: Haplotype blocks should be present
 	totalBlocks := 0
 	for _, result := range results {
 		totalBlocks += len(result.LDBlocks)
 	}
 	validation["haplotype_blocks_present"] = totalBlocks > 0
-	
+
 	// Test 4: Population differentiation in recombination
 	recombRates := []float64{}
 	for _, result := range results {
@@ -221,7 +223,7 @@ func (hs *HaplotypeSimulator) ValidateLDPatterns(
 	}
 	recombCV := calculateCV(recombRates)
 	validation["recombination_variation"] = recombCV > 0.05
-	
+
 	// Test 5: Realistic genetic map lengths
 	mapLengths := []float64{}
 	var avgSequenceLength float64
@@ -235,13 +237,13 @@ func (hs *HaplotypeSimulator) ValidateLDPatterns(
 	meanMapLength := calculateMean(mapLengths)
 	// For sequence, expect ~1.5 cM/Mb average
 	expectedRange := avgSequenceLength / 1_000_000 * 1.5 // ~1.5 cM/Mb average
-	validation["realistic_map_lengths"] = meanMapLength > expectedRange*0.5 && 
-										  meanMapLength < expectedRange*2.0
-	
+	validation["realistic_map_lengths"] = meanMapLength > expectedRange*0.5 &&
+		meanMapLength < expectedRange*2.0
+
 	// Print validation results
 	passed := 0
 	total := len(validation)
-	
+
 	for test, result := range validation {
 		status := "✅ PASSED"
 		if !result {
@@ -251,9 +253,9 @@ func (hs *HaplotypeSimulator) ValidateLDPatterns(
 		}
 		fmt.Printf("   %s: %s\n", test, status)
 	}
-	
+
 	fmt.Printf("\n🎯 LD Pattern Validation: %d/%d tests passed\n", passed, total)
-	
+
 	return validation, nil
 }
 
@@ -275,40 +277,40 @@ func (hs *HaplotypeSimulator) GetLDStatistics(
 func (hs *HaplotypeSimulator) AnalyzeCrossPopulationLD(
 	results map[Population]*HaplotypeSimulationResult,
 ) map[string]interface{} {
-	
+
 	analysis := make(map[string]interface{})
-	
+
 	// Collect statistics across populations
 	diversities := make(map[string]float64)
 	ldMetrics := make(map[string]float64)
 	blockCounts := make(map[string]int)
-	
+
 	for pop, result := range results {
 		diversities[string(pop)] = result.Statistics.DiversityPi
 		ldMetrics[string(pop)] = result.Statistics.MeanRSquared
 		blockCounts[string(pop)] = len(result.LDBlocks)
 	}
-	
+
 	analysis["diversity_by_population"] = diversities
 	analysis["ld_metrics_by_population"] = ldMetrics
 	analysis["block_counts_by_population"] = blockCounts
-	
+
 	// Calculate summary statistics
 	allDiversities := make([]float64, 0, len(diversities))
 	allLDMetrics := make([]float64, 0, len(ldMetrics))
-	
+
 	for _, div := range diversities {
 		allDiversities = append(allDiversities, div)
 	}
 	for _, ld := range ldMetrics {
 		allLDMetrics = append(allLDMetrics, ld)
 	}
-	
+
 	analysis["diversity_mean"] = calculateMean(allDiversities)
 	analysis["diversity_cv"] = calculateCV(allDiversities)
 	analysis["ld_mean"] = calculateMean(allLDMetrics)
 	analysis["ld_cv"] = calculateCV(allLDMetrics)
-	
+
 	return analysis
 }
 
@@ -320,18 +322,18 @@ func calculateGroupMeanDiversity(
 ) float64 {
 	total := 0.0
 	count := 0
-	
+
 	for _, pop := range populations {
 		if result, exists := results[pop]; exists {
 			total += result.Statistics.DiversityPi
 			count++
 		}
 	}
-	
+
 	if count == 0 {
 		return 0.0
 	}
-	
+
 	return total / float64(count)
 }
 
@@ -339,12 +341,12 @@ func calculateMean(values []float64) float64 {
 	if len(values) == 0 {
 		return 0.0
 	}
-	
+
 	sum := 0.0
 	for _, v := range values {
 		sum += v
 	}
-	
+
 	return sum / float64(len(values))
 }
 
@@ -352,21 +354,21 @@ func calculateCV(values []float64) float64 {
 	if len(values) <= 1 {
 		return 0.0
 	}
-	
+
 	mean := calculateMean(values)
 	if mean == 0.0 {
 		return 0.0
 	}
-	
+
 	sumSquares := 0.0
 	for _, v := range values {
 		diff := v - mean
 		sumSquares += diff * diff
 	}
-	
+
 	variance := sumSquares / float64(len(values)-1)
 	stddev := sqrt(variance)
-	
+
 	return stddev / mean
 }
 
@@ -378,7 +380,7 @@ func sqrt(x float64) float64 {
 	if x == 0 {
 		return 0
 	}
-	
+
 	// Newton's method for square root
 	z := x
 	for i := 0; i < 10; i++ {

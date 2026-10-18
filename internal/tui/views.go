@@ -38,7 +38,7 @@ func (m Model) renderSequencerPanel() string {
 	}
 
 	title := m.styles.Subtitle.Render("Sequencer Selection")
-	
+
 	var options []string
 	sequencers := []struct {
 		name     string
@@ -53,12 +53,12 @@ func (m Model) renderSequencerPanel() string {
 	for i, seq := range sequencers {
 		prefix := "○"
 		optionStyle := m.styles.SequencerOption
-		
+
 		if i == m.sequencerChoice {
 			prefix = "●"
 			optionStyle = m.styles.SequencerOptionActive
 		}
-		
+
 		option := fmt.Sprintf("%s %s %s (%s)", prefix, seq.icon, seq.name, seq.flowCell)
 		options = append(options, optionStyle.Render(option))
 	}
@@ -76,13 +76,13 @@ func (m Model) renderSequencerPanel() string {
 // renderStatusPanel renders the run status panel
 func (m Model) renderStatusPanel() string {
 	style := m.styles.Panel
-	
+
 	title := m.styles.Subtitle.Render("Run Status")
-	
+
 	status := "Ready"
 	progressPercent := 0.0
 	eta := "--:--"
-	
+
 	if m.runInProgress {
 		status = string(m.progress.Stage)
 		progressPercent = m.progress.Percent
@@ -92,7 +92,7 @@ func (m Model) renderStatusPanel() string {
 	}
 
 	statusLine := fmt.Sprintf("Status: %s", m.styles.StatusLabel(status))
-	progressLine := fmt.Sprintf("Progress: %s %.1f%%", 
+	progressLine := fmt.Sprintf("Progress: %s %.1f%%",
 		m.styles.ProgressBarView(progressPercent, 10), progressPercent)
 	etaLine := fmt.Sprintf("ETA: %s", m.styles.Value.Render(eta))
 
@@ -111,25 +111,25 @@ func (m Model) renderStatusPanel() string {
 // renderStatsPanel renders the real-time statistics panel
 func (m Model) renderStatsPanel() string {
 	style := m.styles.Panel
-	
+
 	title := m.styles.Subtitle.Render("Real-time Stats")
-	
+
 	filesGenerated := "0"
 	totalFiles := "0"
 	totalSize := "0 MB"
 	currentRate := "0 MB/s"
 	currentFile := "None"
-	
+
 	if m.runInProgress {
 		filesGenerated = fmt.Sprintf("%d", m.progress.FilesGenerated)
 		totalFiles = fmt.Sprintf("%d", m.progress.TotalFiles)
 		totalSize = fmt.Sprintf("%.1f MB", float64(m.progress.BytesGenerated)/(1024*1024))
-		
+
 		// Calculate current rate based on timing
 		if m.simulator != nil {
 			currentRate = fmt.Sprintf("%.1f MB/s", float64(m.simulator.Timing.BytesPerSecond)/(1024*1024))
 		}
-		
+
 		if m.progress.CurrentFile != "" {
 			// Show just the filename, not full path
 			currentFile = filepath.Base(m.progress.CurrentFile)
@@ -139,7 +139,7 @@ func (m Model) renderStatsPanel() string {
 		}
 	}
 
-	filesLine := fmt.Sprintf("Files: %s/%s", 
+	filesLine := fmt.Sprintf("Files: %s/%s",
 		m.styles.Value.Render(filesGenerated),
 		m.styles.Value.Foreground(m.styles.Muted).Render(totalFiles))
 	sizeLine := fmt.Sprintf("Size: %s", m.styles.Value.Render(totalSize))
@@ -180,9 +180,9 @@ func (m Model) renderSampleSheet() string {
 		if m.currentSection == SectionSamples && i == 0 { // Highlight first row when section is active
 			rowStyle = m.styles.SampleRowActive
 		}
-		
+
 		row := rowStyle.Render(
-			fmt.Sprintf("%-12s %-4d %-9s %-9s %-12s %-15s", 
+			fmt.Sprintf("%-12s %-4d %-9s %-9s %-12s %-15s",
 				sample.ID, sample.Lane, sample.Index1, sample.Index2, sample.Project, sample.Description))
 		rows = append(rows, row)
 	}
@@ -284,49 +284,41 @@ func (m Model) renderParametersPanel() string {
 	return style.Width(30).Render(content)
 }
 
-// renderFingerprintingPanel renders the enterprise fingerprinting panel
+// renderFingerprintingPanel renders the fingerprinting panel
 func (m Model) renderFingerprintingPanel() string {
 	style := m.styles.Panel
 	if m.currentSection == SectionFingerprinting {
 		style = m.styles.ActivePanel
 	}
 
-	title := m.styles.Subtitle.Render("🔒 Enterprise Fingerprinting")
+	title := m.styles.Subtitle.Render("🔒 Fingerprinting")
 
 	// Fingerprinting enabled/disabled
 	enabledCheck := "✗"
 	if m.fingerprintingEnabled {
 		enabledCheck = "✓"
 	}
-	enabledLine := fmt.Sprintf("%s [%s]", 
-		m.styles.Label.Render("Enabled:"), 
+	enabledLine := fmt.Sprintf("%s [%s]",
+		m.styles.Label.Render("Enabled:"),
 		m.styles.Value.Render(enabledCheck))
 
 	// Customer ID
-	customerLine := fmt.Sprintf("%s %s", 
-		m.styles.Label.Render("Customer ID:"), 
+	customerLine := fmt.Sprintf("%s %s",
+		m.styles.Label.Render("Customer ID:"),
 		m.styles.Value.Render(fmt.Sprintf("[%s]", m.customerID)))
 
 	// Embedding strategy
 	strategies := []string{"Conservative", "Balanced", "Aggressive"}
 	strategyName := strategies[m.embeddingStrategy]
-	strategyLine := fmt.Sprintf("%s %s", 
-		m.styles.Label.Render("Strategy:"), 
+	strategyLine := fmt.Sprintf("%s %s",
+		m.styles.Label.Render("Strategy:"),
 		m.styles.Value.Render(fmt.Sprintf("[%s]", strategyName)))
 
-	// Strategy details
-	var strategyDetails string
-	switch m.embeddingStrategy {
-	case StrategyConservative:
-		strategyDetails = m.styles.Subtitle.Render("1 bit/char, minimal risk")
-	case StrategyBalanced:
-		strategyDetails = m.styles.Subtitle.Render("2 bits/char, standard use")
-	case StrategyAggressive:
-		strategyDetails = m.styles.Subtitle.Render("3 bits/char, max capacity")
-	}
+	// The strategy is not passed to the engine; say so rather than describe
+	// an embedding rate that is not used.
+	strategyDetails := m.styles.Subtitle.Render("display only, not applied")
 
-	// Powered by stegano
-	poweredBy := m.styles.Subtitle.Render("Powered by stegano v0.2.0")
+	poweredBy := m.styles.Subtitle.Render("Embedding by the stegano library")
 
 	content := lipgloss.JoinVertical(
 		lipgloss.Left,
@@ -352,14 +344,14 @@ func (m Model) renderOutputPanel() string {
 
 	title := m.styles.Subtitle.Render("Output Settings")
 
-	outputDirLine := fmt.Sprintf("%s %s", 
-		m.styles.Label.Render("Output Dir:"), 
+	outputDirLine := fmt.Sprintf("%s %s",
+		m.styles.Label.Render("Output Dir:"),
 		m.styles.Value.Render(fmt.Sprintf("[%s]", m.sequencerConfig.OutputDir)))
-		
-	compressionLine := fmt.Sprintf("%s [✓] gzip", 
+
+	compressionLine := fmt.Sprintf("%s [✓] gzip",
 		m.styles.Label.Render("Compression:"))
-		
-	realtimeLine := fmt.Sprintf("%s [✓] Stream files during run", 
+
+	realtimeLine := fmt.Sprintf("%s [✓] Stream files during run",
 		m.styles.Label.Render("Real-time:"))
 
 	// Time compression options
@@ -371,9 +363,9 @@ func (m Model) renderOutputPanel() string {
 			compressionOptions[i] = m.styles.Value.Foreground(m.styles.Muted).Render(option)
 		}
 	}
-	
-	timeCompressionLine := fmt.Sprintf("%s %s", 
-		m.styles.Label.Render("Time Compression:"), 
+
+	timeCompressionLine := fmt.Sprintf("%s %s",
+		m.styles.Label.Render("Time Compression:"),
 		strings.Join(compressionOptions, " "))
 
 	content := lipgloss.JoinVertical(
@@ -392,7 +384,7 @@ func (m Model) renderOutputPanel() string {
 // renderPreview renders the file generation preview panel
 func (m Model) renderPreview() string {
 	style := m.styles.Panel
-	
+
 	title := m.styles.Subtitle.Render("File Generation Preview")
 
 	// Calculate expected output
@@ -400,35 +392,35 @@ func (m Model) renderPreview() string {
 	if m.sequencerConfig.PairedEnd {
 		totalFiles *= 2
 	}
-	
+
 	// Estimate file size more accurately
 	bytesPerRead := int64(50 + m.sequencerConfig.ReadLength*2 + 4) // Header + sequence + quality + newlines
 	totalReads := int64(totalFiles * m.sequencerConfig.ReadsPerBatch)
 	estimatedBytes := bytesPerRead * totalReads
 	estimatedSizeGB := float64(estimatedBytes) / (1024 * 1024 * 1024)
-	
+
 	// Get timing estimate
 	var duration string
 	if m.simulator != nil {
 		realHours := m.simulator.Timing.TotalRunTimeHours
-		compressedMinutes := float64(realHours * 60) / float64(m.compression)
+		compressedMinutes := float64(realHours*60) / float64(m.compression)
 		if compressedMinutes < 60 {
-			duration = fmt.Sprintf("~%d hours (real) / %.1f minutes (%dx compressed)", 
+			duration = fmt.Sprintf("~%d hours (real) / %.1f minutes (%dx compressed)",
 				realHours, compressedMinutes, m.compression)
 		} else {
-			duration = fmt.Sprintf("~%d hours (real) / %.1f hours (%dx compressed)", 
+			duration = fmt.Sprintf("~%d hours (real) / %.1f hours (%dx compressed)",
 				realHours, compressedMinutes/60, m.compression)
 		}
 	} else {
 		// Default estimates
 		sequencerTiming := timing.GetSequencerTiming(m.sequencerConfig.SequencerModel, m.sequencerConfig.FlowCellType)
 		realHours := sequencerTiming.TotalRunTimeHours
-		compressedMinutes := float64(realHours * 60) / float64(m.compression)
+		compressedMinutes := float64(realHours*60) / float64(m.compression)
 		if compressedMinutes < 60 {
-			duration = fmt.Sprintf("~%d hours (real) / %.1f minutes (%dx compressed)", 
+			duration = fmt.Sprintf("~%d hours (real) / %.1f minutes (%dx compressed)",
 				realHours, compressedMinutes, m.compression)
 		} else {
-			duration = fmt.Sprintf("~%d hours (real) / %.1f hours (%dx compressed)", 
+			duration = fmt.Sprintf("~%d hours (real) / %.1f hours (%dx compressed)",
 				realHours, compressedMinutes/60, m.compression)
 		}
 	}
@@ -439,28 +431,28 @@ func (m Model) renderPreview() string {
 		sampleName = m.samples[0].ID
 	}
 
-	expectedLine := fmt.Sprintf("Expected Files: %s FASTQ files (~%.2f GB total)", 
+	expectedLine := fmt.Sprintf("Expected Files: %s FASTQ files (~%.2f GB total)",
 		m.styles.Value.Render(fmt.Sprintf("%d", totalFiles)), estimatedSizeGB)
-		
-	namingLine := fmt.Sprintf("Naming: %s", 
+
+	namingLine := fmt.Sprintf("Naming: %s",
 		m.styles.Value.Render(fmt.Sprintf("%s_S1_L001_R1_001.fastq.gz", sampleName)))
-		
-	durationLine := fmt.Sprintf("Duration: %s", 
+
+	durationLine := fmt.Sprintf("Duration: %s",
 		m.styles.Value.Render(duration))
-	
+
 	// Output directory
-	outputLine := fmt.Sprintf("Output: %s", 
+	outputLine := fmt.Sprintf("Output: %s",
 		m.styles.Value.Render(m.sequencerConfig.OutputDir))
 
 	// File generation rate
 	var rateLine string
 	if m.simulator != nil {
 		filesPerHour := m.simulator.Timing.FilesPerHour
-		rateLine = fmt.Sprintf("Rate: %s files/hour", 
+		rateLine = fmt.Sprintf("Rate: %s files/hour",
 			m.styles.Value.Render(fmt.Sprintf("%d", filesPerHour)))
 	} else {
 		sequencerTiming := timing.GetSequencerTiming(m.sequencerConfig.SequencerModel, m.sequencerConfig.FlowCellType)
-		rateLine = fmt.Sprintf("Rate: %s files/hour", 
+		rateLine = fmt.Sprintf("Rate: %s files/hour",
 			m.styles.Value.Render(fmt.Sprintf("%d", sequencerTiming.FilesPerHour)))
 	}
 
@@ -488,7 +480,7 @@ func (m Model) renderActions() string {
 	title := m.styles.Subtitle.Render("Actions")
 
 	var buttons []string
-	
+
 	if m.runInProgress {
 		buttons = append(buttons, m.styles.ButtonActive.Render("[Stop Run]"))
 		buttons = append(buttons, m.styles.ButtonDisabled.Render("[Load Config]"))
@@ -498,7 +490,7 @@ func (m Model) renderActions() string {
 		buttons = append(buttons, m.styles.Button.Render("[Load Config]"))
 		buttons = append(buttons, m.styles.Button.Render("[Save Config]"))
 	}
-	
+
 	buttons = append(buttons, m.styles.Button.Render("[Help]"))
 	buttons = append(buttons, m.styles.Button.Render("[Quit]"))
 

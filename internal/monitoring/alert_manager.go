@@ -1,4 +1,5 @@
-// Package monitoring provides enterprise alerting capabilities
+// Alerting: AlertManager and its notifiers.
+
 package monitoring
 
 import (
@@ -13,14 +14,14 @@ import (
 	"time"
 )
 
-// AlertManager handles enterprise alerting and notifications
+// AlertManager tracks active alerts and sends them to its notifiers.
 type AlertManager struct {
-	config         *MonitoringConfig
-	activeAlerts   map[string]*Alert
-	alertHistory   []*Alert
-	notifiers      []Notifier
-	mu             sync.RWMutex
-	rateLimiter    *RateLimiter
+	config       *MonitoringConfig
+	activeAlerts map[string]*Alert
+	alertHistory []*Alert
+	notifiers    []Notifier
+	mu           sync.RWMutex
+	rateLimiter  *RateLimiter
 }
 
 // Alert represents an active alert
@@ -42,9 +43,9 @@ type Alert struct {
 type AlertSeverity string
 
 const (
-	SeverityInfo     AlertSeverity = "info"
-	SeverityWarning  AlertSeverity = "warning"
-	SeverityCritical AlertSeverity = "critical"
+	SeverityInfo      AlertSeverity = "info"
+	SeverityWarning   AlertSeverity = "warning"
+	SeverityCritical  AlertSeverity = "critical"
 	SeverityEmergency AlertSeverity = "emergency"
 )
 
@@ -90,14 +91,14 @@ type PagerDutyNotifier struct {
 	Client         *http.Client
 }
 
-// EmailNotifier sends alerts via email
+// EmailNotifier is a stub: SendAlert only logs the alert; no email is sent.
 type EmailNotifier struct {
-	SMTPHost     string
-	SMTPPort     int
-	Username     string
-	Password     string `json:"-" yaml:"-"` // #nosec G117
-	FromAddress  string
-	ToAddresses  []string
+	SMTPHost    string
+	SMTPPort    int
+	Username    string
+	Password    string `json:"-" yaml:"-"` // #nosec G117
+	FromAddress string
+	ToAddresses []string
 }
 
 // NewAlertManager creates a new alert manager
@@ -109,7 +110,7 @@ func NewAlertManager(config *MonitoringConfig) *AlertManager {
 		notifiers:    make([]Notifier, 0),
 		rateLimiter:  NewRateLimiter(),
 	}
-	
+
 	// Initialize notifiers based on configuration
 	if config.SlackWebhookURL != "" {
 		am.AddNotifier(&SlackNotifier{
@@ -118,14 +119,14 @@ func NewAlertManager(config *MonitoringConfig) *AlertManager {
 			Username:   "phantom-monitor",
 		})
 	}
-	
+
 	if config.PagerDutyKey != "" {
 		am.AddNotifier(&PagerDutyNotifier{
 			IntegrationKey: config.PagerDutyKey,
 			Client:         &http.Client{Timeout: 30 * time.Second},
 		})
 	}
-	
+
 	return am
 }
 
@@ -142,21 +143,21 @@ func (am *AlertManager) TriggerAlert(name, message string) {
 }
 
 // TriggerAlertWithDetails triggers an alert with full details
-func (am *AlertManager) TriggerAlertWithDetails(name, message string, severity AlertSeverity, 
+func (am *AlertManager) TriggerAlertWithDetails(name, message string, severity AlertSeverity,
 	labels, annotations map[string]string) {
-	
+
 	am.mu.Lock()
 	defer am.mu.Unlock()
-	
+
 	alertID := generateAlertID(name, labels)
-	
+
 	// Check if alert already exists
 	if existingAlert, exists := am.activeAlerts[alertID]; exists {
 		// Update existing alert
 		existingAlert.Count++
 		existingAlert.LastSeen = time.Now()
 		existingAlert.Message = message // Update message in case it changed
-		
+
 		// Check rate limiting
 		if am.rateLimiter.ShouldLimit(name) {
 			log.Printf("Alert %s rate limited", name)
@@ -176,24 +177,24 @@ func (am *AlertManager) TriggerAlertWithDetails(name, message string, severity A
 			Count:       1,
 			LastSeen:    time.Now(),
 		}
-		
+
 		if labels == nil {
 			alert.Labels = make(map[string]string)
 		}
 		if annotations == nil {
 			alert.Annotations = make(map[string]string)
 		}
-		
+
 		// Add default labels
 		alert.Labels["service"] = "phantom-science"
 		alert.Labels["environment"] = "production"
-		
+
 		am.activeAlerts[alertID] = alert
 		am.alertHistory = append(am.alertHistory, alert)
-		
+
 		// Send notifications
 		go am.sendNotifications(alert)
-		
+
 		log.Printf("Alert triggered: %s - %s", name, message)
 	}
 }
@@ -202,19 +203,19 @@ func (am *AlertManager) TriggerAlertWithDetails(name, message string, severity A
 func (am *AlertManager) ResolveAlert(name string, labels map[string]string) {
 	am.mu.Lock()
 	defer am.mu.Unlock()
-	
+
 	alertID := generateAlertID(name, labels)
-	
+
 	if alert, exists := am.activeAlerts[alertID]; exists {
 		now := time.Now()
 		alert.Status = StatusResolved
 		alert.ResolvedAt = &now
-		
+
 		delete(am.activeAlerts, alertID)
-		
+
 		// Send resolution notification
 		go am.sendNotifications(alert)
-		
+
 		log.Printf("Alert resolved: %s", name)
 	}
 }
@@ -246,7 +247,7 @@ func (am *AlertManager) AddNotifier(notifier Notifier) {
 func (am *AlertManager) GetActiveAlerts() []*Alert {
 	am.mu.RLock()
 	defer am.mu.RUnlock()
-	
+
 	alerts := make([]*Alert, 0, len(am.activeAlerts))
 	for _, alert := range am.activeAlerts {
 		alerts = append(alerts, alert)
@@ -258,11 +259,11 @@ func (am *AlertManager) GetActiveAlerts() []*Alert {
 func (am *AlertManager) GetAlertHistory(limit int) []*Alert {
 	am.mu.RLock()
 	defer am.mu.RUnlock()
-	
+
 	if limit <= 0 || limit > len(am.alertHistory) {
 		limit = len(am.alertHistory)
 	}
-	
+
 	// Return most recent alerts
 	start := len(am.alertHistory) - limit
 	return am.alertHistory[start:]
@@ -272,9 +273,9 @@ func (am *AlertManager) GetAlertHistory(limit int) []*Alert {
 func (rl *RateLimiter) ShouldLimit(alertName string) bool {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
-	
+
 	now := time.Now()
-	
+
 	limit, exists := rl.limits[alertName]
 	if !exists {
 		// Create new rate limit
@@ -286,13 +287,13 @@ func (rl *RateLimiter) ShouldLimit(alertName string) bool {
 		}
 		rl.limits[alertName] = limit
 	}
-	
+
 	// Reset if window has expired
 	if now.Sub(limit.LastReset) > limit.Window {
 		limit.Count = 0
 		limit.LastReset = now
 	}
-	
+
 	limit.Count++
 	return limit.Count > limit.MaxCount
 }
@@ -301,8 +302,8 @@ func (rl *RateLimiter) ShouldLimit(alertName string) bool {
 
 func (sn *SlackNotifier) SendAlert(alert *Alert) error {
 	payload := map[string]interface{}{
-		"channel":   sn.Channel,
-		"username":  sn.Username,
+		"channel":    sn.Channel,
+		"username":   sn.Username,
 		"icon_emoji": ":warning:",
 		"attachments": []map[string]interface{}{
 			{
@@ -317,7 +318,7 @@ func (sn *SlackNotifier) SendAlert(alert *Alert) error {
 						"short": true,
 					},
 					{
-						"title": "Status", 
+						"title": "Status",
 						"value": string(alert.Status),
 						"short": true,
 					},
@@ -330,12 +331,12 @@ func (sn *SlackNotifier) SendAlert(alert *Alert) error {
 			},
 		},
 	}
-	
+
 	jsonPayload, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("failed to marshal Slack payload: %w", err)
 	}
-	
+
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, sn.WebhookURL, bytes.NewBuffer(jsonPayload))
@@ -348,7 +349,7 @@ func (sn *SlackNotifier) SendAlert(alert *Alert) error {
 		return fmt.Errorf("failed to send Slack notification: %w", err)
 	}
 	defer resp.Body.Close()
-	
+
 	if resp.StatusCode != http.StatusOK {
 		body, readErr := io.ReadAll(resp.Body)
 		if readErr != nil {
@@ -356,7 +357,7 @@ func (sn *SlackNotifier) SendAlert(alert *Alert) error {
 		}
 		return fmt.Errorf("Slack API returned status %d: %s", resp.StatusCode, string(body))
 	}
-	
+
 	return nil
 }
 
@@ -369,7 +370,7 @@ func (sn *SlackNotifier) getColorForSeverity(severity AlertSeverity) string {
 	case SeverityInfo:
 		return "good"
 	case SeverityWarning:
-		return "warning" 
+		return "warning"
 	case SeverityCritical:
 		return "danger"
 	case SeverityEmergency:
@@ -386,7 +387,7 @@ func (pd *PagerDutyNotifier) SendAlert(alert *Alert) error {
 	if alert.Status == StatusResolved {
 		eventAction = "resolve"
 	}
-	
+
 	payload := map[string]interface{}{
 		"routing_key":  pd.IntegrationKey,
 		"event_action": eventAction,
@@ -399,19 +400,19 @@ func (pd *PagerDutyNotifier) SendAlert(alert *Alert) error {
 			"custom_details": alert.Labels,
 		},
 	}
-	
+
 	jsonPayload, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("failed to marshal PagerDuty payload: %w", err)
 	}
-	
-	resp, err := pd.Client.Post("https://events.pagerduty.com/v2/enqueue", 
+
+	resp, err := pd.Client.Post("https://events.pagerduty.com/v2/enqueue",
 		"application/json", bytes.NewBuffer(jsonPayload))
 	if err != nil {
 		return fmt.Errorf("failed to send PagerDuty notification: %w", err)
 	}
 	defer resp.Body.Close()
-	
+
 	if resp.StatusCode != http.StatusAccepted {
 		body, readErr := io.ReadAll(resp.Body)
 		if readErr != nil {
@@ -419,7 +420,7 @@ func (pd *PagerDutyNotifier) SendAlert(alert *Alert) error {
 		}
 		return fmt.Errorf("PagerDuty API returned status %d: %s", resp.StatusCode, string(body))
 	}
-	
+
 	return nil
 }
 

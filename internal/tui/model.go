@@ -1,3 +1,6 @@
+// Package tui is the interactive terminal UI (phantom-science tui). It paces
+// FASTQ generation with the run timeline from package timing and shows run
+// progress, the sample sheet and the fingerprinting settings.
 package tui
 
 import (
@@ -21,29 +24,29 @@ type Model struct {
 	phantomConfig   *types.PhantomConfig
 
 	// UI State
-	currentSection    int
-	sequencerChoice   int
-	compression       timing.TimeCompression
-	samples           []Sample
-	sampleInput       SampleInput
-	editingMode       bool
-	
+	currentSection  int
+	sequencerChoice int
+	compression     timing.TimeCompression
+	samples         []Sample
+	sampleInput     SampleInput
+	editingMode     bool
+
 	// Fingerprinting configuration
 	fingerprintingEnabled bool
-	customerID           string
-	embeddingStrategy    int // 0=Conservative, 1=Balanced, 2=Aggressive
+	customerID            string
+	embeddingStrategy     int // 0=Conservative, 1=Balanced, 2=Aggressive; display only, not passed to the engine
 
 	// HMM model configuration (mirrors sequencerConfig fields for UI state)
-	hmmModelPath string // Path to a serialized .hmm.json model (empty = crypto/rand)
+	hmmModelPath string // Path to a serialized .hmm.json model (empty = uniform random bases)
 	population   string // 1000 Genomes population code (e.g. YRI, CEU, CHB)
 
 	// Simulation state
-	simulator       *timing.RunSimulator
-	genomicsEngine  *genomics.Engine
-	runInProgress   bool
-	progress        timing.RunProgress
-	ctx             context.Context
-	cancel          context.CancelFunc
+	simulator      *timing.RunSimulator
+	genomicsEngine *genomics.Engine
+	runInProgress  bool
+	progress       timing.RunProgress
+	ctx            context.Context
+	cancel         context.CancelFunc
 
 	// UI dimensions
 	width  int
@@ -91,7 +94,8 @@ const (
 	ChoiceMiSeq
 )
 
-// Embedding strategy choices
+// Embedding strategy choices. They are shown in the fingerprinting panel but
+// do not change how fingerprints are embedded.
 const (
 	StrategyConservative = iota
 	StrategyBalanced
@@ -100,11 +104,11 @@ const (
 
 // Message types
 type (
-	tickMsg              struct{}
-	progressMsg          timing.RunProgress
-	fileGeneratedMsg     struct{ filename string }
+	tickMsg               struct{}
+	progressMsg           timing.RunProgress
+	fileGeneratedMsg      struct{ filename string }
 	simulationCompleteMsg struct{}
-	simulationErrorMsg   struct{ err error }
+	simulationErrorMsg    struct{ err error }
 )
 
 // New creates a new TUI model
@@ -113,8 +117,8 @@ func New(sequencerConfig types.SequencerConfig, phantomConfig *types.PhantomConf
 	if phantomConfig == nil {
 		phantomConfig = &types.PhantomConfig{
 			Enterprise: types.EnterpriseConfig{
-				CustomerID:   "DEMO",
-				ServiceTier:  "standard",
+				CustomerID:  "DEMO",
+				ServiceTier: "standard",
 				Fingerprinting: types.FingerprintConfig{
 					Enable: false,
 				},
@@ -323,7 +327,7 @@ func (m Model) handleActionSelection() (Model, tea.Cmd) {
 
 	// Start simulation
 	m = m.updateConfigFromUI()
-	
+
 	ctx, cancel := context.WithCancel(context.Background())
 	m.ctx = ctx
 	m.cancel = cancel
@@ -338,20 +342,20 @@ func (m Model) handleActionSelection() (Model, tea.Cmd) {
 	engineConfig := m.sequencerConfig
 	engineConfig.ResolveFingerprinting(m.phantomConfig)
 	m.genomicsEngine = genomics.NewEngine(engineConfig)
-	
+
 	simulator := timing.NewRunSimulator(m.sequencerConfig, m.compression)
-	
+
 	// Set up callback to actually generate FASTQ files
 	simulator.FileCallback = func(filename string, batchNum int, readNum int) {
 		fullPath := filepath.Join(m.sequencerConfig.OutputDir, filename)
-		
+
 		// Generate the actual FASTQ file
 		if err := m.genomicsEngine.GenerateFASTQFile(fullPath, batchNum, readNum); err != nil {
 			// Log error but continue simulation
 			fmt.Printf("Error generating FASTQ file %s: %v\n", filename, err)
 		}
 	}
-	
+
 	simulator.ProgressCallback = func(stage string, percent float64, eta time.Duration) {
 		// Progress updates are handled by the timing simulator
 		// and displayed in the UI automatically
@@ -359,7 +363,7 @@ func (m Model) handleActionSelection() (Model, tea.Cmd) {
 
 	m.simulator = simulator
 	m.runInProgress = true
-	
+
 	// Initialize progress
 	totalFiles, totalBytes := simulator.EstimateTotalOutput()
 	m.progress = timing.RunProgress{

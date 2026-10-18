@@ -7,9 +7,11 @@ import (
 	"log"
 )
 
-// For release builds, we only use the legacy implementation to avoid CGO dependencies
+// Release builds do not link the stegano library, so they only have the
+// legacy engine.
 
-// New creates a new fingerprinting engine using legacy implementation
+// New returns a LegacyEngine, which tags read IDs but cannot embed
+// quality-score fingerprints.
 func New(customerID string, opts ...Option) Engine {
 	log.Printf("Using legacy fingerprinting engine for release build")
 	return NewLegacy(customerID)
