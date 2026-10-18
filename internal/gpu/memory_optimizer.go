@@ -16,6 +16,7 @@ type MemoryPool struct {
 	pools          map[string]*DevicePool
 	mu             sync.RWMutex
 	config         *OptimizationConfig
+	metricsMu      sync.RWMutex // guards metrics; kept off MemoryMetrics so GetMetrics can return a plain copy
 	metrics        *MemoryMetrics
 }
 
@@ -82,7 +83,6 @@ type MemoryMetrics struct {
 	CacheHitRate        float64
 	AverageLatency      time.Duration
 	LastOptimization    time.Time
-	mu                  sync.RWMutex
 }
 
 // DefaultOptimizationConfig returns enterprise-grade default configuration
@@ -276,9 +276,9 @@ func (mp *MemoryPool) tryFreeMemory(neededGB float64) bool {
 		
 		if err := mp.FreeMemory(allocation.ID); err == nil {
 			freedGB += allocation.SizeGB
-			mp.metrics.mu.Lock()
+			mp.metricsMu.Lock()
 			mp.metrics.EvictionCount++
-			mp.metrics.mu.Unlock()
+			mp.metricsMu.Unlock()
 		}
 	}
 	
@@ -332,9 +332,9 @@ func (mp *MemoryPool) runOptimization() {
 	mp.rebalanceAllocations()
 	
 	// Update optimization timestamp
-	mp.metrics.mu.Lock()
+	mp.metricsMu.Lock()
 	mp.metrics.LastOptimization = time.Now()
-	mp.metrics.mu.Unlock()
+	mp.metricsMu.Unlock()
 	
 	log.Printf("GPU memory optimization completed")
 }
@@ -384,8 +384,8 @@ func (mp *MemoryPool) rebalanceAllocations() {
 
 // updateMetrics updates memory usage metrics
 func (mp *MemoryPool) updateMetrics(allocation *Allocation, isAllocation bool) {
-	mp.metrics.mu.Lock()
-	defer mp.metrics.mu.Unlock()
+	mp.metricsMu.Lock()
+	defer mp.metricsMu.Unlock()
 	
 	if isAllocation {
 		mp.metrics.TotalAllocationsGB += allocation.SizeGB
@@ -401,8 +401,8 @@ func (mp *MemoryPool) updateMetrics(allocation *Allocation, isAllocation bool) {
 
 // GetMetrics returns current memory usage metrics
 func (mp *MemoryPool) GetMetrics() MemoryMetrics {
-	mp.metrics.mu.RLock()
-	defer mp.metrics.mu.RUnlock()
+	mp.metricsMu.RLock()
+	defer mp.metricsMu.RUnlock()
 	return *mp.metrics
 }
 

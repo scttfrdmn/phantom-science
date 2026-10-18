@@ -18,6 +18,7 @@ type StreamingProcessor struct {
 	config         *StreamingConfig
 	activeStreams  map[string]*ProcessingStream
 	mu             sync.RWMutex
+	metricsMu      sync.RWMutex // guards metrics; kept off StreamingMetrics so GetMetrics can return a plain copy
 	metrics        *StreamingMetrics
 }
 
@@ -78,7 +79,6 @@ type StreamingMetrics struct {
 	TotalDataProcessed  float64
 	AverageThroughput   float64
 	PeakThroughput      float64
-	mu                  sync.RWMutex
 }
 
 // DefaultStreamingConfig returns enterprise-grade streaming configuration
@@ -137,10 +137,10 @@ func (sp *StreamingProcessor) ProcessDataset(ctx context.Context, input DatasetI
 	sp.activeStreams[streamID] = stream
 	
 	// Update metrics
-	sp.metrics.mu.Lock()
+	sp.metricsMu.Lock()
 	sp.metrics.TotalStreams++
 	sp.metrics.ActiveStreams++
-	sp.metrics.mu.Unlock()
+	sp.metricsMu.Unlock()
 	
 	// Start processing in background
 	go sp.processStreamAsync(ctx, stream, input)
@@ -342,7 +342,7 @@ func (sp *StreamingProcessor) cleanupStream(streamID string) {
 		delete(sp.activeStreams, streamID)
 		
 		// Update metrics
-		sp.metrics.mu.Lock()
+		sp.metricsMu.Lock()
 		sp.metrics.ActiveStreams--
 		sp.metrics.TotalDataProcessed += stream.ProcessedSize
 		
@@ -352,7 +352,7 @@ func (sp *StreamingProcessor) cleanupStream(streamID string) {
 		case StatusFailed, StatusCancelled:
 			sp.metrics.FailedStreams++
 		}
-		sp.metrics.mu.Unlock()
+		sp.metricsMu.Unlock()
 	}
 }
 
@@ -360,8 +360,8 @@ func (sp *StreamingProcessor) cleanupStream(streamID string) {
 func (sp *StreamingProcessor) updateThroughputMetrics(sizeGB float64, duration time.Duration) {
 	throughput := sizeGB / duration.Seconds() * 1024 // MB/s
 	
-	sp.metrics.mu.Lock()
-	defer sp.metrics.mu.Unlock()
+	sp.metricsMu.Lock()
+	defer sp.metricsMu.Unlock()
 	
 	// Update average throughput (simple moving average)
 	if sp.metrics.AverageThroughput == 0 {
@@ -378,8 +378,8 @@ func (sp *StreamingProcessor) updateThroughputMetrics(sizeGB float64, duration t
 
 // GetMetrics returns current streaming metrics
 func (sp *StreamingProcessor) GetMetrics() StreamingMetrics {
-	sp.metrics.mu.RLock()
-	defer sp.metrics.mu.RUnlock()
+	sp.metricsMu.RLock()
+	defer sp.metricsMu.RUnlock()
 	return *sp.metrics
 }
 
