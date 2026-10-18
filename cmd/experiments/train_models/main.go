@@ -1,3 +1,13 @@
+// Command train_models trains HMMKmerModel models for k = 3..6 on chr21 and
+// chr22 FASTA files from the directory given as its only argument (falling
+// back to GRCh38.fasta there), checks the GC content and alphabet of a few
+// generated sequences, and writes per-model summaries and a training report
+// to ./models/trained. The trained models themselves are not saved.
+//
+// It is a one-off experiment, not part of the supported phantom-science CLI;
+// use "phantom-science train" instead. The JS-divergence and expert-accuracy
+// thresholds in its configuration are recorded in the report but not
+// checked.
 package main
 
 import (
@@ -52,7 +62,7 @@ func (r *ReferenceGenomeLoader) LoadChromosome(chrName string) ([]byte, error) {
 
 	for scanner.Scan() {
 		line := scanner.Text()
-		
+
 		if strings.HasPrefix(line, ">") {
 			if strings.HasPrefix(line, targetHeader) {
 				inTargetChromosome = true
@@ -142,18 +152,18 @@ func (c *MockChromosome) GetLength() int {
 
 // TrainingSession manages the model training process
 type TrainingSession struct {
-	config         *training.TrainingConfig
+	config          *training.TrainingConfig
 	referenceGenome *MockReferenceGenome
-	trainedModels  map[string]*authenticity.HMMKmerModel
-	logger         *log.Logger
-	startTime      time.Time
+	trainedModels   map[string]*authenticity.HMMKmerModel
+	logger          *log.Logger
+	startTime       time.Time
 }
 
 // NewTrainingSession creates a new training session
 func NewTrainingSession(referenceDir string) *TrainingSession {
 	loader := NewReferenceGenomeLoader(referenceDir)
 	refGenome := NewMockReferenceGenome(loader)
-	
+
 	config := &training.TrainingConfig{
 		KmerSizes:               []int{3, 4, 5, 6},
 		Populations:             []string{"EUR", "AFR", "EAS"},
@@ -165,18 +175,18 @@ func NewTrainingSession(referenceDir string) *TrainingSession {
 	}
 
 	return &TrainingSession{
-		config:         config,
+		config:          config,
 		referenceGenome: refGenome,
-		trainedModels:  make(map[string]*authenticity.HMMKmerModel),
-		logger:         log.New(os.Stdout, "[TRAINING] ", log.LstdFlags),
-		startTime:      time.Now(),
+		trainedModels:   make(map[string]*authenticity.HMMKmerModel),
+		logger:          log.New(os.Stdout, "[TRAINING] ", log.LstdFlags),
+		startTime:       time.Now(),
 	}
 }
 
 // TrainHMMModels trains HMM k-mer models on real genomic data
 func (s *TrainingSession) TrainHMMModels() error {
 	s.logger.Println("Starting HMM k-mer model training with real genomic data")
-	
+
 	// Create output directory
 	if err := os.MkdirAll(s.config.OutputPath, 0750); err != nil {
 		return fmt.Errorf("failed to create output directory: %w", err)
@@ -186,41 +196,41 @@ func (s *TrainingSession) TrainHMMModels() error {
 	for _, k := range s.config.KmerSizes {
 		modelKey := fmt.Sprintf("hmm_kmer_%d", k)
 		s.logger.Printf("Training %d-mer HMM model", k)
-		
+
 		// Create model
 		model := authenticity.NewHMMKmerModel(k)
-		
+
 		// Train model on reference genome
 		if err := model.TrainFromReferenceGenome(s.referenceGenome); err != nil {
 			return fmt.Errorf("failed to train %d-mer model: %w", k, err)
 		}
-		
+
 		// Validate model
 		if err := model.ValidateModel(); err != nil {
 			return fmt.Errorf("model validation failed for %d-mer: %w", k, err)
 		}
-		
+
 		// Test generation
 		s.logger.Printf("Testing %d-mer model generation", k)
 		testResult, err := model.GenerateSequence(1000)
 		if err != nil {
 			return fmt.Errorf("generation test failed for %d-mer: %w", k, err)
 		}
-		
+
 		s.logger.Printf("✓ %d-mer model trained successfully", k)
 		s.logger.Printf("  - Generated %d bases", len(testResult.Sequence))
 		s.logger.Printf("  - K-mer frequencies: %d unique k-mers", len(testResult.KmerFrequencies))
 		s.logger.Printf("  - Generation time: %v", testResult.GenerationTime)
-		
+
 		// Store model
 		s.trainedModels[modelKey] = model
-		
+
 		// Save model summary
 		if err := s.saveModelSummary(modelKey, model, testResult); err != nil {
 			s.logger.Printf("Warning: failed to save model summary: %v", err)
 		}
 	}
-	
+
 	s.logger.Printf("All HMM models trained successfully in %v", time.Since(s.startTime))
 	return nil
 }
@@ -244,7 +254,7 @@ func (s *TrainingSession) saveModelSummary(modelKey string, model *authenticity.
 	fmt.Fprintf(file, "- Unique k-mers: %d\n", len(testResult.KmerFrequencies))
 	fmt.Fprintf(file, "- Generation time: %v\n", testResult.GenerationTime)
 	fmt.Fprintf(file, "\nTop 10 k-mers:\n")
-	
+
 	// Show top k-mers
 	count := 0
 	for kmer, freq := range testResult.KmerFrequencies {
@@ -254,17 +264,17 @@ func (s *TrainingSession) saveModelSummary(modelKey string, model *authenticity.
 		fmt.Fprintf(file, "  %s: %d\n", kmer, freq)
 		count++
 	}
-	
+
 	return nil
 }
 
 // ValidateModels performs validation on trained models
 func (s *TrainingSession) ValidateModels() error {
 	s.logger.Println("Starting model validation")
-	
+
 	for modelKey, model := range s.trainedModels {
 		s.logger.Printf("Validating %s", modelKey)
-		
+
 		// Generate multiple sequences for validation
 		sequences := make([][]byte, 10)
 		for i := 0; i < 10; i++ {
@@ -274,15 +284,15 @@ func (s *TrainingSession) ValidateModels() error {
 			}
 			sequences[i] = result.Sequence
 		}
-		
+
 		// Basic validation checks
 		if err := s.validateSequenceQuality(sequences); err != nil {
 			return fmt.Errorf("sequence quality validation failed for %s: %w", modelKey, err)
 		}
-		
+
 		s.logger.Printf("✓ %s validation passed", modelKey)
 	}
-	
+
 	return nil
 }
 
@@ -293,20 +303,20 @@ func (s *TrainingSession) validateSequenceQuality(sequences [][]byte) error {
 		if len(seq) == 0 {
 			return fmt.Errorf("sequence %d is empty", i)
 		}
-		
+
 		// Check base composition
 		baseCounts := make(map[byte]int)
 		for _, base := range seq {
 			baseCounts[base]++
 		}
-		
+
 		// Ensure all bases are valid
 		for base := range baseCounts {
 			if base != 'A' && base != 'T' && base != 'G' && base != 'C' {
 				return fmt.Errorf("sequence %d contains invalid base: %c", i, base)
 			}
 		}
-		
+
 		// Check for reasonable GC content (20-80%)
 		gcCount := baseCounts['G'] + baseCounts['C']
 		gcContent := float64(gcCount) / float64(len(seq))
@@ -314,29 +324,29 @@ func (s *TrainingSession) validateSequenceQuality(sequences [][]byte) error {
 			return fmt.Errorf("sequence %d has unrealistic GC content: %.2f", i, gcContent)
 		}
 	}
-	
+
 	return nil
 }
 
 // RunTraining executes the complete training pipeline
 func (s *TrainingSession) RunTraining() error {
 	s.logger.Println("=== Phantom Science HMM Model Training ===")
-	
+
 	// Phase 1: Train HMM models
 	if err := s.TrainHMMModels(); err != nil {
 		return fmt.Errorf("HMM training failed: %w", err)
 	}
-	
+
 	// Phase 2: Validate models
 	if err := s.ValidateModels(); err != nil {
 		return fmt.Errorf("model validation failed: %w", err)
 	}
-	
+
 	// Phase 3: Generate training report
 	if err := s.generateTrainingReport(); err != nil {
 		return fmt.Errorf("report generation failed: %w", err)
 	}
-	
+
 	s.logger.Printf("Training pipeline completed successfully in %v", time.Since(s.startTime))
 	return nil
 }
@@ -355,26 +365,26 @@ func (s *TrainingSession) generateTrainingReport() error {
 	fmt.Fprintf(file, "Training started: %v\n", s.startTime)
 	fmt.Fprintf(file, "Training duration: %v\n", time.Since(s.startTime))
 	fmt.Fprintf(file, "Models trained: %d\n\n", len(s.trainedModels))
-	
+
 	fmt.Fprintf(file, "Configuration:\n")
 	fmt.Fprintf(file, "- K-mer sizes: %v\n", s.config.KmerSizes)
 	fmt.Fprintf(file, "- JS divergence threshold: %.6f\n", s.config.JSdivergenceThreshold)
 	fmt.Fprintf(file, "- Expert accuracy threshold: %.3f\n", s.config.ExpertAccuracyThreshold)
 	fmt.Fprintf(file, "- Output path: %s\n\n", s.config.OutputPath)
-	
+
 	fmt.Fprintf(file, "Trained Models:\n")
 	for modelKey, model := range s.trainedModels {
-		fmt.Fprintf(file, "- %s: k=%d, states=%d, trained=%v\n", 
+		fmt.Fprintf(file, "- %s: k=%d, states=%d, trained=%v\n",
 			modelKey, model.K(), len(model.StateSpace()), model.IsTrained())
 	}
-	
+
 	fmt.Fprintf(file, "\nNext Steps:\n")
 	fmt.Fprintf(file, "1. Validate against real FASTQ datasets\n")
 	fmt.Fprintf(file, "2. Measure JS divergence against reference data\n")
 	fmt.Fprintf(file, "3. Conduct expert blind testing\n")
 	fmt.Fprintf(file, "4. Performance benchmarking\n")
 	fmt.Fprintf(file, "5. Integration with existing systems\n")
-	
+
 	return nil
 }
 
@@ -382,19 +392,19 @@ func main() {
 	if len(os.Args) < 2 {
 		log.Fatal("Usage: go run main.go <reference_genome_directory>")
 	}
-	
+
 	referenceDir := os.Args[1]
 	if _, err := os.Stat(referenceDir); os.IsNotExist(err) { // #nosec G703
 		log.Fatalf("Reference genome directory does not exist: %s", referenceDir)
 	}
-	
+
 	// Create training session
 	session := NewTrainingSession(referenceDir)
-	
+
 	// Run training
 	if err := session.RunTraining(); err != nil {
 		log.Fatalf("Training failed: %v", err)
 	}
-	
+
 	log.Println("Training completed successfully!")
 }

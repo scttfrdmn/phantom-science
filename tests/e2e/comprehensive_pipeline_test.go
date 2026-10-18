@@ -1,3 +1,14 @@
+// Package e2e exercises the internal/testing E2EFramework across its
+// simulated platforms and populations.
+//
+// Read counts, read lengths, quality strings and GC content are measured
+// from the generated reads. Most platform and population fields the tests
+// assert on (ErrorRate, TwoColorBias, CircularConsensus, HomopolymerErrors,
+// SBBChemistry, PopulationStructure, benchmark AccuracyScore and
+// SystematicErrorRate, workflow SuccessRate) are constants set by the
+// framework, so those assertions check its configuration rather than
+// measured behaviour. RunWorkflow is a stub; tests/integration runs the
+// workflow engines for real.
 package e2e
 
 import (
@@ -14,7 +25,10 @@ import (
 	pt "github.com/scttfrdmn/phantom-science/internal/testing"
 )
 
-// TestComprehensivePipelineE2E tests the complete end-to-end pipeline across all sequencer platforms
+// TestComprehensivePipelineE2E generates data for each framework platform
+// and population and checks platform fields, the heuristic authenticity
+// score, the 4-mer classifier's null and positive-control cases, and
+// benchmark timings. It does not run external tools.
 func TestComprehensivePipelineE2E(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping comprehensive end-to-end pipeline tests in short mode")
@@ -89,7 +103,7 @@ func testPlatformPipeline(t *testing.T, framework *pt.E2EFramework, platform pt.
 			assert.InDelta(t, expectedScore, authenticityScore, 20.0,
 				"heuristic authenticity score should stay within its usual range")
 
-			t.Logf("✅ Platform %s, Population %s: Authenticity Score = %.2f", 
+			t.Logf("✅ Platform %s, Population %s: Authenticity Score = %.2f",
 				platform, population, authenticityScore)
 		})
 	}
@@ -180,7 +194,7 @@ func testCrossPlatformAuthenticity(t *testing.T, framework *pt.E2EFramework, pla
 	// Collect authenticity scores across all platforms and populations
 	for _, platform := range platforms {
 		authenticityScores[platform] = make(map[string]float64)
-		
+
 		for _, population := range populations {
 			config := framework.CreatePlatformConfig(platform, population)
 			syntheticData, err := framework.GenerateSyntheticData(config)
@@ -348,7 +362,7 @@ func validateCircularConsensus(t *testing.T, data *pt.SyntheticData) {
 func validateHomopolymerErrors(t *testing.T, data *pt.SyntheticData) {
 	// Oxford Nanopore has characteristic homopolymer errors
 	assert.NotNil(t, data.HomopolymerErrors, "ONT should include homopolymer error modeling")
-	assert.Greater(t, data.HomopolymerErrors.InsertionRate, data.HomopolymerErrors.DeletionRate, 
+	assert.Greater(t, data.HomopolymerErrors.InsertionRate, data.HomopolymerErrors.DeletionRate,
 		"ONT should have more insertions than deletions in homopolymers")
 }
 
@@ -380,7 +394,7 @@ func validateAdmixtureSignatures(t *testing.T, data *pt.SyntheticData) {
 	// Mexican population is admixed (Native American + European + African)
 	assert.NotNil(t, data.AdmixtureComponents, "MXL should include admixture modeling")
 	assert.Greater(t, len(data.AdmixtureComponents), 2, "MXL should have multiple ancestry components")
-	
+
 	totalProportion := 0.0
 	for _, prop := range data.AdmixtureComponents {
 		totalProportion += prop
@@ -407,7 +421,9 @@ func calculateStdDev(values []float64, mean float64) float64 {
 	return math.Sqrt(sumSquares / float64(len(values)))
 }
 
-// TestPlatformSpecificWorkflows tests platform-specific analysis workflows
+// TestPlatformSpecificWorkflows calls E2EFramework.RunWorkflow, which is a
+// stub returning fixed results, so it only checks that stub. No workflow
+// engine runs; see tests/integration/workflow_engines_test.go.
 func TestPlatformSpecificWorkflows(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping platform-specific workflow tests in short mode")
@@ -452,12 +468,12 @@ func testWorkflowIntegration(t *testing.T, framework *pt.E2EFramework, workflow 
 	// Validate workflow results
 	assert.Greater(t, workflowResult.SuccessRate, 0.95, "Workflow success rate should be >95%")
 	assert.Less(t, workflowResult.ExecutionTime, time.Hour, "Workflow should complete within 1 hour")
-	
+
 	// Validate analysis pipeline compatibility
 	assert.True(t, workflowResult.GATKCompatible, "Should be compatible with GATK pipeline")
 	assert.True(t, workflowResult.BWACompatible, "Should be compatible with BWA alignment")
-	
-	t.Logf("✅ %s workflow with %s platform: Success rate = %.2f%%, Time = %v", 
+
+	t.Logf("✅ %s workflow with %s platform: Success rate = %.2f%%, Time = %v",
 		workflow, platform, workflowResult.SuccessRate*100, workflowResult.ExecutionTime)
 }
 
@@ -483,17 +499,17 @@ func TestConcurrentPlatformGeneration(t *testing.T) {
 		wg.Add(1)
 		go func(p pt.SequencingPlatform) {
 			defer wg.Done()
-			
+
 			start := time.Now()
 			config := framework.CreatePlatformConfig(p, "CEU")
 			syntheticData, err := framework.GenerateSyntheticData(config)
 			duration := time.Since(start)
 
 			results <- &pt.ConcurrentResult{
-				Platform:     p,
-				Success:      err == nil,
-				Duration:     duration,
-				DataSize:     len(syntheticData.Sequences),
+				Platform:          p,
+				Success:           err == nil,
+				Duration:          duration,
+				DataSize:          len(syntheticData.Sequences),
 				AuthenticityScore: 50.0, // Placeholder
 			}
 		}(platform)
@@ -514,13 +530,13 @@ func TestConcurrentPlatformGeneration(t *testing.T) {
 			assert.Greater(t, result.AuthenticityScore, 40.0, "Authenticity should be maintained")
 		}
 		totalDuration += result.Duration
-		
-		t.Logf("Platform %s: Success=%v, Duration=%v, DataSize=%d", 
+
+		t.Logf("Platform %s: Success=%v, Duration=%v, DataSize=%d",
 			result.Platform, result.Success, result.Duration, result.DataSize)
 	}
 
 	// Validate concurrent performance
 	assert.Equal(t, len(platforms), successCount, "All platforms should generate successfully")
-	assert.Less(t, totalDuration, time.Duration(len(platforms))*time.Minute, 
+	assert.Less(t, totalDuration, time.Duration(len(platforms))*time.Minute,
 		"Concurrent generation should be efficient")
 }

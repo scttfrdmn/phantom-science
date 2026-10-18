@@ -141,7 +141,7 @@ func TestDetermineOverallStatus(t *testing.T) {
 		jsDiv      float64
 		want       string
 	}{
-		{"production ready", 0.06, 0.42, 0.005, "PRODUCTION_READY"},
+		{"targets met", 0.06, 0.42, 0.005, "TARGETS_MET"},
 		{"excellent progress", 0.04, 0.42, 0.015, "EXCELLENT_PROGRESS"},
 		{"good progress", 0.02, 0.42, 0.03, "GOOD_PROGRESS"},
 		{"training complete low metrics", 0.001, 0.42, 0.10, "TRAINING_COMPLETE"},
@@ -280,12 +280,12 @@ func TestDetermineOverallStatus_AllBranches(t *testing.T) {
 		jsDiv      float64
 		want       string
 	}{
-		// PRODUCTION_READY: complexity > 0.05, |gcContent - 0.42| < 0.02, 0 < jsDiv < 0.01
-		{"production ready boundary complexity 0.051", 0.051, 0.42, 0.005, "PRODUCTION_READY"},
-		{"production ready gc at low boundary 0.401", 0.06, 0.401, 0.005, "PRODUCTION_READY"},
-		{"production ready gc at high boundary 0.439", 0.06, 0.439, 0.005, "PRODUCTION_READY"},
-		{"production ready jsDiv just below 0.01", 0.06, 0.42, 0.009, "PRODUCTION_READY"},
-		// EXCELLENT_PROGRESS: complexity > 0.03 (but not PRODUCTION_READY), 0 < jsDiv < 0.02
+		// TARGETS_MET: complexity > 0.05, |gcContent - 0.42| < 0.02, 0 < jsDiv < 0.01
+		{"targets met boundary complexity 0.051", 0.051, 0.42, 0.005, "TARGETS_MET"},
+		{"targets met gc at low boundary 0.401", 0.06, 0.401, 0.005, "TARGETS_MET"},
+		{"targets met gc at high boundary 0.439", 0.06, 0.439, 0.005, "TARGETS_MET"},
+		{"targets met jsDiv just below 0.01", 0.06, 0.42, 0.009, "TARGETS_MET"},
+		// EXCELLENT_PROGRESS: complexity > 0.03 (but not TARGETS_MET), 0 < jsDiv < 0.02
 		{"excellent progress mid complexity", 0.04, 0.42, 0.015, "EXCELLENT_PROGRESS"},
 		{"excellent progress jsDiv just below 0.02", 0.04, 0.42, 0.019, "EXCELLENT_PROGRESS"},
 		// GOOD_PROGRESS: complexity > 0.01, 0 < jsDiv < 0.05
@@ -455,7 +455,7 @@ func TestSaveFinalResults_ComplexityBranches(t *testing.T) {
 		status     string
 	}{
 		// complexity > 0.05: triggers the "improvement" branch
-		{"high_complexity", 2 * time.Minute, 0.10, 0.42, 0.005, "PRODUCTION_READY"},
+		{"high_complexity", 2 * time.Minute, 0.10, 0.42, 0.005, "TARGETS_MET"},
 		// complexity <= 0.05: triggers the else branch
 		{"low_complexity", 5 * time.Second, 0.001, 0.50, -1, "TRAINING_COMPLETE"},
 		// zero values / minimal inputs

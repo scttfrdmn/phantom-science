@@ -1,3 +1,12 @@
+// Command k8_advanced_training trains a k=8 authenticity.AdaptiveHMMModel on
+// the YRI VCFs under the hard-coded path
+// /Volumes/Public/genomics_training/populations, generates test sequences,
+// prints complexity and GC content, and writes a summary to
+// k8_advanced_progress/. Comparisons use constants from earlier runs (k=4
+// complexity 0.0051, k=6 complexity 0.0819, k=6 run time 25 minutes), and
+// the memory figures are estimates.
+//
+// It is a one-off experiment, not part of the supported phantom-science CLI.
 package main
 
 import (
@@ -18,24 +27,24 @@ import (
 
 func main() {
 	log.SetFlags(log.LstdFlags)
-	
+
 	fmt.Println("=== PHASE 3 K=8 ADVANCED TRAINING ===")
 	fmt.Println("Testing computational limits with k=8 for maximum complexity")
 	fmt.Println("Target: Complexity >0.10 + GC Content 42% ±2%")
-	
+
 	totalCores := runtime.NumCPU()
 	perfCores := detectAppleSiliconCores()
-	fmt.Printf("🍎 Apple Silicon: %d total cores (%d P-cores + %d E-cores)\n", 
+	fmt.Printf("🍎 Apple Silicon: %d total cores (%d P-cores + %d E-cores)\n",
 		totalCores, perfCores, totalCores-perfCores)
 	fmt.Printf("⚡ Using %d P-cores for k=8 intensive processing\n", perfCores)
 	fmt.Println()
 
 	runtime.GOMAXPROCS(perfCores)
-	
+
 	// Configuration
 	populationDir := "/Volumes/Public/genomics_training/populations"
 	progressDir := "k8_advanced_progress"
-	
+
 	// Create progress directory
 	if err := os.MkdirAll(progressDir, 0750); err != nil {
 		log.Fatalf("Failed to create progress directory: %v", err)
@@ -45,7 +54,7 @@ func main() {
 	if _, err := os.Stat(populationDir); os.IsNotExist(err) {
 		log.Fatalf("1000 Genomes dataset not found: %s", populationDir)
 	}
-	
+
 	// Test on single population first (YRI - highest diversity)
 	testPopulations := []string{"YRI"}
 	fmt.Printf("📊 PHASE 3 TEST: Processing %v population for k=8 validation\n", testPopulations)
@@ -77,7 +86,7 @@ func main() {
 	start := time.Now()
 	totalBytes, totalVariants := processK8Populations(model, populationDir, testPopulations, perfCores)
 	duration := time.Since(start)
-	
+
 	fmt.Printf("✅ K=8 ADVANCED PROCESSING COMPLETED!\n")
 	fmt.Printf("✅ Processing time: %v\n", duration)
 	fmt.Printf("✅ Data processed: %s\n", formatBytes(totalBytes))
@@ -98,12 +107,12 @@ func main() {
 	fmt.Println("[STEP 4] Calculating k=8 authenticity metrics...")
 	complexity := calculateComplexity(sequences)
 	gcContent := calculateGCContent(sequences)
-	
+
 	// Calculate improvements
 	complexityImprovement := complexity / 0.0051
 	gcDeviation := abs(gcContent - 0.42)
-	complexityVsK6 := complexity / 0.0819  // Comparison with k=6 success
-	
+	complexityVsK6 := complexity / 0.0819 // Comparison with k=6 success
+
 	fmt.Printf("📊 PHASE 3 K=8 RESULTS:\n")
 	fmt.Printf("  Complexity: %.4f", complexity)
 	if complexity > 0.10 {
@@ -116,7 +125,7 @@ func main() {
 		fmt.Printf(" (%.1fx improvement) ❌ INSUFFICIENT", complexityImprovement)
 	}
 	fmt.Println()
-	
+
 	fmt.Printf("  GC Content: %.2f%%", gcContent*100)
 	if gcContent >= 0.40 && gcContent <= 0.44 {
 		fmt.Printf(" (deviation: %.3f%%) ✅ EXCELLENT GC CONTROL", gcDeviation*100)
@@ -126,7 +135,7 @@ func main() {
 		fmt.Printf(" (deviation: %.3f%%) ❌ NEEDS MORE WORK", gcDeviation*100)
 	}
 	fmt.Println()
-	
+
 	fmt.Printf("  k=8 vs k=6: %.1fx complexity improvement", complexityVsK6)
 	if complexityVsK6 > 1.2 {
 		fmt.Printf(" ✅ SIGNIFICANT K=8 BENEFIT")
@@ -152,33 +161,33 @@ func main() {
 	fmt.Printf("Memory Usage:        ~%d MB estimated\n", calculateMemoryFootprint(8))
 	fmt.Printf("Complexity:          %.4f (%.1fx vs baseline, %.1fx vs k=6)\n", complexity, complexityImprovement, complexityVsK6)
 	fmt.Printf("GC Content:          %.2f%% (deviation: %.3f%%)\n", gcContent*100, gcDeviation*100)
-	
+
 	// Decision Logic
 	nextStep := ""
 	status := ""
 	if complexity > 0.10 && gcContent >= 0.40 && gcContent <= 0.44 {
-		nextStep = "PROCEED TO FULL K=8 PRODUCTION TRAINING"
+		nextStep = "PROCEED TO FULL K=8 TRAINING ON ALL POPULATIONS"
 		status = "PHASE 3 STRETCH GOAL SUCCESS"
-		fmt.Printf("🎯 STATUS: STRETCH GOAL SUCCESS - k=8 achieves maximum complexity\n")
+		fmt.Printf("🎯 STATUS: STRETCH GOAL MET - complexity >0.10 with k=8\n")
 	} else if complexity > 0.08 && gcContent >= 0.40 && gcContent <= 0.44 {
-		nextStep = "PRODUCTION READY - CHOOSE OPTIMAL K VALUE"
+		nextStep = "TARGETS MET - CHOOSE K VALUE"
 		status = "PHASE 3 EXCELLENT SUCCESS"
-		fmt.Printf("🎯 STATUS: EXCELLENT SUCCESS - Production ready with k=8\n")
+		fmt.Printf("🎯 STATUS: TARGETS MET with k=8 (complexity >0.08, GC 40-44%%)\n")
 	} else if complexityVsK6 > 1.2 {
 		nextStep = "PROCEED TO FULL K=8 TRAINING"
 		status = "PHASE 3 SIGNIFICANT IMPROVEMENT"
 		fmt.Printf("🔄 STATUS: SIGNIFICANT K=8 IMPROVEMENT - Worth the computational cost\n")
 	} else {
-		nextStep = "OPTIMIZE K=6 FOR PRODUCTION"
+		nextStep = "OPTIMIZE K=6"
 		status = "PHASE 3 MARGINAL BENEFIT"
 		fmt.Printf("⚠  STATUS: MARGINAL K=8 BENEFIT - k=6 may be optimal\n")
 	}
-	
+
 	fmt.Printf("Next Action:         %s\n", nextStep)
 	fmt.Println()
 	fmt.Printf("📊 Results saved in: %s/\n", progressDir)
 	fmt.Printf("🏁 PHASE 3 K=8 TRAINING COMPLETE IN %v\n", duration)
-	
+
 	// Computational analysis
 	fmt.Println()
 	fmt.Println("📈 K-VALUE COMPUTATIONAL ANALYSIS:")
@@ -191,7 +200,7 @@ func main() {
 	fmt.Printf("- k=6 → k=8: %dx state space increase\n", calculateStateSpaceSize(8)/calculateStateSpaceSize(6))
 	fmt.Printf("- Processing time: %v for k=8 vs ~25min for k=6\n", duration)
 	fmt.Printf("- Complexity gain: %.1fx improvement\n", complexityVsK6)
-	
+
 	if complexityVsK6 > 1.2 {
 		fmt.Printf("✅ RECOMMENDATION: k=8 worth the computational cost\n")
 	} else {
@@ -224,80 +233,80 @@ func processK8Populations(model *authenticity.AdaptiveHMMModel, populationDir st
 	var totalBytes int64
 	var totalVariants int64
 	var wg sync.WaitGroup
-	
+
 	fmt.Printf("🔥 Starting k=8 advanced processing with %d P-cores\n", numCores)
 	fmt.Printf("⚠️  High computational intensity - may take significant time\n")
-	
+
 	// Process populations with limited concurrency to avoid overwhelming system
 	semaphore := make(chan struct{}, 1) // Limit to 1 concurrent population due to k=8 intensity
-	
+
 	for _, pop := range populations {
 		popDir := filepath.Join(populationDir, pop)
 		if _, err := os.Stat(popDir); os.IsNotExist(err) {
 			fmt.Printf("⚠ Population %s not found, skipping\n", pop)
 			continue
 		}
-		
+
 		wg.Add(1)
 		go func(population string) {
 			defer wg.Done()
-			
-			semaphore <- struct{}{} // Acquire
+
+			semaphore <- struct{}{}        // Acquire
 			defer func() { <-semaphore }() // Release
-			
+
 			bytes, variants := processK8PopulationVCFs(model, population, populationDir, numCores)
 			atomic.AddInt64(&totalBytes, bytes)
 			atomic.AddInt64(&totalVariants, variants)
-			
-			fmt.Printf("✅ Population %s complete: %s processed, %d variants\n", 
+
+			fmt.Printf("✅ Population %s complete: %s processed, %d variants\n",
 				population, formatBytes(bytes), variants)
 		}(pop)
 	}
-	
+
 	wg.Wait()
-	
+
 	return totalBytes, totalVariants
 }
 
 func processK8PopulationVCFs(model *authenticity.AdaptiveHMMModel, pop, populationDir string, numCores int) (int64, int64) {
 	popDir := filepath.Join(populationDir, pop)
 	fmt.Printf("🧬 Processing population %s with k=8 (computationally intensive)...\n", pop)
-	
+
 	// Get all VCF files for this population
 	vcfFiles, err := filepath.Glob(filepath.Join(popDir, "*.vcf.gz"))
 	if err != nil {
 		fmt.Printf("⚠ Error finding VCF files for %s: %v\n", pop, err)
 		return 0, 0
 	}
-	
+
 	var totalBytes int64
 	var totalVariants int64
 	var wg sync.WaitGroup
-	
+
 	// Process VCF files with limited concurrency due to k=8 intensity
 	semaphore := make(chan struct{}, 2) // Reduced from 4 to 2 for k=8
-	
+
 	for _, vcfFile := range vcfFiles {
 		wg.Add(1)
 		go func(file string) {
 			defer wg.Done()
-			
-			semaphore <- struct{}{} // Acquire
+
+			semaphore <- struct{}{}        // Acquire
 			defer func() { <-semaphore }() // Release
-			
+
 			bytes, variants := processK8VCFFile(model, file, pop)
 			atomic.AddInt64(&totalBytes, bytes)
 			atomic.AddInt64(&totalVariants, variants)
-			
+
 			if variants > 0 {
-				fmt.Printf("  📄 %s: %s, %d variants (k=8 processing)\n", 
+				fmt.Printf("  📄 %s: %s, %d variants (k=8 processing)\n",
 					filepath.Base(file), formatBytes(bytes), variants)
 			}
 		}(vcfFile)
 	}
-	
+
 	wg.Wait()
-	
+
 	return totalBytes, totalVariants
 }
 
@@ -309,7 +318,7 @@ func processK8VCFFile(model *authenticity.AdaptiveHMMModel, vcfFile, pop string)
 		return 0, 0
 	}
 	defer file.Close()
-	
+
 	// Get file size
 	stat, err := file.Stat()
 	if err != nil {
@@ -317,7 +326,7 @@ func processK8VCFFile(model *authenticity.AdaptiveHMMModel, vcfFile, pop string)
 		return 0, 0
 	}
 	fileSize := stat.Size()
-	
+
 	// Create gzip reader
 	gzipReader, err := gzip.NewReader(file)
 	if err != nil {
@@ -325,40 +334,40 @@ func processK8VCFFile(model *authenticity.AdaptiveHMMModel, vcfFile, pop string)
 		return 0, 0
 	}
 	defer gzipReader.Close()
-	
+
 	// Read and process the VCF file with k=8 optimization
 	scanner := bufio.NewScanner(gzipReader)
 	buf := make([]byte, 0, 64*1024)
 	scanner.Buffer(buf, 1024*1024) // 1MB buffer
-	
+
 	var variantCount int64
 	var sequenceBuilder strings.Builder
-	
+
 	for scanner.Scan() {
 		line := scanner.Text()
-		
+
 		// Skip header lines
 		if strings.HasPrefix(line, "#") {
 			continue
 		}
-		
+
 		// Parse VCF line
 		fields := strings.Split(line, "\t")
 		if len(fields) < 5 {
 			continue
 		}
-		
+
 		// Extract reference and alternate alleles
 		ref := fields[3]
 		alt := fields[4]
-		
+
 		// Add sequences to our training data
 		if len(ref) > 0 && len(alt) > 0 {
 			sequenceBuilder.WriteString(ref)
 			sequenceBuilder.WriteString(alt)
 			variantCount++
 		}
-		
+
 		// Process accumulated sequence when we have enough data
 		// Use smaller chunks for k=8 to manage memory
 		if sequenceBuilder.Len() > 50000 { // 50KB chunks for k=8
@@ -369,7 +378,7 @@ func processK8VCFFile(model *authenticity.AdaptiveHMMModel, vcfFile, pop string)
 			sequenceBuilder.Reset()
 		}
 	}
-	
+
 	// Process any remaining sequence
 	if sequenceBuilder.Len() > 0 {
 		sequence := sequenceBuilder.String()
@@ -377,17 +386,17 @@ func processK8VCFFile(model *authenticity.AdaptiveHMMModel, vcfFile, pop string)
 			fmt.Printf("⚠ Error training k=8 on final sequence from %s: %v\n", vcfFile, err)
 		}
 	}
-	
+
 	if err := scanner.Err(); err != nil {
 		fmt.Printf("⚠ Error reading %s: %v\n", vcfFile, err)
 	}
-	
+
 	return fileSize, variantCount
 }
 
 func generateValidationSequences(model *authenticity.AdaptiveHMMModel, numSequences, length int) ([][]byte, error) {
 	sequences := make([][]byte, numSequences)
-	
+
 	for i := 0; i < numSequences; i++ {
 		result, err := model.GenerateSequence(length)
 		if err != nil {
@@ -395,7 +404,7 @@ func generateValidationSequences(model *authenticity.AdaptiveHMMModel, numSequen
 		}
 		sequences[i] = result.Sequence
 	}
-	
+
 	return sequences, nil
 }
 
@@ -403,24 +412,24 @@ func calculateComplexity(sequences [][]byte) float64 {
 	if len(sequences) == 0 {
 		return 0
 	}
-	
+
 	totalComplexity := 0.0
 	for _, seq := range sequences {
 		k := 8 // Using k=8 for complexity calculation
 		if len(seq) < k {
 			continue
 		}
-		
+
 		uniqueKmers := make(map[string]bool)
 		for i := 0; i <= len(seq)-k; i++ {
 			kmer := string(seq[i : i+k])
 			uniqueKmers[kmer] = true
 		}
-		
+
 		complexity := float64(len(uniqueKmers)) / float64(len(seq)-k+1)
 		totalComplexity += complexity
 	}
-	
+
 	return totalComplexity / float64(len(sequences))
 }
 
@@ -428,24 +437,24 @@ func calculateGCContent(sequences [][]byte) float64 {
 	if len(sequences) == 0 {
 		return 0
 	}
-	
+
 	totalGC := 0.0
 	for _, seq := range sequences {
 		if len(seq) == 0 {
 			continue
 		}
-		
+
 		gcCount := 0
 		for _, base := range seq {
 			if base == 'G' || base == 'C' {
 				gcCount++
 			}
 		}
-		
+
 		gc := float64(gcCount) / float64(len(seq))
 		totalGC += gc
 	}
-	
+
 	return totalGC / float64(len(sequences))
 }
 
@@ -464,10 +473,10 @@ func formatBytes(bytes int64) string {
 
 func detectAppleSiliconCores() int {
 	totalCores := runtime.NumCPU()
-	
+
 	if totalCores >= 8 {
 		switch totalCores {
-		case 8:  // M1: 4P + 4E
+		case 8: // M1: 4P + 4E
 			return 4
 		case 10: // M1 Pro: 6P + 4E
 			return 6
@@ -483,11 +492,11 @@ func detectAppleSiliconCores() int {
 			return (totalCores * 2) / 3
 		}
 	}
-	
+
 	if totalCores > 4 {
 		return totalCores - 2
 	}
-	
+
 	return totalCores
 }
 
@@ -500,10 +509,10 @@ func abs(x float64) float64 {
 
 func savePhase3Results(progressDir string, duration time.Duration, complexity, gcContent float64, totalBytes, totalVariants int64, perfCores int, status string, complexityVsK6 float64) {
 	resultsFile := filepath.Join(progressDir, "phase3_k8_advanced_results.txt")
-	
+
 	complexityImprovement := complexity / 0.0051
 	gcDeviation := abs(gcContent - 0.42)
-	
+
 	results := fmt.Sprintf(`PHASE 3 K=8 ADVANCED TRAINING RESULTS
 ====================================
 
@@ -537,15 +546,15 @@ COMPUTATIONAL ANALYSIS:
 - k=6 State Space: 1,024 states
 - k=8 State Space: 16,384 states (16x increase)
 - Memory Increase: ~%.1fx estimated
-- Processing Time vs k=6: ~%.1fx longer
+- Processing Time vs k=6: ~%.1fx longer (vs a 25-minute k=6 run)
 - Complexity Benefit: %.1fx improvement
 
 K-VALUE OPTIMIZATION:
 %s
 
 PHASE PROGRESSION SUMMARY:
-- k=4 Baseline: Complexity 0.0051, GC 48.37%%
-- Phase 1 (k=6): Complexity 0.0819, GC 48.17%%
+- k=4 Baseline: Complexity 0.0051, GC 48.37%% (earlier run)
+- Phase 1 (k=6): Complexity 0.0819, GC 48.17%% (earlier run)
 - Phase 3 (k=8): Complexity %.4f, GC %.2f%%
 
 DECISION MATRIX:
@@ -561,28 +570,24 @@ NEXT STEPS:
 COMPUTATIONAL RECOMMENDATIONS:
 %s
 
-TECHNICAL ACHIEVEMENTS:
-✅ k=8 model successfully implemented
-✅ 16,384 state space managed efficiently
-✅ Apple Silicon optimization for intensive computation
-✅ Memory management for large state spaces
-%s k=8 computational feasibility demonstrated
+TARGET CHECK:
+%s k=8 complexity benefit over k=6
 
 Training Status: PHASE 3 %s
-`, time.Now().Format("2006-01-02 15:04:05"), duration, perfCores, 
-	calculateStateSpaceSize(8), calculateMemoryFootprint(8),
-	complexity, complexityImprovement, gcContent*100, gcDeviation*100, complexityVsK6, status,
-	formatBytes(totalBytes), totalVariants, duration, 
-	float64(totalBytes)/duration.Seconds()/1024/1024, perfCores,
-	safeMemoryRatio(8, 6), 
-	duration.Minutes()/25.0, complexityVsK6,
-	getK8OptimizationInsight(complexityVsK6),
-	complexity, gcContent*100,
-	complexity, gcContent*100, complexityVsK6, status,
-	getNextStepsPhase3(complexity, gcContent, complexityVsK6),
-	getComputationalRecommendation(complexityVsK6, duration),
-	getSuccessEmojiPhase3(complexity, complexityVsK6), status)
-	
+`, time.Now().Format("2006-01-02 15:04:05"), duration, perfCores,
+		calculateStateSpaceSize(8), calculateMemoryFootprint(8),
+		complexity, complexityImprovement, gcContent*100, gcDeviation*100, complexityVsK6, status,
+		formatBytes(totalBytes), totalVariants, duration,
+		float64(totalBytes)/duration.Seconds()/1024/1024, perfCores,
+		safeMemoryRatio(8, 6),
+		duration.Minutes()/25.0, complexityVsK6,
+		getK8OptimizationInsight(complexityVsK6),
+		complexity, gcContent*100,
+		complexity, gcContent*100, complexityVsK6, status,
+		getNextStepsPhase3(complexity, gcContent, complexityVsK6),
+		getComputationalRecommendation(complexityVsK6, duration),
+		getSuccessEmojiPhase3(complexity, complexityVsK6), status)
+
 	if err := os.WriteFile(resultsFile, []byte(results), 0600); err != nil {
 		fmt.Printf("⚠ Could not save results file: %v\n", err)
 	}
@@ -600,11 +605,11 @@ func getK8OptimizationInsight(complexityVsK6 float64) string {
 
 func getNextStepsPhase3(complexity, gcContent, complexityVsK6 float64) string {
 	if complexity > 0.10 && gcContent >= 0.40 && gcContent <= 0.44 {
-		return "1. Scale k=8 to full 11-population training\n2. Prepare for expert validation with stretch goal results\n3. Production deployment with k=8 maximum complexity"
+		return "1. Scale k=8 to full 11-population training\n2. Prepare for expert validation with stretch goal results"
 	} else if complexityVsK6 > 1.2 {
-		return "1. Optimize k=8 memory usage\n2. Scale to full dataset with performance monitoring\n3. Compare k=6 vs k=8 production costs"
+		return "1. Optimize k=8 memory usage\n2. Scale to full dataset with performance monitoring\n3. Compare k=6 vs k=8 run costs"
 	} else {
-		return "1. Finalize k=6 as optimal model\n2. Focus on full k=6 production training\n3. Expert validation with proven k=6 approach"
+		return "1. Finalize k=6 as optimal model\n2. Run full k=6 training\n3. Expert validation with proven k=6 approach"
 	}
 }
 

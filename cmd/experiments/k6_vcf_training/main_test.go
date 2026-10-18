@@ -161,7 +161,7 @@ func TestDetectAppleSiliconCores_Positive(t *testing.T) {
 func TestGetNextSteps_HighComplexity(t *testing.T) {
 	// complexity > 0.015 → enhanced control path
 	got := getNextSteps(0.02)
-	expected := "1. Implement enhanced complexity control\n2. Train on full 11-population dataset\n3. Prepare for production validation"
+	expected := "1. Implement enhanced complexity control\n2. Train on full 11-population dataset\n3. Validate on the full dataset"
 	if got != expected {
 		t.Errorf("getNextSteps(0.02) = %q, want %q", got, expected)
 	}

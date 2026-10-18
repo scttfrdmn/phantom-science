@@ -44,7 +44,7 @@ func TestNewHaplotypeSimulator_CreatesSimulator(t *testing.T) {
 	}
 }
 
-// ---- Block-structure analysis logic (mirrors main() lines 135-163) ----
+// ---- Block-structure analysis logic (a copy of the logic in main(), not a call into it) ----
 
 // haplotypeBlockStats computes block statistics the same way main() does.
 type haplotypeBlockStats struct {
@@ -177,13 +177,13 @@ func TestComputeBlockStats_FullCoverage(t *testing.T) {
 	}
 }
 
-// ---- Performance summary accumulation (mirrors main() lines 179-196) ----
+// ---- Performance summary accumulation (a copy of the logic in main(), not a call into it) ----
 
 type perfSummary struct {
-	totalVariants  int
-	totalBlocks    int
-	totalMemory    float64
-	totalSimTime   float64
+	totalVariants int
+	totalBlocks   int
+	totalMemory   float64
+	totalSimTime  float64
 }
 
 func accumulatePerfSummary(results map[population.Population]*population.HaplotypeSimulationResult) perfSummary {
@@ -300,7 +300,7 @@ func TestAccumulatePerfSummary_AveragesCalc(t *testing.T) {
 	}
 }
 
-// ---- LD validation result counting (mirrors main() lines 93-99) ----
+// ---- LD validation result counting (a copy of the logic in main(), not a call into it) ----
 
 // countPassedTests mimics the counting loop in main().
 func countPassedTests(validation map[string]bool) (passed, total int) {

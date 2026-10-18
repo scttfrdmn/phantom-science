@@ -1,3 +1,13 @@
+// Command step_by_step_test trains a k=4 adaptive HMM on the reference
+// genome in data/validation/reference_genome (path hard-coded, relative to
+// the working directory), generates three 50 kb sequences and logs, step by
+// step, their complexity, GC content, longest homopolymer, CpG ratio and a
+// 4-mer Jensen-Shannon divergence against a sample of reference k-mers, each
+// against a fixed threshold.
+//
+// It is a one-off experiment, not part of the supported phantom-science CLI.
+// Passing its four thresholds does not show the sequences are
+// indistinguishable from real data.
 package main
 
 import (
@@ -24,47 +34,47 @@ func main() {
 	k := 4
 	adaptiveModel := authenticity.NewAdaptiveHMMModel(k)
 	logModelConfig(k)
-	
+
 	// Step 3: Train the model (this will take time)
 	log.Printf("\n[STEP 3] Training adaptive model on real genomic data...")
 	log.Printf("This may take several minutes - please be patient...")
-	
+
 	start := time.Now()
 	err := adaptiveModel.TrainFromReferenceGenome(refGenome)
 	if err != nil {
 		log.Fatalf("❌ Training failed: %v", err)
 	}
 	trainingTime := time.Since(start)
-	
+
 	log.Printf("✓ Training completed successfully!")
 	log.Printf("✓ Training time: %v", trainingTime)
 	log.Printf("✓ Total k-mers processed: %d", adaptiveModel.TotalKmers())
-	
+
 	// Step 4: Generate test sequences
 	log.Printf("\n[STEP 4] Generating test sequences...")
 	sequenceLength := 50000
 	numSequences := 3
-	
+
 	var sequences [][]byte
 	var totalGenTime time.Duration
-	
+
 	for i := 0; i < numSequences; i++ {
 		log.Printf("  Generating sequence %d/%d (%d bases)...", i+1, numSequences, sequenceLength)
-		
+
 		result, err := adaptiveModel.GenerateSequence(sequenceLength)
 		if err != nil {
 			log.Fatalf("❌ Generation failed: %v", err)
 		}
-		
+
 		sequences = append(sequences, result.Sequence)
 		totalGenTime += result.GenerationTime
-		
+
 		log.Printf("    ✓ Generated in %v", result.GenerationTime)
 	}
-	
+
 	avgGenTime := totalGenTime / time.Duration(numSequences)
 	log.Printf("✓ All sequences generated, average time: %v", avgGenTime)
-	
+
 	// Step 5: Calculate biological metrics
 	logStep5Header()
 
@@ -88,7 +98,7 @@ func main() {
 
 	// Step 9: Performance Summary
 	logPerformanceSummary9(trainingTime, adaptiveModel.TotalKmers(), sequenceLength, numSequences, avgGenTime)
-	
+
 	// Step 10: Technical Details
 	log.Printf("\n[STEP 10] Technical Details")
 	if stats := adaptiveModel.GetGenerationStats(); stats.TotalSequences > 0 {
@@ -98,7 +108,7 @@ func main() {
 		log.Printf("   • Average GC content: %.2f%%", stats.AverageGCContent*100)
 		log.Printf("   • Max homopolymer observed: %d", stats.MaxHomopolymer)
 	}
-	
+
 	logModelDetails(k, len(adaptiveModel.StateSpace()), adaptiveModel.IsTrained())
 
 	logCompletionFooter()
@@ -187,7 +197,7 @@ func evaluatePassing(m AuthenticityMetrics) PassResults {
 func determineFinalStatus(totalPassed int) string {
 	switch {
 	case totalPassed == 4:
-		return "PRODUCTION READY"
+		return "ALL CHECKS PASSED"
 	case totalPassed >= 2:
 		return "SIGNIFICANT PROGRESS"
 	default:
@@ -233,7 +243,7 @@ func formatPerformanceSummary(trainingSeconds float64, totalKmers uint64, sequen
 func logIntroduction() {
 	log.Printf("=== Step-by-Step Authenticity Validation ===")
 	log.Printf("Taking time to properly validate the adaptive model...")
-	log.Printf("Target: JS Divergence < 0.01 for production authenticity")
+	log.Printf("Threshold used here: JS Divergence < 0.01")
 }
 
 // logModelConfig logs the model configuration summary.
@@ -322,27 +332,20 @@ func logFinalDetermination(totalPassed int, m AuthenticityMetrics, r PassResults
 
 	switch {
 	case totalPassed == 4:
-		log.Printf("🎉 PRODUCTION READY!")
-		log.Printf("✅ Adaptive model meets ALL authenticity criteria")
-		log.Printf("✅ Generated sequences are statistically indistinguishable from real genomic data")
-		log.Printf("✅ Ready for expert blind testing and production deployment")
+		log.Printf("✅ All four threshold checks passed")
+		log.Printf("   These are summary statistics only; they do not show the sequences are indistinguishable from real data")
 		log.Printf("\n📋 Next Steps:")
-		log.Printf("   1. Begin expert blind testing phase")
-		log.Printf("   2. Performance benchmarking and optimization")
-		log.Printf("   3. Integration with existing sequencer simulation")
-		log.Printf("   4. Production deployment preparation")
+		log.Printf("   1. Compare against held-out real data with a classifier")
+		log.Printf("   2. Performance benchmarking")
+		log.Printf("   3. Integration with the sequencer simulation")
 	case totalPassed >= 2:
-		log.Printf("⚠️  SIGNIFICANT PROGRESS MADE")
-		log.Printf("✅ Adaptive model shows strong improvements")
-		log.Printf("⚠️  Continue refinement to meet remaining criteria")
+		log.Printf("⚠️  Some threshold checks passed")
 		log.Printf("\n📋 Areas for Improvement:")
 		for _, area := range improvementAreas(m, r) {
 			log.Printf("   • %s", area)
 		}
 	default:
-		log.Printf("❌ NEEDS MAJOR IMPROVEMENT")
-		log.Printf("❌ Adaptive model requires significant additional work")
-		log.Printf("❌ Consider alternative approaches or expanded training data")
+		log.Printf("❌ Fewer than two threshold checks passed")
 	}
 }
 
@@ -364,13 +367,13 @@ func calculateSequenceComplexity(sequence []byte, k int) float64 {
 	if len(sequence) < k {
 		return 0.0
 	}
-	
+
 	uniqueKmers := make(map[string]bool)
 	for i := 0; i <= len(sequence)-k; i++ {
 		kmer := string(sequence[i : i+k])
 		uniqueKmers[kmer] = true
 	}
-	
+
 	totalKmers := len(sequence) - k + 1
 	return float64(len(uniqueKmers)) / float64(totalKmers)
 }
@@ -378,7 +381,7 @@ func calculateSequenceComplexity(sequence []byte, k int) float64 {
 func calculateGCContent(sequences [][]byte) float64 {
 	totalBases := 0
 	gcCount := 0
-	
+
 	for _, seq := range sequences {
 		for _, base := range seq {
 			totalBases++
@@ -387,21 +390,21 @@ func calculateGCContent(sequences [][]byte) float64 {
 			}
 		}
 	}
-	
+
 	return float64(gcCount) / float64(totalBases)
 }
 
 func findMaxHomopolymerRun(sequences [][]byte) int {
 	maxHomopolymer := 0
-	
+
 	for _, seq := range sequences {
 		if len(seq) == 0 {
 			continue
 		}
-		
+
 		maxRun := 1
 		currentRun := 1
-		
+
 		for i := 1; i < len(seq); i++ {
 			if seq[i] == seq[i-1] {
 				currentRun++
@@ -412,23 +415,23 @@ func findMaxHomopolymerRun(sequences [][]byte) int {
 				currentRun = 1
 			}
 		}
-		
+
 		if currentRun > maxRun {
 			maxRun = currentRun
 		}
-		
+
 		if maxRun > maxHomopolymer {
 			maxHomopolymer = maxRun
 		}
 	}
-	
+
 	return maxHomopolymer
 }
 
 func calculateCpGDepletion(sequences [][]byte) float64 {
 	cgCount := 0
 	totalDinucleotides := 0
-	
+
 	for _, seq := range sequences {
 		for i := 0; i < len(seq)-1; i++ {
 			totalDinucleotides++
@@ -437,30 +440,30 @@ func calculateCpGDepletion(sequences [][]byte) float64 {
 			}
 		}
 	}
-	
+
 	if totalDinucleotides == 0 {
 		return 0.0
 	}
-	
+
 	expectedCpG := 0.01
 	observedCpG := float64(cgCount) / float64(totalDinucleotides)
-	
+
 	return observedCpG / expectedCpG
 }
 
 func extractLimitedReferenceKmers(refGenome *reference.SimpleReferenceGenome, k int, maxKmers int) []string {
 	var kmers []string
 	count := 0
-	
+
 	// Process chromosome 22 (smaller)
 	chr, err := refGenome.LoadChromosome("chr22")
 	if err != nil {
 		log.Printf("Warning: Could not load chromosome chr22: %v", err)
 		return kmers
 	}
-	
+
 	sequence := chr.GetSequence()
-	
+
 	for i := 0; i <= len(sequence)-k && count < maxKmers; i++ {
 		kmer := string(sequence[i : i+k])
 		// Only include valid k-mers
@@ -469,7 +472,7 @@ func extractLimitedReferenceKmers(refGenome *reference.SimpleReferenceGenome, k 
 			count++
 		}
 	}
-	
+
 	return kmers
 }
 
@@ -486,7 +489,7 @@ func calculateJSDivergence(sequences [][]byte, refKmers []string, k int) float64
 	// Calculate k-mer frequencies for generated sequences
 	genKmers := make(map[string]int)
 	genTotal := 0
-	
+
 	for _, seq := range sequences {
 		for i := 0; i <= len(seq)-k; i++ {
 			kmer := string(seq[i : i+k])
@@ -496,25 +499,25 @@ func calculateJSDivergence(sequences [][]byte, refKmers []string, k int) float64
 			}
 		}
 	}
-	
+
 	// Calculate k-mer frequencies for reference
 	refKmerMap := make(map[string]int)
 	for _, kmer := range refKmers {
 		refKmerMap[kmer]++
 	}
 	refTotal := len(refKmers)
-	
+
 	// Convert to probabilities
 	genProb := make(map[string]float64)
 	for kmer, count := range genKmers {
 		genProb[kmer] = float64(count) / float64(genTotal)
 	}
-	
+
 	refProb := make(map[string]float64)
 	for kmer, count := range refKmerMap {
 		refProb[kmer] = float64(count) / float64(refTotal)
 	}
-	
+
 	// Calculate JS divergence
 	return calculateJSDivergenceFromProbs(genProb, refProb)
 }
@@ -528,7 +531,7 @@ func calculateJSDivergenceFromProbs(p, q map[string]float64) float64 {
 	for kmer := range q {
 		allKmers[kmer] = true
 	}
-	
+
 	// Calculate M = (P + Q) / 2
 	m := make(map[string]float64)
 	for kmer := range allKmers {
@@ -536,14 +539,14 @@ func calculateJSDivergenceFromProbs(p, q map[string]float64) float64 {
 		qVal := q[kmer]
 		m[kmer] = (pVal + qVal) / 2.0
 	}
-	
+
 	// Calculate JS divergence
 	js := 0.0
 	for kmer := range allKmers {
 		pVal := p[kmer]
 		qVal := q[kmer]
 		mVal := m[kmer]
-		
+
 		if pVal > 0 && mVal > 0 {
 			js += pVal * math.Log2(pVal/mVal)
 		}
@@ -551,6 +554,6 @@ func calculateJSDivergenceFromProbs(p, q map[string]float64) float64 {
 			js += qVal * math.Log2(qVal/mVal)
 		}
 	}
-	
+
 	return js / 2.0
 }

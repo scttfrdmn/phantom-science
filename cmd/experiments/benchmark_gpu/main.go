@@ -1,3 +1,10 @@
+// Command benchmark_gpu times k-mer frequency extraction on the CPU
+// (kmer.FrequencyExtractor) and, on macOS with Metal available, on the GPU
+// (metal.MetalKmerProcessor), and prints duration, throughput and the
+// GPU/CPU speedup. The test input is a repeating ACGT pattern, not
+// genome-like sequence, so the numbers say little about real data.
+//
+// It is a one-off experiment, not part of the supported phantom-science CLI.
 package main
 
 import (
@@ -31,7 +38,7 @@ func main() {
 	}
 
 	if *numSequences < 1 || *sequenceLength < *k {
-		log.Fatalf("Error: invalid sequence parameters (sequences=%d, length=%d, k=%d)", 
+		log.Fatalf("Error: invalid sequence parameters (sequences=%d, length=%d, k=%d)",
 			*numSequences, *sequenceLength, *k)
 	}
 
@@ -60,7 +67,7 @@ func main() {
 	fmt.Printf("   Sequences: %d\n", *numSequences)
 	fmt.Printf("   Length: %d bp each\n", *sequenceLength)
 	fmt.Printf("   K-mer size: %d\n", *k)
-	fmt.Printf("   Total data: %.2f MB\n\n", float64(*numSequences * *sequenceLength) / (1024 * 1024))
+	fmt.Printf("   Total data: %.2f MB\n\n", float64(*numSequences**sequenceLength)/(1024*1024))
 
 	testSequences := generateTestSequences(*numSequences, *sequenceLength)
 	if *verbose {
@@ -94,7 +101,7 @@ func main() {
 func generateTestSequences(count, length int) [][]byte {
 	sequences := make([][]byte, count)
 	bases := []byte{'A', 'T', 'G', 'C'}
-	
+
 	for i := 0; i < count; i++ {
 		seq := make([]byte, length)
 		for j := 0; j < length; j++ {
@@ -102,17 +109,17 @@ func generateTestSequences(count, length int) [][]byte {
 		}
 		sequences[i] = seq
 	}
-	
+
 	return sequences
 }
 
 func runCPUBenchmark(sequences [][]byte, k int, verbose bool) {
 	extractor := kmer.NewFrequencyExtractor(k)
-	
+
 	start := time.Now()
 	result, err := extractor.ExtractFromMultipleSequences(sequences)
 	duration := time.Since(start)
-	
+
 	if err != nil {
 		fmt.Printf("❌ CPU benchmark failed: %v\n", err)
 		return
@@ -123,7 +130,7 @@ func runCPUBenchmark(sequences [][]byte, k int, verbose bool) {
 	for _, seq := range sequences {
 		totalBases += len(seq)
 	}
-	
+
 	throughputMBps := float64(totalBases) / (1024 * 1024) / duration.Seconds()
 	kmersPerSecond := float64(result.TotalCount) / duration.Seconds()
 
@@ -170,7 +177,7 @@ func runGPUBenchmark(sequences [][]byte, k int, verbose bool) {
 	for _, seq := range sequences {
 		totalBases += len(seq)
 	}
-	
+
 	throughputMBps := float64(totalBases) / (1024 * 1024) / duration.Seconds()
 	kmersPerSecond := float64(result.TotalCount) / duration.Seconds()
 

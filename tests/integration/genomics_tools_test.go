@@ -18,7 +18,14 @@ import (
 	pt "github.com/scttfrdmn/phantom-science/internal/testing"
 )
 
-// TestGATKWorkflowIntegration tests integration with GATK (Genome Analysis Toolkit)
+// TestGATKWorkflowIntegration runs BWA-MEM and samtools on synthetic reads
+// and then GATK HaplotypeCaller; it skips when gatk is not on PATH.
+//
+// The checks are weaker than the name suggests: if HaplotypeCaller fails,
+// runGATKVariantCalling writes a mock VCF sized to the expected variant
+// count and the assertions run against that, so the test can pass without
+// GATK producing any calls. The duplicate rate and insert-size figures are
+// fixed placeholders, not Picard output.
 func TestGATKWorkflowIntegration(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping GATK integration tests in short mode")
@@ -82,20 +89,27 @@ func testGATKPipeline(t *testing.T, framework *pt.E2EFramework, platform pt.Sequ
 
 	// Step 5: Run GATK preprocessing pipeline
 	gatkResults := runGATKPreprocessing(t, workDir, fastqR1, fastqR2, refGenome)
-	
+
 	// Step 6: Validate GATK pipeline results
 	validateGATKResults(t, gatkResults, platform, population)
 
 	// Step 7: Run variant calling
 	variantResults := runGATKVariantCalling(t, workDir, gatkResults.AlignedBAM, refGenome, syntheticData)
-	
+
 	// Step 8: Validate variant calling results
 	validateVariantCallingResults(t, variantResults, syntheticData, platform)
 
 	t.Logf("✅ GATK pipeline completed successfully for %s %s", platform, population)
 }
 
-// TestBWAAlignmentIntegration tests integration with BWA aligner
+// TestBWAAlignmentIntegration aligns synthetic reads with bwa mem, bwa-mem2
+// or minimap2 (by platform) and checks the samtools flagstat mapping rate;
+// it skips when bwa is not on PATH.
+//
+// If the aligner fails (for example bwa-mem2 or minimap2 is missing),
+// runBWAAlignment returns fixed mock results and the assertions pass on
+// those. Average MAPQ, properly-paired rate and insert size are fixed
+// placeholders in every case.
 func TestBWAAlignmentIntegration(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping BWA integration tests in short mode")
@@ -157,11 +171,17 @@ func testBWAAlignment(t *testing.T, framework *pt.E2EFramework, platform pt.Sequ
 	// Validate alignment results
 	validateAlignmentResults(t, alignmentResult, syntheticData, platform)
 
-	t.Logf("✅ %s alignment completed: %.2f%% mapped, %.3f MAPQ", 
+	t.Logf("✅ %s alignment completed: %.2f%% mapped, %.3f MAPQ",
 		aligner, alignmentResult.MappingRate*100, alignmentResult.AverageMAPQ)
 }
 
-// TestBCFtoolsIntegration tests integration with BCFtools for variant processing
+// TestBCFtoolsIntegration writes synthetic VCFs and runs bcftools merge; it
+// skips when bcftools is not on PATH.
+//
+// The statistics it checks are not measured: parseBCFtoolsStats returns
+// fixed values, and when the merge fails createMockBCFtoolsResults is used
+// instead. The population and cross-platform subtests only write VCFs and
+// log variant counts; they do not run bcftools.
 func TestBCFtoolsIntegration(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping BCFtools integration tests in short mode")
@@ -236,7 +256,7 @@ func TestSamtoolsIntegration(t *testing.T) {
 	}
 
 	framework := pt.NewE2EFramework()
-	
+
 	t.Run("BAM Processing", func(t *testing.T) {
 		testSamtoolsBAMProcessing(t, framework)
 	})
@@ -270,12 +290,12 @@ func TestPicardIntegration(t *testing.T) {
 // Data structures for results
 
 type GATKResults struct {
-	AlignedBAM      string
-	ProcessingTime  time.Duration
-	MappingRate     float64
-	DuplicateRate   float64
+	AlignedBAM       string
+	ProcessingTime   time.Duration
+	MappingRate      float64
+	DuplicateRate    float64
 	InsertSizeStdDev float64
-	QualityMetrics  map[string]float64
+	QualityMetrics   map[string]float64
 }
 
 type VariantCallingResults struct {
@@ -288,11 +308,11 @@ type VariantCallingResults struct {
 }
 
 type AlignmentResults struct {
-	BAMFile       string
-	MappingRate   float64
-	AverageMAPQ   float64
+	BAMFile        string
+	MappingRate    float64
+	AverageMAPQ    float64
 	ProperlyPaired float64
-	InsertSize    AlignmentInsertSizeStats
+	InsertSize     AlignmentInsertSizeStats
 }
 
 type AlignmentInsertSizeStats struct {
@@ -302,19 +322,19 @@ type AlignmentInsertSizeStats struct {
 }
 
 type BCFtoolsResults struct {
-	MergedVCF        string
-	VariantStats     VariantStatistics
-	PopulationStats  PopulationStatistics
-	QualityMetrics   QualityMetrics
+	MergedVCF       string
+	VariantStats    VariantStatistics
+	PopulationStats PopulationStatistics
+	QualityMetrics  QualityMetrics
 }
 
 type VariantStatistics struct {
-	TotalVariants    int
-	SNPCount         int
-	IndelCount       int
-	TransitionCount  int
+	TotalVariants     int
+	SNPCount          int
+	IndelCount        int
+	TransitionCount   int
 	TransversionCount int
-	TiTvRatio        float64
+	TiTvRatio         float64
 }
 
 type PopulationStatistics struct {
@@ -325,10 +345,10 @@ type PopulationStatistics struct {
 }
 
 type QualityMetrics struct {
-	AverageQUAL      float64
-	AverageGQ        float64
-	AverageDP        float64
-	FilterPassRate   float64
+	AverageQUAL    float64
+	AverageGQ      float64
+	AverageDP      float64
+	FilterPassRate float64
 }
 
 // Implementation functions
@@ -340,7 +360,7 @@ func isToolAvailable(tool string) bool {
 
 func runGATKPreprocessing(t *testing.T, workDir, fastqR1, fastqR2, refGenome string) *GATKResults {
 	start := time.Now()
-	
+
 	// Index reference genome
 	indexCmd := exec.Command("samtools", "faidx", refGenome)
 	indexCmd.Dir = workDir
@@ -357,10 +377,10 @@ func runGATKPreprocessing(t *testing.T, workDir, fastqR1, fastqR2, refGenome str
 	samFile := filepath.Join(workDir, "aligned.sam")
 	alignCmd := exec.Command("bwa", "mem", refGenome, fastqR1, fastqR2)
 	alignCmd.Dir = workDir
-	
+
 	output, err := alignCmd.Output()
 	require.NoError(t, err, "BWA alignment failed")
-	
+
 	err = os.WriteFile(samFile, output, 0644)
 	require.NoError(t, err, "Failed to write SAM file")
 
@@ -396,10 +416,10 @@ func runGATKPreprocessing(t *testing.T, workDir, fastqR1, fastqR2, refGenome str
 	processingTime := time.Since(start)
 
 	return &GATKResults{
-		AlignedBAM:      sortedBAM,
-		ProcessingTime:  processingTime,
-		MappingRate:     mappingRate,
-		DuplicateRate:   0.05, // Placeholder - would be calculated by Picard
+		AlignedBAM:       sortedBAM,
+		ProcessingTime:   processingTime,
+		MappingRate:      mappingRate,
+		DuplicateRate:    0.05, // Placeholder - would be calculated by Picard
 		InsertSizeStdDev: 50.0, // Placeholder
 		QualityMetrics: map[string]float64{
 			"MAPQ": 40.0, // Placeholder
@@ -504,11 +524,11 @@ func runBWAAlignment(t *testing.T, workDir, fastqR1, fastqR2, refGenome, aligner
 func runBCFtoolsOperations(t *testing.T, workDir string, vcfFiles []string) *BCFtoolsResults {
 	// Merge VCF files
 	mergedVCF := filepath.Join(workDir, "merged.vcf")
-	
+
 	args := append([]string{"merge", "-o", mergedVCF}, vcfFiles...)
 	mergeCmd := exec.Command("bcftools", args...)
 	mergeCmd.Dir = workDir
-	
+
 	err := mergeCmd.Run()
 	if err != nil {
 		t.Logf("BCFtools merge failed, creating mock results: %v", err)
@@ -523,10 +543,10 @@ func runBCFtoolsOperations(t *testing.T, workDir string, vcfFiles []string) *BCF
 	variantStats := parseBCFtoolsStats(string(statsOutput))
 
 	return &BCFtoolsResults{
-		MergedVCF:       mergedVCF,
-		VariantStats:    variantStats,
+		MergedVCF:    mergedVCF,
+		VariantStats: variantStats,
 		PopulationStats: PopulationStatistics{
-			HardyWeinberg:  0.05, // Placeholder
+			HardyWeinberg:  0.05,  // Placeholder
 			Heterozygosity: 0.001, // Placeholder
 		},
 		QualityMetrics: QualityMetrics{
@@ -582,7 +602,7 @@ func validateGATKResults(t *testing.T, results *GATKResults, platform pt.Sequenc
 		assert.Greater(t, results.MappingRate, 0.85, "ONT should have >85% mapping rate")
 	}
 
-	t.Logf("GATK Results - Mapping: %.1f%%, Duplicates: %.1f%%, Time: %v", 
+	t.Logf("GATK Results - Mapping: %.1f%%, Duplicates: %.1f%%, Time: %v",
 		results.MappingRate*100, results.DuplicateRate*100, results.ProcessingTime)
 }
 
@@ -594,10 +614,10 @@ func validateVariantCallingResults(t *testing.T, results *VariantCallingResults,
 
 	// Expected variant counts based on synthetic data complexity
 	expectedVariants := int(float64(syntheticData.VariantCount) * 0.8) // 80% sensitivity
-	assert.InDelta(t, expectedVariants, results.VariantCount, float64(expectedVariants)*0.3, 
+	assert.InDelta(t, expectedVariants, results.VariantCount, float64(expectedVariants)*0.3,
 		"Variant count should be within 30% of expected")
 
-	t.Logf("Variant Calling - Variants: %d, SNPs: %d, Indels: %d, Quality: %.1f", 
+	t.Logf("Variant Calling - Variants: %d, SNPs: %d, Indels: %d, Quality: %.1f",
 		results.VariantCount, results.SNPCount, results.IndelCount, results.QualityScore)
 }
 
@@ -627,13 +647,16 @@ func validateBCFtoolsResults(t *testing.T, results *BCFtoolsResults) {
 	assert.Less(t, results.VariantStats.TiTvRatio, 3.0, "Ti/Tv ratio should be realistic (<3.0)")
 	assert.Greater(t, results.QualityMetrics.FilterPassRate, 0.8, "Filter pass rate should be >80%")
 
-	t.Logf("BCFtools Results - Variants: %d, Ti/Tv: %.2f, Pass Rate: %.1f%%", 
-		results.VariantStats.TotalVariants, results.VariantStats.TiTvRatio, 
+	t.Logf("BCFtools Results - Variants: %d, Ti/Tv: %.2f, Pass Rate: %.1f%%",
+		results.VariantStats.TotalVariants, results.VariantStats.TiTvRatio,
 		results.QualityMetrics.FilterPassRate*100)
 }
 
 // Helper functions for parsing tool outputs
 
+// parseMappingRate returns the mapped fraction from samtools flagstat
+// output. When no "mapped (" line parses it returns 0.95, which hides a
+// failed or empty flagstat from the mapping-rate assertions.
 func parseMappingRate(flagstatOutput string) float64 {
 	// Parse samtools flagstat output to extract mapping rate
 	lines := strings.Split(flagstatOutput, "\n")
@@ -719,8 +742,9 @@ func parseVCFStatistics(vcfFile string) struct {
 	}
 }
 
+// parseBCFtoolsStats ignores statsOutput and returns fixed counts; it does
+// not parse bcftools stats.
 func parseBCFtoolsStats(statsOutput string) VariantStatistics {
-	// Parse BCFtools stats output - simplified version
 	return VariantStatistics{
 		TotalVariants:     1500,
 		SNPCount:          1200,
@@ -731,7 +755,8 @@ func parseBCFtoolsStats(statsOutput string) VariantStatistics {
 	}
 }
 
-// Mock functions for when tools are not available
+// Mock results used when a tool run fails. The callers' assertions then run
+// against these fixed values, so a failing tool does not fail the test.
 
 func createMockVCF(vcfFile string, variantCount int) {
 	var sb strings.Builder
@@ -807,7 +832,7 @@ func testSamtoolsOperations(t *testing.T, workDir, bamFile string, wantReads int
 
 func testPicardQualityMetrics(t *testing.T, framework *pt.E2EFramework) {
 	t.Log("📊 Testing Picard quality metrics")
-	
+
 	config := framework.CreatePlatformConfig(pt.IlluminaNovaSeq6000, "CEU")
 	syntheticData, err := framework.GenerateSyntheticData(config)
 	require.NoError(t, err)
@@ -824,13 +849,13 @@ func testPicardQualityMetrics(t *testing.T, framework *pt.E2EFramework) {
 
 func testPicardDuplicateMarking(t *testing.T, framework *pt.E2EFramework) {
 	t.Log("🔍 Testing Picard duplicate marking")
-	
-	// Similar to quality metrics test but for duplicate detection
+
+	// Picard MarkDuplicates is not run: this only checks that enough reads
+	// are generated for duplicate analysis to be meaningful.
 	config := framework.CreatePlatformConfig(pt.IlluminaNovaSeq6000, "CEU")
 	syntheticData, err := framework.GenerateSyntheticData(config)
 	require.NoError(t, err)
 
-	// Validate that duplicate marking would work correctly
 	assert.Greater(t, len(syntheticData.Sequences), 100, "Should have sufficient reads for duplicate analysis")
 }
 
@@ -879,7 +904,8 @@ func tailLines(s string, n int) string {
 	return strings.Join(lines, "\n")
 }
 
-// testBCFtoolsPopulationAnalysis tests BCFtools population genetics analysis
+// testBCFtoolsPopulationAnalysis writes a YRI VCF and logs its variant
+// count. It runs no bcftools population analysis.
 func testBCFtoolsPopulationAnalysis(t *testing.T, framework *pt.E2EFramework) {
 	t.Log("🧬 Testing BCFtools population genetics analysis")
 
@@ -898,7 +924,8 @@ func testBCFtoolsPopulationAnalysis(t *testing.T, framework *pt.E2EFramework) {
 	t.Logf("Population analysis prepared with %d variants", syntheticData.VariantCount)
 }
 
-// testCrossPlatformVariants tests cross-platform variant consistency
+// testCrossPlatformVariants writes one VCF per platform and logs the variant
+// counts. It does not compare the call sets.
 func testCrossPlatformVariants(t *testing.T, framework *pt.E2EFramework) {
 	t.Log("🔬 Testing cross-platform variant consistency")
 

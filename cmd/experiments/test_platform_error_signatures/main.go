@@ -1,3 +1,10 @@
+// Command test_platform_error_signatures prints the error signatures
+// configured in genomics.PlatformErrorSignatureManager for its seven
+// platforms, applies them to a short test sequence, and runs the manager's
+// own validation checks. It reads no input files.
+//
+// It is a one-off experiment, not part of the supported phantom-science CLI.
+// Several items in its final assessment are hard-coded to true.
 package main
 
 import (
@@ -17,7 +24,7 @@ func main() {
 
 	// Test 1: Initialize platform error signature manager
 	fmt.Println("\n1️⃣ Testing Platform Error Signature Manager Initialization...")
-	
+
 	manager := genomics.NewPlatformErrorSignatureManager()
 	if manager == nil {
 		fmt.Printf("   ❌ Failed to initialize platform error signature manager\n")
@@ -27,15 +34,15 @@ func main() {
 
 	// Test 2: Validate all 7 platforms have error signatures
 	fmt.Println("\n2️⃣ Testing Platform Error Signature Coverage...")
-	
+
 	supportedPlatforms := manager.GetSupportedPlatforms()
 	fmt.Printf("   📊 Platforms with error signatures: %d\n", len(supportedPlatforms))
-	
+
 	expectedPlatforms := []genomics.SequencingPlatform{
 		genomics.NovaSeq6000, genomics.NextSeq2000, genomics.MiSeq, genomics.PacBioRevio,
 		genomics.DNBSeqT20x2, genomics.ElementAVITI, genomics.PromethION24,
 	}
-	
+
 	for _, platform := range expectedPlatforms {
 		signature := manager.GetErrorSignature(platform)
 		if signature != nil {
@@ -44,7 +51,7 @@ func main() {
 			fmt.Printf("   ❌ %s: No signature found\n", platform)
 		}
 	}
-	
+
 	if len(supportedPlatforms) == 7 {
 		fmt.Printf("   🎉 All 7 sequencing platforms have error signatures\n")
 	} else {
@@ -53,7 +60,7 @@ func main() {
 
 	// Test 3: Platform-specific error signature analysis
 	fmt.Println("\n3️⃣ Testing Platform-Specific Error Signature Details...")
-	
+
 	platformDetails := []struct {
 		platform genomics.SequencingPlatform
 		tech     string
@@ -64,24 +71,24 @@ func main() {
 		{genomics.PromethION24, "ONT", "NANOPORE"},
 		{genomics.ElementAVITI, "Element", "AVIDITY"},
 	}
-	
+
 	for _, detail := range platformDetails {
 		signature := manager.GetErrorSignature(detail.platform)
 		if signature == nil {
 			fmt.Printf("   ❌ %s: No signature found\n", detail.platform)
 			continue
 		}
-		
+
 		fmt.Printf("   ✅ %s (%s):\n", detail.platform, detail.tech)
 		fmt.Printf("      Fingerprint: %s\n", signature.SignatureFingerprint)
 		fmt.Printf("      Error patterns: %d types\n", len(signature.ErrorPatterns))
-		
+
 		// Check for substitution pattern
 		if subPattern, exists := signature.ErrorPatterns["substitution"]; exists {
-			fmt.Printf("      Substitution profile: %d positions, correlation=%.2f\n", 
+			fmt.Printf("      Substitution profile: %d positions, correlation=%.2f\n",
 				len(subPattern.FrequencyPattern), subPattern.QualityCorrelation)
 		}
-		
+
 		// Check for indel patterns in long-read platforms
 		if detail.platform == genomics.PacBioRevio || detail.platform == genomics.PromethION24 {
 			insCount := 0
@@ -98,21 +105,21 @@ func main() {
 
 	// Test 4: Population-specific error data analysis
 	fmt.Println("\n4️⃣ Testing Population-Specific Error Data...")
-	
+
 	testPopulations := []population.Population{
 		population.YRI, // African
 		population.CEU, // European
 		population.CHB, // East Asian
 		population.MXL, // Americas
 	}
-	
+
 	for _, pop := range testPopulations {
 		popData := manager.GetPopulationErrorData(pop)
 		if popData == nil {
 			fmt.Printf("   ❌ %s: No population error data found\n", pop)
 			continue
 		}
-		
+
 		fmt.Printf("   ✅ %s:\n", pop)
 		fmt.Printf("      Base error modifier: %.3f\n", popData.BaseErrorModifier)
 		fmt.Printf("      GC bias modifier: %.3f\n", popData.GCBiasModifier)
@@ -122,7 +129,7 @@ func main() {
 
 	// Test 5: Error signature application across platforms
 	fmt.Println("\n5️⃣ Testing Error Signature Application...")
-	
+
 	testSequence := "ATCGATCGATCGATCGAAAAAATCGTCGTCGCCCCCGGGGATCGATCG"
 	testQualities := make([]int, len(testSequence))
 	for i := range testQualities {
@@ -130,24 +137,24 @@ func main() {
 	}
 	testPopulation := population.YRI
 	readPosition := 1
-	
+
 	fmt.Printf("   🧬 Test sequence: %s\n", testSequence)
 	fmt.Printf("   📊 Error signature application across platforms:\n")
-	
+
 	for _, platform := range expectedPlatforms[:4] { // Test first 4 platforms
 		modifiedSeq, modifiedQual, result := manager.ApplyErrorSignature(
 			platform, testPopulation, testSequence, testQualities, readPosition)
-		
+
 		if !result.Success {
 			fmt.Printf("   ❌ %s: %s\n", platform, result.Message)
 			continue
 		}
-		
+
 		// Calculate quality statistics
 		totalQuality := 0
 		minQuality := modifiedQual[0]
 		maxQuality := modifiedQual[0]
-		
+
 		for _, q := range modifiedQual {
 			totalQuality += q
 			if q < minQuality {
@@ -157,9 +164,9 @@ func main() {
 				maxQuality = q
 			}
 		}
-		
+
 		meanQuality := float64(totalQuality) / float64(len(modifiedQual))
-		
+
 		// Count sequence differences
 		differences := 0
 		for i := 0; i < len(testSequence) && i < len(modifiedSeq); i++ {
@@ -167,31 +174,31 @@ func main() {
 				differences++
 			}
 		}
-		
-		fmt.Printf("      %s: %d errors applied, %d seq changes, Q%.1f [%d-%d]\n", 
+
+		fmt.Printf("      %s: %d errors applied, %d seq changes, Q%.1f [%d-%d]\n",
 			platform, result.ErrorsApplied, differences, meanQuality, minQuality, maxQuality)
 	}
 
 	// Test 6: Platform technology classification validation
 	fmt.Println("\n6️⃣ Testing Platform Technology Classification...")
-	
+
 	technologyGroups := map[string][]genomics.SequencingPlatform{
-		"Illumina":  {genomics.NovaSeq6000, genomics.NextSeq2000, genomics.MiSeq},
-		"PacBio":    {genomics.PacBioRevio},
-		"ONT":       {genomics.PromethION24},
-		"MGI":       {genomics.DNBSeqT20x2},
-		"Element":   {genomics.ElementAVITI},
+		"Illumina": {genomics.NovaSeq6000, genomics.NextSeq2000, genomics.MiSeq},
+		"PacBio":   {genomics.PacBioRevio},
+		"ONT":      {genomics.PromethION24},
+		"MGI":      {genomics.DNBSeqT20x2},
+		"Element":  {genomics.ElementAVITI},
 	}
-	
+
 	for technology, platforms := range technologyGroups {
 		fmt.Printf("   🔬 %s Technology:\n", technology)
-		
+
 		for _, platform := range platforms {
 			signature := manager.GetErrorSignature(platform)
 			if signature != nil {
 				if strings.Contains(strings.ToUpper(signature.SignatureFingerprint), strings.ToUpper(technology)) ||
-				   (technology == "ONT" && strings.Contains(signature.SignatureFingerprint, "NANOPORE")) ||
-				   (technology == "Element" && strings.Contains(signature.SignatureFingerprint, "AVIDITY")) {
+					(technology == "ONT" && strings.Contains(signature.SignatureFingerprint, "NANOPORE")) ||
+					(technology == "Element" && strings.Contains(signature.SignatureFingerprint, "AVIDITY")) {
 					fmt.Printf("      ✅ %s correctly classified\n", platform)
 				} else {
 					fmt.Printf("      ⚠️  %s classification unclear\n", platform)
@@ -204,10 +211,10 @@ func main() {
 
 	// Test 7: Platform-specific error rate characteristics
 	fmt.Println("\n7️⃣ Testing Platform-Specific Error Rate Characteristics...")
-	
+
 	shortReadPlatforms := []genomics.SequencingPlatform{genomics.NovaSeq6000, genomics.NextSeq2000, genomics.MiSeq}
 	longReadPlatforms := []genomics.SequencingPlatform{genomics.PacBioRevio, genomics.PromethION24}
-	
+
 	fmt.Printf("   📊 Short-read platforms (expected low error rates):\n")
 	for _, platform := range shortReadPlatforms {
 		signature := manager.GetErrorSignature(platform)
@@ -219,7 +226,7 @@ func main() {
 					avgErrorRate += rate
 				}
 				avgErrorRate /= float64(len(subPattern.FrequencyPattern))
-				
+
 				if avgErrorRate <= 0.002 {
 					fmt.Printf("      ✅ %s: %.4f (appropriate)\n", platform, avgErrorRate)
 				} else {
@@ -228,7 +235,7 @@ func main() {
 			}
 		}
 	}
-	
+
 	fmt.Printf("   📊 Long-read platforms (expected higher error rates):\n")
 	for _, platform := range longReadPlatforms {
 		signature := manager.GetErrorSignature(platform)
@@ -240,7 +247,7 @@ func main() {
 					avgErrorRate += rate
 				}
 				avgErrorRate /= float64(len(subPattern.FrequencyPattern))
-				
+
 				if avgErrorRate >= 0.003 {
 					fmt.Printf("      ✅ %s: %.4f (appropriate)\n", platform, avgErrorRate)
 				} else {
@@ -252,14 +259,14 @@ func main() {
 
 	// Test 8: Comprehensive validation
 	fmt.Println("\n8️⃣ Testing Comprehensive Platform Error Signature Validation...")
-	
+
 	validation := manager.ValidatePlatformSignatures()
-	
+
 	fmt.Printf("   📋 Platform Error Signature Validation Results:\n")
-	
+
 	passedTests := 0
 	totalTests := len(validation)
-	
+
 	for test, passed := range validation {
 		status := "✅ PASSED"
 		if !passed {
@@ -269,7 +276,7 @@ func main() {
 		}
 		fmt.Printf("      %s: %s\n", test, status)
 	}
-	
+
 	fmt.Printf("   🎯 Validation Score: %d/%d tests passed\n", passedTests, totalTests)
 
 	// Final assessment
@@ -278,14 +285,15 @@ func main() {
 
 	// Quality metrics
 	qualityMetrics := map[string]bool{
-		"All 7 platforms have error signatures":           len(supportedPlatforms) == 7,
-		"Platform signatures configured":                  passedTests >= totalTests*3/4,
-		"Population-specific error data loaded":           len(testPopulations) >= 4,
-		"Error signature application operational":         true, // Basic functionality tested
-		"Technology classification accurate":              true, // Framework validated
-		"Error rate characteristics platform-appropriate": true, // Validated above
-		"Platform fingerprints unique":                    true, // Validation confirmed
-		"Phase 2 Week 8 foundation complete":             true, // Core functionality ready
+		"All 7 platforms have error signatures": len(supportedPlatforms) == 7,
+		"Platform signatures configured":        passedTests >= totalTests*3/4,
+		"Population-specific error data loaded": len(testPopulations) >= 4,
+		// The entries below are hard-coded to true; nothing checks them.
+		"Error signature application (not checked)":  true,
+		"Technology classification (not checked)":    true,
+		"Error rate characteristics (not checked)":   true,
+		"Platform fingerprints unique (not checked)": true,
+		"Phase 2 Week 8 foundation (not checked)":    true,
 	}
 
 	passedQuality := 0
@@ -303,35 +311,11 @@ func main() {
 
 	// Final assessment
 	fmt.Printf("\n🎯 PHASE 2 WEEK 8 COMPLETION ASSESSMENT\n")
-	fmt.Printf("   Platform Error Signatures: %d/%d tests passed\n", passedQuality, totalQuality)
+	fmt.Printf("   Platform Error Signatures: %d/%d checks true (5 of them hard-coded)\n", passedQuality, totalQuality)
 
 	if passedQuality >= totalQuality*7/8 {
-		fmt.Printf("   🎉 PHASE 2 WEEK 8: SUCCESSFULLY COMPLETED\n")
-		fmt.Printf("   ✅ Platform-specific error signatures implemented\n")
-		fmt.Printf("   ✅ All 7 sequencing platforms supported\n")
-		fmt.Printf("   ✅ Population-specific error characteristics integrated\n")
+		fmt.Printf("   At most one check failed; see above\n")
 	} else {
-		fmt.Printf("   ⚠️  PHASE 2 WEEK 8: PARTIALLY COMPLETED\n")
-		fmt.Printf("   📝 Core frameworks ready, some optimizations may be needed\n")
+		fmt.Printf("   ⚠️  Some checks failed; see above\n")
 	}
-
-	// Summary and next steps
-	fmt.Printf("\n📊 PLATFORM ERROR SIGNATURES SUMMARY\n")
-	fmt.Print("=" + strings.Repeat("=", 50) + "\n")
-	fmt.Printf("✅ Error Signature Coverage: All 7 major sequencing platforms supported\n")
-	fmt.Printf("✅ Platform Fingerprints: Unique error signatures for each technology\n")
-	fmt.Printf("✅ Error Pattern Modeling: Substitution, insertion, deletion patterns\n")
-	fmt.Printf("✅ Population Integration: Population-specific error biases and modifiers\n")
-	fmt.Printf("✅ Quality Correlation: Platform-specific quality score effects\n")
-	fmt.Printf("✅ Technology Diversity: Illumina, PacBio, ONT, MGI, Element platforms\n")
-	
-	fmt.Printf("\n🔬 PLATFORM-SPECIFIC ERROR CAPABILITIES\n")
-	fmt.Printf("📊 Illumina Platforms: SBS chemistry-specific substitution patterns\n")
-	fmt.Printf("🧬 Long-Read Platforms: Comprehensive indel and homopolymer error modeling\n")
-	fmt.Printf("🌍 Global Platforms: MGI DNB and Element Avidity technology signatures\n")
-	fmt.Printf("✅ Error Framework: Platform fingerprints with population-specific biases\n")
-
-	fmt.Printf("\n🎯 PHASE 2 WEEK 8 IMPLEMENTATION: COMPLETE\n")
-	fmt.Printf("Ready for Phase 3: Advanced Statistical Indistinguishability\n")
-	fmt.Printf("🚀 Platform-specific error signature foundation established!\n")
 }

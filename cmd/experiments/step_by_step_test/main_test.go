@@ -86,7 +86,9 @@ func TestCalculateSequenceComplexity_Diverse(t *testing.T) {
 
 func TestCalculateSequenceComplexity_AllSame(t *testing.T) {
 	seq := make([]byte, 20)
-	for i := range seq { seq[i] = 'A' }
+	for i := range seq {
+		seq[i] = 'A'
+	}
 	got := calculateSequenceComplexity(seq, 4)
 	if got > 0.1 {
 		t.Errorf("calculateSequenceComplexity(uniform) = %f, want < 0.1", got)
@@ -279,10 +281,10 @@ func TestComputeMetrics_GCError(t *testing.T) {
 
 func TestEvaluatePassing_AllPass(t *testing.T) {
 	m := AuthenticityMetrics{
-		Complexity:     0.8,  // > 0.5 -> pass
-		GCError:        0.02, // < 0.05 -> pass
-		MaxHomopolymer: 5,    // < 15 -> pass
-		CpGDepletion:   0.3,  // |0.3-0.25|=0.05 < 0.5 -> pass
+		Complexity:     0.8,   // > 0.5 -> pass
+		GCError:        0.02,  // < 0.05 -> pass
+		MaxHomopolymer: 5,     // < 15 -> pass
+		CpGDepletion:   0.3,   // |0.3-0.25|=0.05 < 0.5 -> pass
 		JSDivergence:   0.005, // < 0.01 -> pass
 	}
 	r := evaluatePassing(m)
@@ -353,9 +355,9 @@ func TestEvaluatePassing_PartialPass(t *testing.T) {
 
 // ---------- determineFinalStatus ----------
 
-func TestDetermineFinalStatus_ProductionReady(t *testing.T) {
-	if got := determineFinalStatus(4); got != "PRODUCTION READY" {
-		t.Errorf("determineFinalStatus(4) = %q, want PRODUCTION READY", got)
+func TestDetermineFinalStatus_AllPassed(t *testing.T) {
+	if got := determineFinalStatus(4); got != "ALL CHECKS PASSED" {
+		t.Errorf("determineFinalStatus(4) = %q, want ALL CHECKS PASSED", got)
 	}
 }
 

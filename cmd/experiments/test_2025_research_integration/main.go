@@ -1,3 +1,16 @@
+// Command test_2025_research_integration constructs the adversarial-defense,
+// cross-platform bias-correction, privacy-preserving generation, 2025
+// validation and platform error-signature components, runs privacy-preserving
+// generation for 100 CEU samples and bias correction on synthetic per-platform
+// vectors, and prints the returned metrics.
+//
+// It is a one-off experiment, not part of the supported phantom-science CLI.
+// Most of its summary is not measured: the integration score, level label and
+// threat-resistance percentages are constants in this file, and most of the
+// checklist is hard-coded true. The named research methods (TabPFN, pg-gan,
+// DPGAN, BEADS, MANCIE and others) are labels on these components; this
+// program does not run them or evaluate against them, and the
+// privacy-preserving engine in internal/population is an experimental mock.
 package main
 
 import (
@@ -10,192 +23,189 @@ import (
 )
 
 func main() {
-	fmt.Println("🔬 TESTING 2024-2025 RESEARCH INTEGRATION")
+	fmt.Println("🔬 2024-2025 RESEARCH INTEGRATION SMOKE TEST (experiment)")
 	fmt.Println("=" + strings.Repeat("=", 55))
 
-	fmt.Println("\n🎯 ADVANCED STATISTICAL INDISTINGUISHABILITY VALIDATION")
-	fmt.Println("Integration of Latest 2024-2025 Genomic Privacy Research")
+	fmt.Println("\nConstructs each component and runs it on small synthetic inputs.")
+	fmt.Println("Method names below are component labels; none are run or evaluated against.")
 
-	// Test 1: Advanced Adversarial Defense System with 2024-2025 enhancements
-	fmt.Println("\n1️⃣ Testing Enhanced Adversarial Defense System...")
-	
+	// Test 1: adversarial defense system
+	fmt.Println("\n1️⃣ Constructing adversarial defense system...")
+
 	adversarialDefense := authenticity.NewAdversarialDefenseSystem()
 	if adversarialDefense == nil {
-		fmt.Printf("   ❌ Failed to initialize enhanced adversarial defense system\\n")
+		fmt.Printf("   ❌ Failed to initialize adversarial defense system\n")
 		return
 	}
-	fmt.Printf("   ✅ Enhanced adversarial defense system initialized successfully\\n")
-	fmt.Printf("   📊 2024-2025 Enhancements: TabPFN, pg-gan, DPGAN, Federated Learning\\n")
+	fmt.Printf("   ✅ Adversarial defense system initialized\n")
+	fmt.Printf("   📊 Labelled defenses (not evaluated here): TabPFN, pg-gan, DPGAN, federated learning\n")
 
-	// Test 2: Cross-Platform Bias Correction with BEADS/MANCIE integration
-	fmt.Println("\n2️⃣ Testing Cross-Platform Bias Correction (BEADS/MANCIE)...")
-	
+	// Test 2: cross-platform bias correction
+	fmt.Println("\n2️⃣ Constructing cross-platform bias corrector...")
+
 	biasCorrector := genomics.NewCrossPlatformBiasCorrector()
 	if biasCorrector == nil {
-		fmt.Printf("   ❌ Failed to initialize cross-platform bias corrector\\n")
+		fmt.Printf("   ❌ Failed to initialize cross-platform bias corrector\n")
 		return
 	}
-	fmt.Printf("   ✅ Cross-platform bias corrector initialized successfully\\n")
-	fmt.Printf("   🔬 2024 Research Integration: BEADS, MANCIE, Quantile Normalization\\n")
-	fmt.Printf("   📈 Bias Correction Methods: GC bias, Mappability, Regional bias\\n")
+	fmt.Printf("   ✅ Cross-platform bias corrector initialized\n")
+	fmt.Printf("   🔬 Labelled methods (not compared against the published tools): BEADS, MANCIE, quantile normalization\n")
+	fmt.Printf("   📈 Bias types handled: GC bias, mappability, regional bias\n")
 
-	// Test 3: Privacy-Preserving Genetics Engine with 2024-2025 techniques
-	fmt.Println("\n3️⃣ Testing Privacy-Preserving Genetics Engine...")
-	
+	// Test 3: privacy-preserving genetics engine
+	fmt.Println("\n3️⃣ Constructing privacy-preserving genetics engine...")
+
 	privacyEngine := population.NewPrivacyPreservingGeneticsEngine()
 	if privacyEngine == nil {
-		fmt.Printf("   ❌ Failed to initialize privacy-preserving genetics engine\\n")
+		fmt.Printf("   ❌ Failed to initialize privacy-preserving genetics engine\n")
 		return
 	}
-	fmt.Printf("   ✅ Privacy-preserving genetics engine initialized successfully\\n")
-	fmt.Printf("   🛡️ 2024-2025 Privacy Techniques: DPGAN, PATEGAN, Federated Privacy\\n")
-	fmt.Printf("   🔒 Advanced Defenses: TabPFN Shield, Local Ancestry Shield, HaploNet Countermeasure\\n")
+	fmt.Printf("   ✅ Privacy-preserving genetics engine initialized\n")
+	fmt.Printf("   🛡️ Labelled techniques (not evaluated here): DPGAN, PATEGAN, federated privacy\n")
+	fmt.Printf("   🔒 Labelled defenses (not evaluated here): TabPFN shield, local ancestry shield, HaploNet countermeasure\n")
 
-	// Test 4: Advanced Validation Framework for 2025 Classification Methods
-	fmt.Println("\n4️⃣ Testing Advanced 2025 Validation Framework...")
-	
+	// Test 4: 2025 validation framework
+	fmt.Println("\n4️⃣ Constructing 2025 validation framework...")
+
 	validator2025 := authenticity.NewAdvancedValidation2025()
 	if validator2025 == nil {
-		fmt.Printf("   ❌ Failed to initialize 2025 validation framework\\n")
+		fmt.Printf("   ❌ Failed to initialize 2025 validation framework\n")
 		return
 	}
-	fmt.Printf("   ✅ Advanced 2025 validation framework initialized successfully\\n")
-	fmt.Printf("   🧠 2025 ML Validators: TabPFN, pg-gan, HaploNet, Federated Learning\\n")
-	fmt.Printf("   🎯 Target: ~50%% classification accuracy (statistical indistinguishability)\\n")
+	fmt.Printf("   ✅ 2025 validation framework initialized (not run here)\n")
+	fmt.Printf("   🎯 Design goal: ~50%% real-vs-synthetic classification accuracy (not measured here)\n")
 
-	// Test 5: Platform Error Modeling with 2024-2025 Accuracy Improvements
-	fmt.Println("\n5️⃣ Testing Enhanced Platform Error Modeling...")
-	
+	// Test 5: platform error modeling
+	fmt.Println("\n5️⃣ Constructing platform error signature manager...")
+
 	platformManager := genomics.NewPlatformErrorSignatureManager()
 	if platformManager == nil {
-		fmt.Printf("   ❌ Failed to initialize platform error signature manager\\n")
+		fmt.Printf("   ❌ Failed to initialize platform error signature manager\n")
 		return
 	}
-	fmt.Printf("   ✅ Platform error signature manager initialized successfully\\n")
-	
-	// Validate 2024-2025 error rate improvements
-	fmt.Printf("   📊 2024-2025 Error Rate Improvements:\\n")
-	
-	// Check PacBio HiFi improvements
+	fmt.Printf("   ✅ Platform error signature manager initialized\n")
+
+	fmt.Printf("   📊 Error signatures present:\n")
+
 	pacbioSignature := platformManager.GetErrorSignature(genomics.PacBioRevio)
 	if pacbioSignature != nil {
-		fmt.Printf("      🧬 PacBio Revio: Improved to ~0.4-0.5%% error rates (HiFi chemistry)\\n")
-	}
-	
-	// Check ONT R10 improvements  
-	ontSignature := platformManager.GetErrorSignature(genomics.PromethION24)
-	if ontSignature != nil {
-		fmt.Printf("      🧬 ONT PromethION 24: R10 + Q20+ chemistry reduces homopolymer errors\\n")
+		fmt.Printf("      🧬 PacBio Revio: signature found\n")
 	}
 
-	// Test 6: Comprehensive Privacy Requirements Testing
-	fmt.Println("\n6️⃣ Testing Comprehensive Privacy Requirements...")
-	
+	ontSignature := platformManager.GetErrorSignature(genomics.PromethION24)
+	if ontSignature != nil {
+		fmt.Printf("      🧬 ONT PromethION 24: signature found\n")
+	}
+
+	// Test 6: privacy requirements
+	fmt.Println("\n6️⃣ Configuring privacy requirements...")
+
 	privacyRequirements := &population.PrivacyRequirements{
 		DifferentialPrivacyEpsilon: 1.0,
-		UseFederatedPrivacy:       true,
-		DefendAgainstTabPFN:       true,
+		UseFederatedPrivacy:        true,
+		DefendAgainstTabPFN:        true,
 		DefendAgainstLocalAncestry: true,
-		DefendAgainstHaploNet:     true,
-		DefendAgainstPGGAN:        true,
-		MinimumPrivacyScore:       0.90,
-		MaximumPrivacyBudget:      2.0,
+		DefendAgainstHaploNet:      true,
+		DefendAgainstPGGAN:         true,
+		MinimumPrivacyScore:        0.90,
+		MaximumPrivacyBudget:       2.0,
 	}
-	
-	fmt.Printf("   ✅ Privacy requirements configured for 2024-2025 threat landscape\n")
-	fmt.Printf("   🎯 Defending against: TabPFN, pg-gan, HaploNet, Local Ancestry Inference\n")
-	fmt.Printf("   🔒 Privacy Budget: ε=%.1f, Federated Privacy: %v\n", 
+
+	fmt.Printf("   ✅ Privacy requirements configured\n")
+	fmt.Printf("   🎯 Defense flags set: TabPFN, pg-gan, HaploNet, local ancestry inference\n")
+	fmt.Printf("   🔒 Privacy Budget: ε=%.1f, Federated Privacy: %v\n",
 		privacyRequirements.DifferentialPrivacyEpsilon,
 		privacyRequirements.UseFederatedPrivacy)
 
-	// Test 7: Generate Privacy-Preserving Genomic Data
-	fmt.Println("\n7️⃣ Testing Privacy-Preserving Data Generation...")
-	
+	// Test 7: privacy-preserving data generation
+	fmt.Println("\n7️⃣ Running privacy-preserving data generation...")
+
 	targetPopulation := population.CEU
 	numSamples := 100
-	
+
 	result, err := privacyEngine.GeneratePrivacyPreservingGenomicData(
 		targetPopulation, numSamples, privacyRequirements)
-	
+
 	if err != nil {
 		fmt.Printf("   ⚠️  Privacy-preserving data generation encountered issues: %v\n", err)
 	} else {
-		fmt.Printf("   ✅ Generated %d privacy-preserving genomic samples\n", len(result.GeneratedData))
-		fmt.Printf("   📊 Privacy Metrics:\n")
+		fmt.Printf("   ✅ Generated %d samples\n", len(result.GeneratedData))
+		fmt.Printf("   📊 Privacy metrics reported by the engine:\n")
 		fmt.Printf("      Differential Privacy ε: %.3f\n", result.PrivacyMetrics.DifferentialPrivacyEpsilon)
 		fmt.Printf("      Population Privacy Score: %.3f\n", result.PrivacyMetrics.PopulationPrivacyScore)
 		fmt.Printf("      Overall Privacy Rating: %.3f\n", result.PrivacyMetrics.OverallPrivacyRating)
-		fmt.Printf("   🛡️ Defense Metrics:\n")
+		fmt.Printf("   🛡️ Defense metrics reported by the engine (no attack is run):\n")
 		fmt.Printf("      TabPFN Resistance: %.3f\n", result.DefenseMetrics.TabPFNResistance)
 		fmt.Printf("      Local Ancestry Resistance: %.3f\n", result.DefenseMetrics.LocalAncestryResistance)
 		fmt.Printf("      HaploNet Resistance: %.3f\n", result.DefenseMetrics.HaploNetResistance)
 		fmt.Printf("      Overall Defense Rating: %.3f\n", result.DefenseMetrics.OverallDefenseRating)
 	}
 
-	// Test 8: Cross-Platform Bias Correction Application
-	fmt.Println("\n8️⃣ Testing Cross-Platform Bias Correction Application...")
-	
-	// Create test data for multiple platforms
+	// Test 8: cross-platform bias correction
+	fmt.Println("\n8️⃣ Running cross-platform bias correction on synthetic vectors...")
+
+	// Synthetic per-platform vectors (see generateTestData).
 	testData := map[genomics.SequencingPlatform][]float64{
-		genomics.NovaSeq6000:   generateTestData(1000, 0.001),  // Low error rate
-		genomics.PacBioRevio:   generateTestData(1000, 0.005),  // Improved HiFi rate
-		genomics.PromethION24:  generateTestData(1000, 0.010),  // Improved R10 rate
-		genomics.ElementAVITI:  generateTestData(1000, 0.0015), // Novel chemistry
+		genomics.NovaSeq6000:  generateTestData(1000, 0.001),
+		genomics.PacBioRevio:  generateTestData(1000, 0.005),
+		genomics.PromethION24: generateTestData(1000, 0.010),
+		genomics.ElementAVITI: generateTestData(1000, 0.0015),
 	}
-	
+
 	correctionResult, err := biasCorrector.CorrectCrossPlatformBias(testData, population.CEU)
 	if err != nil {
 		fmt.Printf("   ⚠️  Cross-platform bias correction encountered issues: %v\n", err)
 	} else {
-		fmt.Printf("   ✅ Cross-platform bias correction completed successfully\n")
+		fmt.Printf("   ✅ Cross-platform bias correction completed\n")
 		fmt.Printf("   📊 Correction Quality: %.3f\n", correctionResult.OverallQuality)
-		fmt.Printf("   🎯 Statistical Indistinguishability: %.3f\n", correctionResult.StatisticalIndistinguishability)
+		fmt.Printf("   🎯 StatisticalIndistinguishability field: %.3f\n", correctionResult.StatisticalIndistinguishability)
 		fmt.Printf("   📈 Bias Reduction Score: %.3f\n", correctionResult.BiasReductionScore)
 	}
 
-	// Test 9: Research Integration Summary
-	fmt.Println("\n9️⃣ Research Integration Summary...")
-	
-	integrationScore := calculateIntegrationScore()
-	fmt.Printf("   📚 2024-2025 Research Integration Score: %.1f/100\n", integrationScore)
-	
-	fmt.Printf("   \n🔬 INTEGRATED RESEARCH AREAS:\n")
-	fmt.Printf("   ✅ Differential Privacy (DPGAN, PATEGAN)\n")
-	fmt.Printf("   ✅ Adversarial Machine Learning (TabPFN, pg-gan)\n")
-	fmt.Printf("   ✅ Cross-Platform Bias Correction (BEADS, MANCIE)\n")
-	fmt.Printf("   ✅ Sequencing Technology Improvements (PacBio HiFi, ONT R10)\n")
-	fmt.Printf("   ✅ Population Genetics Privacy (Local Ancestry, HaploNet)\n")
-	fmt.Printf("   ✅ Federated Learning Privacy\n")
-	fmt.Printf("   ✅ Advanced Validation Frameworks\n")
+	// Test 9: summary
+	fmt.Println("\n9️⃣ Summary...")
 
-	// Test 10: Final Assessment and Certification
-	fmt.Println("\n🔟 Final Assessment and Future-Proofing...")
-	
+	integrationScore := calculateIntegrationScore()
+	fmt.Printf("   📚 Integration score (fixed constant, not measured): %.1f/100\n", integrationScore)
+
+	fmt.Printf("   \n🔬 RESEARCH AREAS WITH COMPONENTS IN THE CODE (labels, not validated):\n")
+	fmt.Printf("   - Differential privacy (DPGAN, PATEGAN)\n")
+	fmt.Printf("   - Adversarial machine learning (TabPFN, pg-gan)\n")
+	fmt.Printf("   - Cross-platform bias correction (BEADS, MANCIE)\n")
+	fmt.Printf("   - Sequencing technology updates (PacBio HiFi, ONT R10)\n")
+	fmt.Printf("   - Population genetics privacy (local ancestry, HaploNet)\n")
+	fmt.Printf("   - Federated learning privacy\n")
+	fmt.Printf("   - Validation frameworks\n")
+
+	// Test 10: labels derived from constants
+	fmt.Println("\n🔟 Fixed labels...")
+
 	certificationLevel := determineCertificationLevel(integrationScore)
 	threatCompliance := calculateThreatCompliance()
-	
-	fmt.Printf("   🏆 CERTIFICATION LEVEL: %s\n", certificationLevel)
-	fmt.Printf("   🛡️ THREAT MODEL COMPLIANCE:\n")
-	fmt.Printf("      State Actor Threats: %.1f%% resistant\n", threatCompliance["state_actor"]*100)
-	fmt.Printf("      Corporate Threats: %.1f%% resistant\n", threatCompliance["corporate"]*100)
-	fmt.Printf("      Academic Threats: %.1f%% resistant\n", threatCompliance["academic"]*100)
-	fmt.Printf("      Criminal Threats: %.1f%% resistant\n", threatCompliance["criminal"]*100)
+
+	fmt.Printf("   🏷️ Level label (from the constant score): %s\n", certificationLevel)
+	fmt.Printf("   🛡️ Threat-resistance values (hard-coded constants, not measured):\n")
+	fmt.Printf("      State actor: %.1f%%\n", threatCompliance["state_actor"]*100)
+	fmt.Printf("      Corporate: %.1f%%\n", threatCompliance["corporate"]*100)
+	fmt.Printf("      Academic: %.1f%%\n", threatCompliance["academic"]*100)
+	fmt.Printf("      Criminal: %.1f%%\n", threatCompliance["criminal"]*100)
 
 	// Final summary
-	fmt.Printf("\n📋 2024-2025 RESEARCH INTEGRATION ASSESSMENT\n")
+	fmt.Printf("\n📋 CHECKLIST\n")
 	fmt.Println("=" + strings.Repeat("=", 55))
+	fmt.Println("   Most items are hard-coded true; the two threshold items use the constants above.")
 
 	qualityMetrics := map[string]bool{
-		"Advanced adversarial defense system operational":      true,
-		"Cross-platform bias correction implemented":          true,
-		"Privacy-preserving genetics engine functional":       true,
-		"2025 validation framework operational":               true,
-		"Enhanced platform error modeling active":            true,
-		"Comprehensive privacy requirements supported":        true,
-		"2024-2025 research findings integrated":             true,
-		"Statistical indistinguishability target achievable": integrationScore >= 85.0,
-		"Threat model compliance satisfactory":               threatCompliance["state_actor"] >= 0.8,
-		"Future-proofing against emerging ML attacks":        true,
+		"Adversarial defense system constructed":         true,
+		"Cross-platform bias corrector constructed":      true,
+		"Privacy-preserving genetics engine constructed": true,
+		"2025 validation framework constructed":          true,
+		"Platform error signature manager constructed":   true,
+		"Privacy requirements accepted":                  true,
+		"Research components present":                    true,
+		"Constant integration score >= 85":               integrationScore >= 85.0,
+		"Constant state-actor resistance value >= 0.8":   threatCompliance["state_actor"] >= 0.8,
+		"Defense flags configured":                       true,
 	}
 
 	passedAssessments := 0
@@ -211,96 +221,88 @@ func main() {
 		fmt.Printf("   %s: %s\n", assessment, status)
 	}
 
-	fmt.Printf("\n🎯 INTEGRATION ASSESSMENT RESULTS\n")
-	fmt.Printf("   Research Integration: %d/%d assessments passed\n", passedAssessments, totalAssessments)
-	fmt.Printf("   Integration Score: %.1f/100\n", integrationScore)
-	fmt.Printf("   Certification Level: %s\n", certificationLevel)
+	fmt.Printf("\n🎯 RESULTS\n")
+	fmt.Printf("   Checklist: %d/%d items true\n", passedAssessments, totalAssessments)
+	fmt.Printf("   Integration score (constant): %.1f/100\n", integrationScore)
+	fmt.Printf("   Level label: %s\n", certificationLevel)
 
 	if passedAssessments >= totalAssessments*9/10 {
-		fmt.Printf("   🎉 2024-2025 RESEARCH INTEGRATION: SUCCESSFULLY COMPLETED\n")
-		fmt.Printf("   ✅ State-of-the-art genomic privacy and indistinguishability achieved\n")
-		fmt.Printf("   ✅ Advanced ML attack resistance implemented\n")
-		fmt.Printf("   ✅ Cross-platform bias correction operational\n")
-		fmt.Printf("   ✅ Future-proofed against emerging threats\n")
+		fmt.Printf("   ✅ Components constructed; generation and bias correction ran on synthetic inputs\n")
 	} else {
-		fmt.Printf("   ⚠️  2024-2025 RESEARCH INTEGRATION: PARTIALLY COMPLETED\n")
-		fmt.Printf("   📝 Some advanced features may need additional optimization\n")
+		fmt.Printf("   ⚠️  Some checklist items are false\n")
 	}
 
-	fmt.Printf("\n📊 STATISTICAL INDISTINGUISHABILITY STATUS\n")
+	fmt.Printf("\nNOTE\n")
 	fmt.Print("=" + strings.Repeat("=", 55) + "\n")
-	fmt.Printf("✅ Target Classification Accuracy: ~50%% (statistically indistinguishable)\n")
-	fmt.Printf("✅ Threat Resistance: State-actor level (%.1f%%)\n", threatCompliance["state_actor"]*100)
-	fmt.Printf("✅ Privacy Guarantees: Differential privacy + Federated learning\n")
-	fmt.Printf("✅ Cross-Platform Support: All 7 major sequencing technologies\n")
-	fmt.Printf("✅ Research Integration: Latest 2024-2025 findings incorporated\n")
-	
-	fmt.Printf("\n🔬 RESEARCH FOUNDATION ESTABLISHED\n")
-	fmt.Printf("📚 Comprehensive literature integration from 2024-mid 2025\n")
-	fmt.Printf("🛡️ Advanced adversarial defense capabilities\n")
-	fmt.Printf("🎯 Statistical indistinguishability across platforms achieved\n")
-	fmt.Printf("🚀 Future-proofed against emerging genomic ML attacks!\n")
+	fmt.Printf("This program does not measure real-vs-synthetic classification accuracy,\n")
+	fmt.Printf("resistance to any attack, or privacy guarantees. It checks that the\n")
+	fmt.Printf("components construct and run, and prints the values they return.\n")
 }
 
 // Helper functions
 
+// generateTestData returns size values of 0.5, with the first
+// int(errorRate*100) of every 100 raised to 0.6. Rates below 0.01 raise none.
 func generateTestData(size int, errorRate float64) []float64 {
 	data := make([]float64, size)
 	for i := range data {
-		// Generate data with specified error characteristics
 		baseValue := 0.5
 		if i%100 < int(errorRate*100) {
-			baseValue += 0.1 // Introduce errors
+			baseValue += 0.1
 		}
 		data[i] = baseValue
 	}
 	return data
 }
 
+// calculateIntegrationScore sums fixed per-area weights. It always returns
+// 100 and measures nothing.
 func calculateIntegrationScore() float64 {
-	// Calculate comprehensive integration score based on 2024-2025 research
 	components := map[string]float64{
-		"differential_privacy":      15.0, // DPGAN, PATEGAN integration
-		"adversarial_ml":            15.0, // TabPFN, pg-gan defenses
-		"cross_platform_correction": 15.0, // BEADS, MANCIE integration
-		"sequencing_improvements":   10.0, // PacBio HiFi, ONT R10 updates
-		"population_privacy":        15.0, // Local ancestry, HaploNet defenses
-		"federated_learning":        10.0, // Federated privacy techniques
-		"validation_framework":      10.0, // 2025 validation methods
-		"implementation_quality":    10.0, // Code quality and completeness
+		"differential_privacy":      15.0,
+		"adversarial_ml":            15.0,
+		"cross_platform_correction": 15.0,
+		"sequencing_improvements":   10.0,
+		"population_privacy":        15.0,
+		"federated_learning":        10.0,
+		"validation_framework":      10.0,
+		"implementation_quality":    10.0,
 	}
-	
+
 	total := 0.0
 	for _, score := range components {
 		total += score
 	}
-	
+
 	return total
 }
 
+// determineCertificationLevel maps a score to a label. The labels are names
+// only; no certification scheme exists.
 func determineCertificationLevel(score float64) string {
 	switch {
 	case score >= 95.0:
-		return "Diamond" // Highest certification
+		return "Diamond"
 	case score >= 90.0:
-		return "Platinum" // Excellent integration
+		return "Platinum"
 	case score >= 85.0:
-		return "Gold" // Very good integration
+		return "Gold"
 	case score >= 75.0:
-		return "Silver" // Good integration
+		return "Silver"
 	case score >= 65.0:
-		return "Bronze" // Basic integration
+		return "Bronze"
 	default:
-		return "None" // Insufficient integration
+		return "None"
 	}
 }
 
+// calculateThreatCompliance returns hard-coded placeholder values; nothing
+// is evaluated against any threat.
 func calculateThreatCompliance() map[string]float64 {
-	// Calculate threat model compliance scores
 	return map[string]float64{
-		"state_actor": 0.92,  // 92% resistant to state-actor level threats
-		"corporate":   0.95,  // 95% resistant to corporate threats
-		"academic":    0.97,  // 97% resistant to academic threats
-		"criminal":    0.98,  // 98% resistant to criminal threats
+		"state_actor": 0.92,
+		"corporate":   0.95,
+		"academic":    0.97,
+		"criminal":    0.98,
 	}
 }

@@ -1,3 +1,13 @@
+// Command test_population_clustering_validation runs
+// internal/population/pca_clustering_validator.py on its own (it is not
+// given the generated data), simulates haplotypes for several populations
+// with the Python haplotype simulator, and prints diversity ordering, LD
+// validation counts and a clustering "readiness" tally from variant and
+// block counts. Run it from the repository root.
+//
+// It is a one-off experiment, not part of the supported phantom-science CLI.
+// No PCA clustering of the generated sequences is performed, and some items
+// in its final assessment are hard-coded to true.
 package main
 
 import (
@@ -26,17 +36,17 @@ func main() {
 
 	// Test 1: Check PCA clustering validation dependencies
 	fmt.Println("\n1️⃣ Testing PCA Clustering Validation Framework...")
-	
+
 	clusteringScriptPath := fmt.Sprintf("%s/internal/population/pca_clustering_validator.py", projectRoot)
 	if _, err := os.Stat(clusteringScriptPath); err != nil {
 		fmt.Printf("   ❌ PCA clustering validation script not found: %s\n", clusteringScriptPath)
 	} else {
 		fmt.Printf("   ✅ PCA clustering validation script available: %s\n", clusteringScriptPath)
-		
+
 		// Test PCA clustering validation script
 		cmd := exec.Command("python3", clusteringScriptPath) // #nosec G204
 		cmd.Dir = projectRoot
-		
+
 		output, err := cmd.CombinedOutput()
 		if err != nil {
 			fmt.Printf("   ⚠️  PCA clustering validation test failed: %v\n", err)
@@ -57,12 +67,12 @@ func main() {
 	fmt.Println("\n2️⃣ Testing Sequence Generation for Clustering Analysis...")
 
 	simulator := population.NewHaplotypeSimulator(projectRoot)
-	
+
 	// Generate haplotype sequences for multiple populations
 	randomSeed := 42
 	testPopulations := []population.Population{
 		population.YRI, // African
-		population.CEU, // European  
+		population.CEU, // European
 		population.CHB, // East Asian
 		population.MXL, // Americas
 	}
@@ -74,8 +84,8 @@ func main() {
 		result, err := simulator.SimulateHaplotypes(
 			pop,
 			"chr22",
-			25,         // sample size for clustering
-			3_000_000,  // 3Mb sequence for analysis
+			25,        // sample size for clustering
+			3_000_000, // 3Mb sequence for analysis
 			&randomSeed,
 			false, // don't include matrix for clustering analysis
 		)
@@ -99,7 +109,7 @@ func main() {
 		// Calculate basic population differentiation metrics
 		diversities := make(map[population.Population]float64)
 		variantCounts := make(map[population.Population]int)
-		
+
 		for pop, result := range haplotypeResults {
 			diversities[pop] = result.Statistics.DiversityPi
 			variantCounts[pop] = result.NumVariants
@@ -112,9 +122,9 @@ func main() {
 			diversitySum += diversity
 			diversityValues = append(diversityValues, diversity)
 		}
-		
+
 		diversityMean := diversitySum / float64(len(diversities))
-		
+
 		// Calculate diversity range and coefficient of variation
 		minDiversity, maxDiversity := diversityValues[0], diversityValues[0]
 		for _, d := range diversityValues {
@@ -125,7 +135,7 @@ func main() {
 				maxDiversity = d
 			}
 		}
-		
+
 		diversityRange := maxDiversity - minDiversity
 		var diversityCV float64
 		if diversityMean > 0 {
@@ -138,15 +148,15 @@ func main() {
 		fmt.Printf("      Mean Diversity: %.6f\n", diversityMean)
 		fmt.Printf("      Diversity Range: %.6f\n", diversityRange)
 		fmt.Printf("      Diversity CV: %.3f\n", diversityCV)
-		
+
 		// Test expected diversity hierarchy (YRI > CEU > CHB)
 		yriDiversity := diversities[population.YRI]
 		ceuDiversity, hasEuropean := diversities[population.CEU]
 		chbDiversity, hasEastAsian := diversities[population.CHB]
-		
+
 		hierarchyTests := 0
 		hierarchyPassed := 0
-		
+
 		if hasEuropean {
 			hierarchyTests++
 			if yriDiversity > ceuDiversity {
@@ -156,7 +166,7 @@ func main() {
 				fmt.Printf("      ❌ African ≤ European diversity: %.6f ≤ %.6f\n", yriDiversity, ceuDiversity)
 			}
 		}
-		
+
 		if hasEastAsian {
 			hierarchyTests++
 			if yriDiversity > chbDiversity {
@@ -166,7 +176,7 @@ func main() {
 				fmt.Printf("      ❌ African ≤ East Asian diversity: %.6f ≤ %.6f\n", yriDiversity, chbDiversity)
 			}
 		}
-		
+
 		if hasEuropean && hasEastAsian {
 			hierarchyTests++
 			if ceuDiversity > chbDiversity {
@@ -176,9 +186,9 @@ func main() {
 				fmt.Printf("      ❌ European ≤ East Asian diversity: %.6f ≤ %.6f\n", ceuDiversity, chbDiversity)
 			}
 		}
-		
+
 		fmt.Printf("      🎯 Diversity Hierarchy: %d/%d tests passed\n", hierarchyPassed, hierarchyTests)
-		
+
 		if hierarchyPassed >= hierarchyTests*2/3 {
 			fmt.Printf("   ✅ Population diversity hierarchy matches expectations\n")
 		} else {
@@ -201,16 +211,16 @@ func main() {
 					passedLDTests++
 				}
 			}
-			
+
 			fmt.Printf("   📊 LD Pattern Validation: %d/%d tests passed\n", passedLDTests, totalLDTests)
-			
+
 			// Analyze LD statistics across populations
 			fmt.Printf("   📈 Cross-Population LD Analysis:\n")
 			for pop, result := range haplotypeResults {
-				fmt.Printf("      %s: Mean r²=%.6f, LD blocks=%d\n", 
+				fmt.Printf("      %s: Mean r²=%.6f, LD blocks=%d\n",
 					pop, result.Statistics.MeanRSquared, len(result.LDBlocks))
 			}
-			
+
 			if passedLDTests >= totalLDTests*3/4 {
 				fmt.Printf("   ✅ LD patterns show proper population structure\n")
 			} else {
@@ -224,13 +234,13 @@ func main() {
 
 	clusteringReadyCount := 0
 	insufficientVariants := 0
-	
+
 	for pop, result := range haplotypeResults {
 		// Assess readiness for PCA clustering analysis
-		sufficientVariants := result.NumVariants > 200  // Need enough variants for PCA
-		sufficientLDStructure := len(result.LDBlocks) > 5  // Need LD structure
-		sufficientDiversity := result.Statistics.DiversityPi > 0.00001  // Need genetic diversity
-		
+		sufficientVariants := result.NumVariants > 200                 // Need enough variants for PCA
+		sufficientLDStructure := len(result.LDBlocks) > 5              // Need LD structure
+		sufficientDiversity := result.Statistics.DiversityPi > 0.00001 // Need genetic diversity
+
 		readinessScore := 0
 		if sufficientVariants {
 			readinessScore++
@@ -243,7 +253,7 @@ func main() {
 		if sufficientDiversity {
 			readinessScore++
 		}
-		
+
 		if readinessScore >= 2 {
 			clusteringReadyCount++
 			fmt.Printf("   ✅ %s ready for clustering: %d variants, %d blocks, π=%.6f\n",
@@ -254,7 +264,7 @@ func main() {
 		}
 	}
 
-	fmt.Printf("   📊 Clustering Readiness: %d/%d populations ready\n", 
+	fmt.Printf("   📊 Clustering Readiness: %d/%d populations ready\n",
 		clusteringReadyCount, len(haplotypeResults))
 
 	if clusteringReadyCount >= len(haplotypeResults)*3/4 {
@@ -282,7 +292,7 @@ func main() {
 				break
 			}
 		}
-		
+
 		if continentReady {
 			continentsRepresented++
 			fmt.Printf("   ✅ %s populations represented for clustering\n", continent)
@@ -291,7 +301,7 @@ func main() {
 		}
 	}
 
-	fmt.Printf("   🌍 Continental Representation: %d/%d continents ready\n", 
+	fmt.Printf("   🌍 Continental Representation: %d/%d continents ready\n",
 		continentsRepresented, len(continentalGroups))
 
 	if continentsRepresented >= 3 {
@@ -306,14 +316,14 @@ func main() {
 
 	// Quality metrics
 	qualityMetrics := map[string]bool{
-		"PCA clustering validation framework available":    true, // Scripts created
-		"Sequence generation operational":                  len(haplotypeResults) >= 3,
-		"Population differentiation detected":              len(haplotypeResults) >= 3,
-		"LD structure analysis functional":                 clusteringReadyCount >= 2,
-		"Continental groups represented":                   continentsRepresented >= 3,
-		"Clustering readiness achieved":                    clusteringReadyCount >= len(haplotypeResults)*2/3,
-		"Population diversity hierarchy established":       true, // Framework tested
-		"Phase 2 Week 6 foundation complete":              true, // Core functionality ready
+		"PCA clustering framework (not checked)":                        true,
+		"Sequence generation (>= 3 populations simulated)":              len(haplotypeResults) >= 3,
+		"Population differentiation (only checks >= 3 populations)":     len(haplotypeResults) >= 3,
+		"LD structure (>= 2 populations clustering-ready)":              clusteringReadyCount >= 2,
+		"Continental groups represented":                                continentsRepresented >= 3,
+		"Clustering readiness (>= 2/3 of populations)":                  clusteringReadyCount >= len(haplotypeResults)*2/3,
+		"Population diversity hierarchy (not checked here; see step 3)": true,
+		"Phase 2 Week 6 foundation (not checked)":                       true,
 	}
 
 	passedQuality := 0
@@ -331,35 +341,11 @@ func main() {
 
 	// Final assessment
 	fmt.Printf("\n🎯 PHASE 2 WEEK 6 COMPLETION ASSESSMENT\n")
-	fmt.Printf("   Clustering Validation Quality: %d/%d tests passed\n", passedQuality, totalQuality)
+	fmt.Printf("   Clustering Validation Quality: %d/%d checks true (3 of them hard-coded)\n", passedQuality, totalQuality)
 
 	if passedQuality >= totalQuality*3/4 {
-		fmt.Printf("   🎉 PHASE 2 WEEK 6: SUCCESSFULLY COMPLETED\n")
-		fmt.Printf("   ✅ PCA clustering validation framework implemented\n")
-		fmt.Printf("   ✅ Population structure analysis operational\n")
-		fmt.Printf("   ✅ Continental grouping validation ready\n")
+		fmt.Printf("   Most checks true; no PCA clustering of generated sequences was performed\n")
 	} else {
-		fmt.Printf("   ⚠️  PHASE 2 WEEK 6: PARTIALLY COMPLETED\n")
-		fmt.Printf("   📝 Core frameworks ready, sequence optimization may be needed\n")
+		fmt.Printf("   ⚠️  Several checks failed; see above\n")
 	}
-
-	// Summary and next steps
-	fmt.Printf("\n📊 POPULATION CLUSTERING VALIDATION SUMMARY\n")
-	fmt.Print("=" + strings.Repeat("=", 50) + "\n")
-	fmt.Printf("✅ PCA Clustering Framework: Complete clustering pattern validation with known genetics\n")
-	fmt.Printf("✅ Population Differentiation: Cross-population diversity and structure analysis\n")
-	fmt.Printf("✅ Continental Grouping: African, European, East Asian, Americas classification\n")
-	fmt.Printf("✅ Statistical Testing: Comprehensive validation with literature benchmarks\n")
-	fmt.Printf("✅ Sequence Integration: Seamless connection with haplotype simulation\n")
-	fmt.Printf("✅ LD Structure Analysis: Linkage disequilibrium patterns for clustering validation\n")
-	
-	fmt.Printf("\n🔬 CLUSTERING VALIDATION CAPABILITIES\n")
-	fmt.Printf("📊 PCA Analysis: Principal component clustering with continental separation\n")
-	fmt.Printf("🎯 Clustering Accuracy: Population assignment and silhouette scoring\n")
-	fmt.Printf("🌍 Continental Patterns: Expected neighbor relationships and hierarchy validation\n")
-	fmt.Printf("✅ Statistical Framework: Permutation testing and multivariate analysis\n")
-
-	fmt.Printf("\n🎯 PHASE 2 WEEK 6 IMPLEMENTATION: COMPLETE\n")
-	fmt.Printf("Ready for Week 7: Multi-Platform Quality Modeling Extension\n")
-	fmt.Printf("🚀 Advanced PCA clustering validation foundation established!\n")
 }

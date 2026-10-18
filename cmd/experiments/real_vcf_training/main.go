@@ -1,3 +1,13 @@
+// Command real_vcf_training streams every *.vcf.gz under the hard-coded
+// directory /Volumes/Public/genomics_training/populations into one k=4
+// adaptive HMM, then generates five 50 kb sequences and prints their
+// complexity and GC content along with bytes, variants and throughput.
+//
+// It is a one-off experiment, not part of the supported phantom-science CLI.
+// The training input is the REF and ALT alleles of each record concatenated
+// into 100 kB chunks, not reference sequence, so the model learns no genomic
+// context. The "improvement" factor is relative to an assumed 0.005
+// baseline, not a measured one.
 package main
 
 import (
@@ -18,24 +28,24 @@ import (
 
 func main() {
 	log.SetFlags(log.LstdFlags)
-	
+
 	fmt.Println("=== REAL VCF TRAINING ===")
 	fmt.Println("Actually reading and processing real VCF files")
 	fmt.Println("This will take significant time with real I/O and parsing")
-	
+
 	totalCores := runtime.NumCPU()
 	perfCores := detectAppleSiliconCores()
-	fmt.Printf("🍎 Apple Silicon: %d total cores (%d P-cores + %d E-cores)\n", 
+	fmt.Printf("🍎 Apple Silicon: %d total cores (%d P-cores + %d E-cores)\n",
 		totalCores, perfCores, totalCores-perfCores)
 	fmt.Printf("⚡ Using %d P-cores for I/O intensive VCF processing\n", perfCores)
 	fmt.Println()
 
 	runtime.GOMAXPROCS(perfCores)
-	
+
 	// Configuration
 	populationDir := "/Volumes/Public/genomics_training/populations"
 	progressDir := "real_vcf_progress"
-	
+
 	// Create progress directory
 	if err := os.MkdirAll(progressDir, 0750); err != nil {
 		log.Fatalf("Failed to create progress directory: %v", err)
@@ -45,11 +55,11 @@ func main() {
 	if _, err := os.Stat(populationDir); os.IsNotExist(err) {
 		log.Fatalf("1000 Genomes dataset not found: %s", populationDir)
 	}
-	
+
 	// Count VCF files
 	vcfCount := countVCFFiles(populationDir)
 	fmt.Printf("📊 Found %d VCF files to process\n", vcfCount)
-	fmt.Printf("📊 Expected processing time: 2-6 hours (real I/O)\n")
+	fmt.Printf("📊 Processing time depends on dataset size and disk speed\n")
 	fmt.Printf("🔥 Each VCF file will be read and parsed completely\n")
 	fmt.Println()
 
@@ -69,7 +79,7 @@ func main() {
 	start := time.Now()
 	totalBytes, totalVariants := processRealVCFFiles(model, populationDir, perfCores)
 	duration := time.Since(start)
-	
+
 	fmt.Printf("✅ REAL VCF PROCESSING COMPLETED!\n")
 	fmt.Printf("✅ Processing time: %v\n", duration)
 	fmt.Printf("✅ Data processed: %s\n", formatBytes(totalBytes))
@@ -86,22 +96,22 @@ func main() {
 	fmt.Printf("✅ Generated %d validation sequences\n", len(sequences))
 	fmt.Println()
 
-	// Calculate authenticity metrics
-	fmt.Println("[STEP 4] Calculating authenticity metrics...")
+	// Summary statistics of the generated sequences
+	fmt.Println("[STEP 4] Calculating sequence statistics...")
 	complexity := calculateComplexity(sequences)
 	gcContent := calculateGCContent(sequences)
-	
-	fmt.Printf("📊 AUTHENTICITY RESULTS:\n")
+
+	fmt.Printf("📊 SEQUENCE STATISTICS:\n")
 	fmt.Printf("  Complexity: %.4f", complexity)
 	if complexity > 0.05 {
-		fmt.Printf(" (%.1fx improvement) ✅", complexity/0.005)
+		fmt.Printf(" (%.1fx an assumed 0.005 baseline) ✅", complexity/0.005)
 	} else if complexity > 0.01 {
-		fmt.Printf(" (%.1fx improvement) 🟡", complexity/0.005)
+		fmt.Printf(" (%.1fx an assumed 0.005 baseline) 🟡", complexity/0.005)
 	} else {
 		fmt.Print(" ❌")
 	}
 	fmt.Println()
-	
+
 	fmt.Printf("  GC Content: %.2f%%", gcContent*100)
 	if gcContent >= 0.40 && gcContent <= 0.44 {
 		fmt.Print(" ✅")
@@ -116,19 +126,18 @@ func main() {
 	// Final results
 	fmt.Println("🎉 REAL VCF TRAINING RESULTS:")
 	fmt.Println("=============================")
-	fmt.Printf("Training Method:     Real VCF Processing + Apple Silicon\n")
-	fmt.Printf("Data Processed:      %s real genomic data\n", formatBytes(totalBytes))
+	fmt.Printf("Training Method:     VCF REF+ALT alleles, concatenated\n")
+	fmt.Printf("Data Processed:      %s of compressed VCF\n", formatBytes(totalBytes))
 	fmt.Printf("Processing Time:     %v\n", duration)
 	fmt.Printf("Throughput:          %.2f MB/s\n", float64(totalBytes)/duration.Seconds()/1024/1024)
-	fmt.Printf("Variants Processed:  %d real genomic variants\n", totalVariants)
+	fmt.Printf("Variants Processed:  %d VCF records\n", totalVariants)
 	fmt.Printf("Apple Silicon:       %d P-cores utilized\n", perfCores)
 	fmt.Printf("Complexity:          %.4f\n", complexity)
 	fmt.Printf("GC Content:          %.2f%%\n", gcContent*100)
-	
+
 	fmt.Println()
 	fmt.Printf("📊 Results saved in: %s/\n", progressDir)
 	fmt.Printf("🏁 REAL VCF TRAINING COMPLETE IN %v\n", duration)
-	fmt.Printf("🔬 Processed actual genomic variants from 1000 Genomes Project\n")
 }
 
 func countVCFFiles(populationDir string) int {
@@ -141,83 +150,83 @@ func countVCFFiles(populationDir string) int {
 
 func processRealVCFFiles(model *authenticity.AdaptiveHMMModel, populationDir string, numCores int) (int64, int64) {
 	populations := []string{"YRI", "LWK", "GWD", "CEU", "GBR", "TSI", "CHB", "JPT", "CHS", "MXL", "PUR"}
-	
+
 	var totalBytes int64
 	var totalVariants int64
 	var wg sync.WaitGroup
-	
+
 	fmt.Printf("🔥 Starting real VCF processing with %d P-cores\n", numCores)
-	
+
 	// Process populations with limited concurrency to avoid overwhelming I/O
 	semaphore := make(chan struct{}, 2) // Limit to 2 concurrent populations
-	
+
 	for _, pop := range populations {
 		popDir := filepath.Join(populationDir, pop)
 		if _, err := os.Stat(popDir); os.IsNotExist(err) {
 			fmt.Printf("⚠ Population %s not found, skipping\n", pop)
 			continue
 		}
-		
+
 		wg.Add(1)
 		go func(population string) {
 			defer wg.Done()
-			
-			semaphore <- struct{}{} // Acquire
+
+			semaphore <- struct{}{}        // Acquire
 			defer func() { <-semaphore }() // Release
-			
+
 			bytes, variants := processPopulationVCFs(model, population, populationDir, numCores)
 			atomic.AddInt64(&totalBytes, bytes)
 			atomic.AddInt64(&totalVariants, variants)
-			
-			fmt.Printf("✅ Population %s complete: %s processed, %d variants\n", 
+
+			fmt.Printf("✅ Population %s complete: %s processed, %d variants\n",
 				population, formatBytes(bytes), variants)
 		}(pop)
 	}
-	
+
 	wg.Wait()
-	
+
 	return totalBytes, totalVariants
 }
 
 func processPopulationVCFs(model *authenticity.AdaptiveHMMModel, pop, populationDir string, numCores int) (int64, int64) {
 	popDir := filepath.Join(populationDir, pop)
 	fmt.Printf("🧬 Processing population %s (real VCF files)...\n", pop)
-	
+
 	// Get all VCF files for this population
 	vcfFiles, err := filepath.Glob(filepath.Join(popDir, "*.vcf.gz"))
 	if err != nil {
 		fmt.Printf("⚠ Error finding VCF files for %s: %v\n", pop, err)
 		return 0, 0
 	}
-	
+
 	var totalBytes int64
 	var totalVariants int64
 	var wg sync.WaitGroup
-	
+
 	// Process VCF files with limited concurrency for I/O
 	semaphore := make(chan struct{}, 4) // Limit concurrent file processing
-	
+
 	for _, vcfFile := range vcfFiles {
 		wg.Add(1)
 		go func(file string) {
 			defer wg.Done()
-			
-			semaphore <- struct{}{} // Acquire
+
+			semaphore <- struct{}{}        // Acquire
 			defer func() { <-semaphore }() // Release
-			
+
 			bytes, variants := processRealVCFFile(model, file, pop)
 			atomic.AddInt64(&totalBytes, bytes)
 			atomic.AddInt64(&totalVariants, variants)
-			
+
 			if variants > 0 {
-				fmt.Printf("  📄 %s: %s, %d variants\n", 
+				fmt.Printf("  📄 %s: %s, %d variants\n",
 					filepath.Base(file), formatBytes(bytes), variants)
 			}
 		}(vcfFile)
 	}
-	
+
 	wg.Wait()
-	
+
 	return totalBytes, totalVariants
 }
 
@@ -229,7 +238,7 @@ func processRealVCFFile(model *authenticity.AdaptiveHMMModel, vcfFile, pop strin
 		return 0, 0
 	}
 	defer file.Close()
-	
+
 	// Get file size
 	stat, err := file.Stat()
 	if err != nil {
@@ -237,7 +246,7 @@ func processRealVCFFile(model *authenticity.AdaptiveHMMModel, vcfFile, pop strin
 		return 0, 0
 	}
 	fileSize := stat.Size()
-	
+
 	// Create gzip reader
 	gzipReader, err := gzip.NewReader(file)
 	if err != nil {
@@ -245,40 +254,40 @@ func processRealVCFFile(model *authenticity.AdaptiveHMMModel, vcfFile, pop strin
 		return 0, 0
 	}
 	defer gzipReader.Close()
-	
+
 	// Read and process the VCF file
 	scanner := bufio.NewScanner(gzipReader)
 	buf := make([]byte, 0, 64*1024)
 	scanner.Buffer(buf, 1024*1024) // 1MB buffer
-	
+
 	var variantCount int64
 	var sequenceBuilder strings.Builder
-	
+
 	for scanner.Scan() {
 		line := scanner.Text()
-		
+
 		// Skip header lines
 		if strings.HasPrefix(line, "#") {
 			continue
 		}
-		
+
 		// Parse VCF line
 		fields := strings.Split(line, "\t")
 		if len(fields) < 5 {
 			continue
 		}
-		
+
 		// Extract reference and alternate alleles
 		ref := fields[3]
 		alt := fields[4]
-		
+
 		// Add sequences to our training data
 		if len(ref) > 0 && len(alt) > 0 {
 			sequenceBuilder.WriteString(ref)
 			sequenceBuilder.WriteString(alt)
 			variantCount++
 		}
-		
+
 		// Process accumulated sequence when we have enough data
 		if sequenceBuilder.Len() > 100000 { // 100KB chunks
 			sequence := sequenceBuilder.String()
@@ -288,7 +297,7 @@ func processRealVCFFile(model *authenticity.AdaptiveHMMModel, vcfFile, pop strin
 			sequenceBuilder.Reset()
 		}
 	}
-	
+
 	// Process any remaining sequence
 	if sequenceBuilder.Len() > 0 {
 		sequence := sequenceBuilder.String()
@@ -296,17 +305,17 @@ func processRealVCFFile(model *authenticity.AdaptiveHMMModel, vcfFile, pop strin
 			fmt.Printf("⚠ Error training on final sequence from %s: %v\n", vcfFile, err)
 		}
 	}
-	
+
 	if err := scanner.Err(); err != nil {
 		fmt.Printf("⚠ Error reading %s: %v\n", vcfFile, err)
 	}
-	
+
 	return fileSize, variantCount
 }
 
 func generateValidationSequences(model *authenticity.AdaptiveHMMModel, numSequences, length int) ([][]byte, error) {
 	sequences := make([][]byte, numSequences)
-	
+
 	for i := 0; i < numSequences; i++ {
 		result, err := model.GenerateSequence(length)
 		if err != nil {
@@ -314,7 +323,7 @@ func generateValidationSequences(model *authenticity.AdaptiveHMMModel, numSequen
 		}
 		sequences[i] = result.Sequence
 	}
-	
+
 	return sequences, nil
 }
 
@@ -322,24 +331,24 @@ func calculateComplexity(sequences [][]byte) float64 {
 	if len(sequences) == 0 {
 		return 0
 	}
-	
+
 	totalComplexity := 0.0
 	for _, seq := range sequences {
 		k := 4
 		if len(seq) < k {
 			continue
 		}
-		
+
 		uniqueKmers := make(map[string]bool)
 		for i := 0; i <= len(seq)-k; i++ {
 			kmer := string(seq[i : i+k])
 			uniqueKmers[kmer] = true
 		}
-		
+
 		complexity := float64(len(uniqueKmers)) / float64(len(seq)-k+1)
 		totalComplexity += complexity
 	}
-	
+
 	return totalComplexity / float64(len(sequences))
 }
 
@@ -347,24 +356,24 @@ func calculateGCContent(sequences [][]byte) float64 {
 	if len(sequences) == 0 {
 		return 0
 	}
-	
+
 	totalGC := 0.0
 	for _, seq := range sequences {
 		if len(seq) == 0 {
 			continue
 		}
-		
+
 		gcCount := 0
 		for _, base := range seq {
 			if base == 'G' || base == 'C' {
 				gcCount++
 			}
 		}
-		
+
 		gc := float64(gcCount) / float64(len(seq))
 		totalGC += gc
 	}
-	
+
 	return totalGC / float64(len(sequences))
 }
 
@@ -383,10 +392,10 @@ func formatBytes(bytes int64) string {
 
 func detectAppleSiliconCores() int {
 	totalCores := runtime.NumCPU()
-	
+
 	if totalCores >= 8 {
 		switch totalCores {
-		case 8:  // M1: 4P + 4E
+		case 8: // M1: 4P + 4E
 			return 4
 		case 10: // M1 Pro: 6P + 4E
 			return 6
@@ -402,11 +411,11 @@ func detectAppleSiliconCores() int {
 			return (totalCores * 2) / 3
 		}
 	}
-	
+
 	if totalCores > 4 {
 		return totalCores - 2
 	}
-	
+
 	return totalCores
 }
 

@@ -157,7 +157,6 @@ func TestSaveFinalResults_ZeroValues_HPT(t *testing.T) {
 // by calling saveFinalResults with a nonexistent parent directory.
 func TestSaveFinalResults_WriteError_HPT(t *testing.T) {
 	// Use a path inside a directory that doesn't exist
-	saveFinalResults("/nonexistent/dir/progress", 1*time.Second, 0.06, 0.42, 0.005, "PRODUCTION_READY")
+	saveFinalResults("/nonexistent/dir/progress", 1*time.Second, 0.06, 0.42, 0.005, "TARGETS_MET")
 	// Should not panic; the error is logged via fmt.Printf
 }
-

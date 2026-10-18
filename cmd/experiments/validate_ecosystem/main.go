@@ -1,3 +1,10 @@
+// Command validate_ecosystem is a flag-driven wrapper around
+// tools.GenomicsEcosystemValidator: it loads (or writes a default)
+// ecosystem_validation.json, runs the validator, and writes the detailed
+// report plus a text summary to the output directory. How much each mode
+// actually checks is determined by internal/genomics/tools, not here.
+//
+// It is a one-off experiment, not part of the supported phantom-science CLI.
 package main
 
 import (
@@ -18,95 +25,95 @@ import (
 type EcosystemValidationConfig struct {
 	// Tool paths
 	ToolPaths map[string]string `json:"tool_paths"`
-	
+
 	// Test data configuration
-	TestDataPath    string `json:"test_data_path"`
-	ReferencePath   string `json:"reference_path"`
-	
+	TestDataPath  string `json:"test_data_path"`
+	ReferencePath string `json:"reference_path"`
+
 	// Validation settings
-	ValidationModes   []string `json:"validation_modes"`
-	PopulationPanels  []string `json:"population_panels"`
-	PlatformTargets   []string `json:"platform_targets"`
-	
+	ValidationModes  []string `json:"validation_modes"`
+	PopulationPanels []string `json:"population_panels"`
+	PlatformTargets  []string `json:"platform_targets"`
+
 	// Performance settings
 	MaxConcurrentJobs int           `json:"max_concurrent_jobs"`
 	TimeoutDuration   time.Duration `json:"timeout_duration"`
-	
+
 	// Resource limits
 	MaxMemoryGB      int           `json:"max_memory_gb"`
 	MaxCPUCores      int           `json:"max_cpu_cores"`
 	MaxDiskSpaceGB   int           `json:"max_disk_space_gb"`
 	MaxExecutionTime time.Duration `json:"max_execution_time"`
-	
+
 	// Quality thresholds
-	MinAccuracy        float64 `json:"min_accuracy"`
-	MaxFalsePositive   float64 `json:"max_false_positive"`
-	MaxFalseNegative   float64 `json:"max_false_negative"`
-	MinCoverage        int     `json:"min_coverage"`
-	MaxContamination   float64 `json:"max_contamination"`
-	MinMappingQuality  int     `json:"min_mapping_quality"`
-	
+	MinAccuracy       float64 `json:"min_accuracy"`
+	MaxFalsePositive  float64 `json:"max_false_positive"`
+	MaxFalseNegative  float64 `json:"max_false_negative"`
+	MinCoverage       int     `json:"min_coverage"`
+	MaxContamination  float64 `json:"max_contamination"`
+	MinMappingQuality int     `json:"min_mapping_quality"`
+
 	// Cloud configuration
 	CloudProvider    string            `json:"cloud_provider"`
 	CloudRegion      string            `json:"cloud_region"`
 	CloudCredentials map[string]string `json:"cloud_credentials"`
-	
+
 	// Output settings
-	ReportPath       string `json:"report_path"`
+	ReportPath        string `json:"report_path"`
 	DetailedReporting bool   `json:"detailed_reporting"`
-	JSONOutput       bool   `json:"json_output"`
+	JSONOutput        bool   `json:"json_output"`
 }
 
 var (
-	configFile    = flag.String("config", "ecosystem_validation.json", "Configuration file path")
-	outputDir     = flag.String("output", "./ecosystem_validation_output", "Output directory for reports")
+	configFile     = flag.String("config", "ecosystem_validation.json", "Configuration file path")
+	outputDir      = flag.String("output", "./ecosystem_validation_output", "Output directory for reports")
 	validationMode = flag.String("mode", "all", "Validation mode: basic,performance,population,workflow,realtime,cloud,all")
-	toolsPath     = flag.String("tools", "", "Comma-separated tool paths (tool:path)")
-	testDataPath  = flag.String("testdata", "./test_data", "Test data directory")
-	referencePath = flag.String("reference", "./reference", "Reference genome directory")
-	skipCloud     = flag.Bool("skip-cloud", false, "Skip cloud deployment validation")
-	verbose       = flag.Bool("verbose", false, "Enable verbose logging")
-	dryRun        = flag.Bool("dry-run", false, "Perform dry run without actual execution")
+	toolsPath      = flag.String("tools", "", "Comma-separated tool paths (tool:path)")
+	testDataPath   = flag.String("testdata", "./test_data", "Test data directory")
+	referencePath  = flag.String("reference", "./reference", "Reference genome directory")
+	skipCloud      = flag.Bool("skip-cloud", false, "Skip cloud deployment validation")
+	verbose        = flag.Bool("verbose", false, "Enable verbose logging")
+	dryRun         = flag.Bool("dry-run", false, "Perform dry run without actual execution")
 )
 
 func main() {
 	flag.Parse()
-	
+
 	if *verbose {
 		log.Println("🔬 Phantom Science Genomics Ecosystem Validator")
 		log.Println("================================================")
 	}
-	
+
 	// Load configuration
 	config, err := loadConfiguration(*configFile)
 	if err != nil {
 		log.Fatalf("Failed to load configuration: %v", err)
 	}
-	
+
 	// Override configuration with command-line flags
 	overrideConfigWithFlags(config)
-	
+
 	// Validate configuration
 	if err := validateConfig(config); err != nil {
 		log.Fatalf("Configuration validation failed: %v", err)
 	}
-	
+
 	if *dryRun {
 		log.Println("🧪 Dry run mode - configuration validated successfully")
 		printConfiguration(config)
 		return
 	}
-	
+
 	// Create output directory
 	if err := os.MkdirAll(*outputDir, 0750); err != nil {
 		log.Fatalf("Failed to create output directory: %v", err)
 	}
-	
+
 	// Execute ecosystem validation
 	if err := executeEcosystemValidation(config); err != nil {
 		log.Fatalf("Ecosystem validation failed: %v", err)
 	}
-	
+
 	log.Println("✅ Ecosystem validation completed successfully!")
 }
 
@@ -117,30 +124,30 @@ func loadConfiguration(configPath string) (*EcosystemValidationConfig, error) {
 		if *verbose {
 			log.Printf("Configuration file not found, creating default: %s", configPath)
 		}
-		
+
 		config := createDefaultConfiguration()
-		
+
 		// Save default configuration
 		if err := saveConfiguration(config, configPath); err != nil {
 			return nil, fmt.Errorf("failed to save default configuration: %w", err)
 		}
-		
+
 		return config, nil
 	}
-	
+
 	// Load existing configuration
 	file, err := os.Open(configPath) // #nosec G304
 	if err != nil {
 		return nil, fmt.Errorf("failed to open configuration file: %w", err)
 	}
 	defer file.Close()
-	
+
 	var config EcosystemValidationConfig
 	decoder := json.NewDecoder(file)
 	if err := decoder.Decode(&config); err != nil {
 		return nil, fmt.Errorf("failed to parse configuration: %w", err)
 	}
-	
+
 	return &config, nil
 }
 
@@ -190,7 +197,7 @@ func saveConfiguration(config *EcosystemValidationConfig, configPath string) err
 		return err
 	}
 	defer file.Close()
-	
+
 	encoder := json.NewEncoder(file)
 	encoder.SetIndent("", "  ")
 	return encoder.Encode(config)
@@ -201,11 +208,11 @@ func overrideConfigWithFlags(config *EcosystemValidationConfig) {
 	if *testDataPath != "./test_data" {
 		config.TestDataPath = *testDataPath
 	}
-	
+
 	if *referencePath != "./reference" {
 		config.ReferencePath = *referencePath
 	}
-	
+
 	if *toolsPath != "" {
 		toolPairs := strings.Split(*toolsPath, ",")
 		for _, pair := range toolPairs {
@@ -215,16 +222,16 @@ func overrideConfigWithFlags(config *EcosystemValidationConfig) {
 			}
 		}
 	}
-	
+
 	if *validationMode != "all" {
 		modes := strings.Split(*validationMode, ",")
 		config.ValidationModes = modes
 	}
-	
+
 	if *skipCloud {
 		config.CloudProvider = ""
 	}
-	
+
 	// Set output path
 	config.ReportPath = filepath.Join(*outputDir, "ecosystem_validation_report.json")
 }
@@ -234,31 +241,31 @@ func validateConfig(config *EcosystemValidationConfig) error {
 	if config.TestDataPath == "" {
 		return fmt.Errorf("test data path is required")
 	}
-	
+
 	if config.ReferencePath == "" {
 		return fmt.Errorf("reference path is required")
 	}
-	
+
 	if len(config.ToolPaths) == 0 {
 		return fmt.Errorf("at least one tool path must be specified")
 	}
-	
+
 	if len(config.ValidationModes) == 0 {
 		return fmt.Errorf("at least one validation mode must be specified")
 	}
-	
+
 	// Validate validation modes
 	validModes := map[string]bool{
 		"basic": true, "performance": true, "population": true,
 		"workflow": true, "realtime": true, "cloud": true, "all": true,
 	}
-	
+
 	for _, mode := range config.ValidationModes {
 		if !validModes[mode] {
 			return fmt.Errorf("invalid validation mode: %s", mode)
 		}
 	}
-	
+
 	return nil
 }
 
@@ -273,12 +280,12 @@ func printConfiguration(config *EcosystemValidationConfig) {
 	fmt.Printf("Platform Targets: %v\n", config.PlatformTargets)
 	fmt.Printf("Max Concurrent Jobs: %d\n", config.MaxConcurrentJobs)
 	fmt.Printf("Timeout Duration: %v\n", config.TimeoutDuration)
-	
+
 	fmt.Println("\n🔧 Tool Paths:")
 	for tool, path := range config.ToolPaths {
 		fmt.Printf("  %s: %s\n", tool, path)
 	}
-	
+
 	fmt.Printf("\nReport Path: %s\n", config.ReportPath)
 }
 
@@ -288,42 +295,42 @@ func executeEcosystemValidation(config *EcosystemValidationConfig) error {
 		log.Println("🚀 Starting ecosystem validation...")
 		printConfiguration(config)
 	}
-	
+
 	// Convert configuration to ecosystem config
 	ecosystemConfig := convertToEcosystemConfig(config)
-	
+
 	// Create ecosystem validator
 	validator, err := tools.NewGenomicsEcosystemValidator(ecosystemConfig)
 	if err != nil {
 		return fmt.Errorf("failed to create ecosystem validator: %w", err)
 	}
-	
+
 	// Execute validation
 	ctx, cancel := context.WithTimeout(context.Background(), config.TimeoutDuration)
 	defer cancel()
-	
+
 	if *verbose {
 		log.Println("🔍 Executing comprehensive ecosystem validation...")
 	}
-	
+
 	report, err := validator.ValidateEcosystem(ctx)
 	if err != nil {
 		return fmt.Errorf("ecosystem validation failed: %w", err)
 	}
-	
+
 	// Save detailed report
 	if err := validator.SaveValidationReport(report, config.ReportPath); err != nil {
 		return fmt.Errorf("failed to save validation report: %w", err)
 	}
-	
+
 	// Generate summary report
 	if err := generateSummaryReport(report, *outputDir); err != nil {
 		return fmt.Errorf("failed to generate summary report: %w", err)
 	}
-	
+
 	// Print results summary
 	printValidationSummary(report)
-	
+
 	return nil
 }
 
@@ -347,7 +354,7 @@ func convertToEcosystemConfig(config *EcosystemValidationConfig) tools.Ecosystem
 			validationModes = append(validationModes, tools.ModeCloudDeployment)
 		}
 	}
-	
+
 	// If "all" was specified, include all modes
 	if contains(config.ValidationModes, "all") {
 		validationModes = []tools.ValidationMode{
@@ -357,13 +364,13 @@ func convertToEcosystemConfig(config *EcosystemValidationConfig) tools.Ecosystem
 			tools.ModeWorkflowIntegration,
 			tools.ModeRealTimeValidation,
 		}
-		
+
 		// Add cloud mode only if cloud provider is configured
 		if config.CloudProvider != "" {
 			validationModes = append(validationModes, tools.ModeCloudDeployment)
 		}
 	}
-	
+
 	return tools.EcosystemConfig{
 		ToolPaths:         config.ToolPaths,
 		TestDataPath:      config.TestDataPath,
@@ -398,13 +405,13 @@ func convertToEcosystemConfig(config *EcosystemValidationConfig) tools.Ecosystem
 // generateSummaryReport generates a human-readable summary report
 func generateSummaryReport(report *tools.EcosystemValidationReport, outputDir string) error {
 	summaryPath := filepath.Join(outputDir, "ecosystem_validation_summary.txt")
-	
+
 	file, err := os.Create(summaryPath) // #nosec G304
 	if err != nil {
 		return err
 	}
 	defer file.Close()
-	
+
 	fmt.Fprintf(file, "# Phantom Science Genomics Ecosystem Validation Summary\n\n")
 	fmt.Fprintf(file, "## Execution Details\n")
 	fmt.Fprintf(file, "- Start Time: %s\n", report.StartTime.Format(time.RFC3339))
@@ -412,7 +419,7 @@ func generateSummaryReport(report *tools.EcosystemValidationReport, outputDir st
 	fmt.Fprintf(file, "- Duration: %v\n", report.Duration)
 	fmt.Fprintf(file, "- Overall Score: %.2f/1.0\n", report.OverallAssessment.OverallScore)
 	fmt.Fprintf(file, "- Status: %s\n\n", report.OverallAssessment.Status)
-	
+
 	fmt.Fprintf(file, "## Tool Validation Results\n")
 	for toolName, result := range report.ToolResults {
 		fmt.Fprintf(file, "- %s: %s (v%s)\n", toolName, result.Status, result.Version)
@@ -420,25 +427,25 @@ func generateSummaryReport(report *tools.EcosystemValidationReport, outputDir st
 			fmt.Fprintf(file, "  Error: %s\n", result.ErrorMessage)
 		}
 	}
-	
+
 	fmt.Fprintf(file, "\n## Performance Scores\n")
 	fmt.Fprintf(file, "- Compatibility: %.2f/1.0\n", report.OverallAssessment.CompatibilityScore)
 	fmt.Fprintf(file, "- Performance: %.2f/1.0\n", report.OverallAssessment.PerformanceScore)
 	fmt.Fprintf(file, "- Scalability: %.2f/1.0\n", report.OverallAssessment.ScalabilityScore)
 	fmt.Fprintf(file, "- Reliability: %.2f/1.0\n", report.OverallAssessment.ReliabilityScore)
-	
+
 	fmt.Fprintf(file, "\n## Recommendations\n")
 	for _, recommendation := range report.OverallAssessment.Recommendations {
 		fmt.Fprintf(file, "- %s\n", recommendation)
 	}
-	
+
 	if len(report.OverallAssessment.CriticalIssues) > 0 {
 		fmt.Fprintf(file, "\n## Critical Issues\n")
 		for _, issue := range report.OverallAssessment.CriticalIssues {
 			fmt.Fprintf(file, "- %s\n", issue)
 		}
 	}
-	
+
 	return nil
 }
 
@@ -446,12 +453,12 @@ func generateSummaryReport(report *tools.EcosystemValidationReport, outputDir st
 func printValidationSummary(report *tools.EcosystemValidationReport) {
 	fmt.Println("\n🎯 Validation Summary:")
 	fmt.Println("=====================")
-	fmt.Printf("Overall Score: %.2f/1.0 (%s)\n", 
-		report.OverallAssessment.OverallScore, 
+	fmt.Printf("Overall Score: %.2f/1.0 (%s)\n",
+		report.OverallAssessment.OverallScore,
 		report.OverallAssessment.Status)
 	fmt.Printf("Duration: %v\n", report.Duration)
 	fmt.Printf("Tools Validated: %d\n", len(report.ToolResults))
-	
+
 	// Count passed/failed tools
 	passed := 0
 	failed := 0
@@ -462,17 +469,17 @@ func printValidationSummary(report *tools.EcosystemValidationReport) {
 			failed++
 		}
 	}
-	
+
 	fmt.Printf("Tools Passed: %d\n", passed)
 	fmt.Printf("Tools Failed: %d\n", failed)
-	
+
 	if len(report.OverallAssessment.Recommendations) > 0 {
 		fmt.Println("\n📋 Key Recommendations:")
 		for _, rec := range report.OverallAssessment.Recommendations {
 			fmt.Printf("- %s\n", rec)
 		}
 	}
-	
+
 	fmt.Printf("\n📊 Full Report: %s\n", *outputDir)
 }
 

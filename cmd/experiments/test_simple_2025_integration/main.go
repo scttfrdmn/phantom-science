@@ -1,3 +1,16 @@
+// Command test_simple_2025_integration constructs the platform error
+// signature manager, the cross-platform bias corrector and the
+// PrivacyPreservingGeneticsEngine, calls each once on synthetic inputs and
+// prints what they return. It then runs a Multinomial Naive Bayes 5-fold
+// cross-validation on 4-mer frequencies of two sets of i.i.d. random
+// sequences generated in this file. It reads no input files.
+//
+// It is a one-off experiment, not part of the supported phantom-science CLI.
+// The privacy engine is a mock whose metrics are constants, and the
+// classifier step compares two draws from the same random generator, not
+// phantom-science output against real reads, so its ~50% accuracy is
+// expected by construction and says nothing about realism. The "research
+// integration score" is a sum of constants.
 package main
 
 import (
@@ -14,138 +27,124 @@ func main() {
 	fmt.Println("🔬 TESTING 2024-2025 RESEARCH INTEGRATION (SIMPLIFIED)")
 	fmt.Println("=" + strings.Repeat("=", 60))
 
-	fmt.Println("\n🎯 STATISTICAL INDISTINGUISHABILITY VALIDATION")
-	fmt.Println("Integration of Latest 2024-2025 Genomic Privacy Research")
+	fmt.Println("\nExperiment: exercises experimental components once each; not a validation")
 
 	// Test 1: Enhanced Platform Error Modeling with 2024-2025 improvements
 	fmt.Println("\n1️⃣ Testing Enhanced Platform Error Modeling...")
-	
+
 	platformManager := genomics.NewPlatformErrorSignatureManager()
 	if platformManager == nil {
-		fmt.Printf("   ❌ Failed to initialize platform error signature manager\\n")
+		fmt.Printf("   ❌ Failed to initialize platform error signature manager\n")
 		return
 	}
-	fmt.Printf("   ✅ Platform error signature manager initialized successfully\\n")
-	
+	fmt.Printf("   ✅ Platform error signature manager initialized successfully\n")
+
 	// Validate 2024-2025 error rate improvements
-	fmt.Printf("   📊 2024-2025 Error Rate Improvements:\\n")
-	
+	fmt.Printf("   📊 Configured error signatures:\n")
+
 	// Check all platforms
 	platforms := []genomics.SequencingPlatform{
 		genomics.NovaSeq6000, genomics.NextSeq2000, genomics.MiSeq,
-		genomics.PacBioRevio, genomics.DNBSeqT20x2, 
+		genomics.PacBioRevio, genomics.DNBSeqT20x2,
 		genomics.ElementAVITI, genomics.PromethION24,
 	}
-	
+
 	platformCount := 0
 	for _, platform := range platforms {
 		signature := platformManager.GetErrorSignature(platform)
 		if signature != nil {
 			platformCount++
-			fmt.Printf("      ✅ %s: Signature configured\\n", platform)
+			fmt.Printf("      ✅ %s: Signature configured\n", platform)
 		}
 	}
-	
+
 	if platformCount == 7 {
-		fmt.Printf("   🎉 All 7 sequencing platforms with 2024-2025 improvements\\n")
+		fmt.Printf("   All 7 platforms have an error signature configured\n")
 	}
 
 	// Test 2: Cross-Platform Bias Correction Framework
 	fmt.Println("\n2️⃣ Testing Cross-Platform Bias Correction Framework...")
-	
+
 	biasCorrector := genomics.NewCrossPlatformBiasCorrector()
 	if biasCorrector == nil {
-		fmt.Printf("   ❌ Failed to initialize cross-platform bias corrector\\n")
+		fmt.Printf("   ❌ Failed to initialize cross-platform bias corrector\n")
 		return
 	}
-	fmt.Printf("   ✅ Cross-platform bias corrector initialized successfully\\n")
-	fmt.Printf("   🔬 2024 Research Integration: BEADS, MANCIE, Quantile Normalization\\n")
+	fmt.Printf("   ✅ Cross-platform bias corrector initialized successfully\n")
+	fmt.Printf("   🔬 Components named after BEADS, MANCIE and quantile normalization\n")
 
 	// Test 3: Privacy-Preserving Genetics Engine
 	fmt.Println("\n3️⃣ Testing Privacy-Preserving Genetics Engine...")
-	
+
 	privacyEngine := population.NewPrivacyPreservingGeneticsEngine()
 	if privacyEngine == nil {
-		fmt.Printf("   ❌ Failed to initialize privacy-preserving genetics engine\\n")
+		fmt.Printf("   ❌ Failed to initialize privacy-preserving genetics engine\n")
 		return
 	}
-	fmt.Printf("   ✅ Privacy-preserving genetics engine initialized successfully\\n")
-	fmt.Printf("   🛡️ 2024-2025 Privacy Techniques: DPGAN, PATEGAN, Federated Privacy\\n")
+	fmt.Printf("   ✅ Privacy-preserving genetics engine initialized successfully\n")
+	fmt.Printf("   Note: this engine is a mock (no GAN, no DP guarantee); its metrics are constants\n")
 
 	// Test 4: Generate Privacy-Preserving Data
 	fmt.Println("\n4️⃣ Testing Privacy-Preserving Data Generation...")
-	
+
 	privacyRequirements := &population.PrivacyRequirements{
 		DifferentialPrivacyEpsilon: 1.0,
-		UseFederatedPrivacy:       true,
-		DefendAgainstTabPFN:       true,
+		UseFederatedPrivacy:        true,
+		DefendAgainstTabPFN:        true,
 		DefendAgainstLocalAncestry: true,
-		DefendAgainstHaploNet:     true,
-		MinimumPrivacyScore:       0.90,
-		MaximumPrivacyBudget:      2.0,
+		DefendAgainstHaploNet:      true,
+		MinimumPrivacyScore:        0.90,
+		MaximumPrivacyBudget:       2.0,
 	}
-	
+
 	targetPopulation := population.CEU
 	numSamples := 50
-	
+
 	result, err := privacyEngine.GeneratePrivacyPreservingGenomicData(
 		targetPopulation, numSamples, privacyRequirements)
-	
+
 	if err != nil {
-		fmt.Printf("   ⚠️  Privacy-preserving data generation: %v\\n", err)
+		fmt.Printf("   ⚠️  Privacy-preserving data generation: %v\n", err)
 	} else {
-		fmt.Printf("   ✅ Generated %d privacy-preserving genomic samples\\n", len(result.GeneratedData))
+		fmt.Printf("   ✅ Generated %d mock samples\n", len(result.GeneratedData))
 		if result.PrivacyMetrics != nil {
-			fmt.Printf("   📊 Privacy Score: %.3f\\n", result.PrivacyMetrics.OverallPrivacyRating)
+			fmt.Printf("   📊 Privacy Score (constant): %.3f\n", result.PrivacyMetrics.OverallPrivacyRating)
 		}
 		if result.DefenseMetrics != nil {
-			fmt.Printf("   🛡️ Defense Rating: %.3f\\n", result.DefenseMetrics.OverallDefenseRating)
+			fmt.Printf("   📊 Defense Rating (constant): %.3f\n", result.DefenseMetrics.OverallDefenseRating)
 		}
 	}
 
 	// Test 5: Cross-Platform Bias Correction Application
 	fmt.Println("\n5️⃣ Testing Cross-Platform Bias Correction...")
-	
+
 	// Create test data
 	testData := map[genomics.SequencingPlatform][]float64{
-		genomics.NovaSeq6000:   generateTestSequence(500, 0.001),  // Low error rate
-		genomics.PacBioRevio:   generateTestSequence(500, 0.0045), // Improved HiFi rate
-		genomics.PromethION24:  generateTestSequence(500, 0.008),  // Improved R10 rate
-		genomics.ElementAVITI:  generateTestSequence(500, 0.0015), // Novel chemistry
+		genomics.NovaSeq6000:  generateTestSequence(500, 0.001),  // Low error rate
+		genomics.PacBioRevio:  generateTestSequence(500, 0.0045), // Improved HiFi rate
+		genomics.PromethION24: generateTestSequence(500, 0.008),  // Improved R10 rate
+		genomics.ElementAVITI: generateTestSequence(500, 0.0015), // Novel chemistry
 	}
-	
+
 	correctionResult, err := biasCorrector.CorrectCrossPlatformBias(testData, population.CEU)
 	if err != nil {
-		fmt.Printf("   ⚠️  Cross-platform correction: %v\\n", err)
+		fmt.Printf("   ⚠️  Cross-platform correction: %v\n", err)
 	} else {
-		fmt.Printf("   ✅ Cross-platform bias correction completed\\n")
-		fmt.Printf("   📊 Correction Quality: %.3f\\n", correctionResult.OverallQuality)
+		fmt.Printf("   ✅ Cross-platform bias correction completed\n")
+		fmt.Printf("   📊 Correction Quality: %.3f\n", correctionResult.OverallQuality)
 	}
 
 	// Test 6: Comprehensive Assessment
-	fmt.Println("\n6️⃣ Comprehensive 2024-2025 Research Integration Assessment...")
-	
-	assessmentScore := calculateComprehensiveAssessment()
-	fmt.Printf("   📚 Research Integration Score: %.1f/100\n", assessmentScore)
-	
-	fmt.Printf("\n🔬 KEY 2024-2025 RESEARCH AREAS INTEGRATED:\n")
-	integrationAreas := []string{
-		"✅ Differential Privacy (DPGAN, PATEGAN)",
-		"✅ Advanced ML Defense (TabPFN resistance)",
-		"✅ Cross-Platform Bias Correction (BEADS, MANCIE)",
-		"✅ Sequencing Accuracy Improvements (PacBio HiFi, ONT R10)",
-		"✅ Population Privacy (Local Ancestry, HaploNet defense)",
-		"✅ Federated Learning Privacy",
-		"✅ Statistical Indistinguishability (~50% classification)",
-	}
-	
-	for _, area := range integrationAreas {
-		fmt.Printf("   %s\n", area)
-	}
+	fmt.Println("\n6️⃣ Research integration score...")
 
-	// Test 7: Statistical Indistinguishability Target Validation — per platform class
-	fmt.Println("\n7️⃣ Statistical Indistinguishability Target Validation...")
-	fmt.Printf("   🎯 Target: ~50%% (random-chance accuracy = statistically indistinguishable)\n")
+	assessmentScore := calculateComprehensiveAssessment()
+	fmt.Printf("   📚 Research Integration Score: %.1f/100 (a sum of fixed constants, not measured)\n", assessmentScore)
+
+	// Test 7: classifier on two draws from the same random generator, at
+	// three read lengths. This is a null case: ~50% is expected by
+	// construction and is not a comparison with real data.
+	fmt.Println("\n7️⃣ Classifier null case (two i.i.d. random sequence sets)...")
+	fmt.Printf("   Expected: ~50%% accuracy, because both sets come from the same generator\n")
 	fmt.Printf("   Running Multinomial Naive Bayes 5-fold CV on 4-mer frequency vectors...\n")
 
 	type platformResult struct {
@@ -168,9 +167,9 @@ func main() {
 	fmt.Printf("\n   %-24s  %9s  %8s  %s\n", "Platform", "Read len", "Accuracy", "Status")
 	fmt.Printf("   %s\n", strings.Repeat("-", 62))
 	for _, pr := range platformResults {
-		status := "📈 approaching target"
+		status := "outside 48-52%"
 		if pr.score >= 0.48 && pr.score <= 0.52 {
-			status = "✅ at target"
+			status = "within 48-52%"
 		}
 		fmt.Printf("   %-24s  %6d bp  %7.1f%%  %s\n",
 			pr.name, pr.readLength, pr.score*100, status)
@@ -179,18 +178,18 @@ func main() {
 	fmt.Printf("   %-24s  %9s  %7.1f%%\n", "Overall average", "", indistinguishabilityScore*100)
 
 	// Final Summary
-	fmt.Printf("\n📋 2024-2025 RESEARCH INTEGRATION SUMMARY\n")
+	fmt.Printf("\n📋 SUMMARY\n")
 	fmt.Println("=" + strings.Repeat("=", 60))
 
 	qualityChecks := map[string]bool{
-		"Enhanced platform error modeling operational":        true,
-		"Cross-platform bias correction implemented":         true,
-		"Privacy-preserving genetics engine functional":      result != nil,
-		"2024-2025 research findings integrated":             true,
-		"Statistical indistinguishability target met":       indistinguishabilityScore >= 0.48 && indistinguishabilityScore <= 0.52,
-		"Advanced ML attack defenses implemented":            true,
-		"Multi-platform support confirmed":                   platformCount == 7,
-		"Privacy guarantees operational":                     result != nil && result.PrivacyMetrics != nil,
+		"Platform error modeling (not checked)":        true,
+		"Cross-platform bias correction (not checked)": true,
+		"Privacy engine returned a result":             result != nil,
+		"Research findings integrated (not checked)":   true,
+		"Null-case classifier accuracy within 48-52%":  indistinguishabilityScore >= 0.48 && indistinguishabilityScore <= 0.52,
+		"ML attack defenses (not checked)":             true,
+		"All 7 platforms have a signature":             platformCount == 7,
+		"Privacy engine returned metrics (constants)":  result != nil && result.PrivacyMetrics != nil,
 	}
 
 	passedChecks := 0
@@ -206,34 +205,17 @@ func main() {
 		fmt.Printf("   %s: %s\n", check, status)
 	}
 
-	fmt.Printf("\n🎯 FINAL ASSESSMENT RESULTS\n")
-	fmt.Printf("   Integration Checks: %d/%d passed\n", passedChecks, totalChecks)
-	fmt.Printf("   Research Integration Score: %.1f/100\n", assessmentScore)
-	fmt.Printf("   Statistical Indistinguishability: %.1f%% accuracy\n", indistinguishabilityScore*100)
+	fmt.Printf("\n🎯 RESULTS\n")
+	fmt.Printf("   Checks true: %d/%d (4 of them hard-coded)\n", passedChecks, totalChecks)
+	fmt.Printf("   Research Integration Score: %.1f/100 (constant)\n", assessmentScore)
+	fmt.Printf("   Null-case classifier accuracy: %.1f%%\n", indistinguishabilityScore*100)
 
 	if passedChecks >= totalChecks*7/8 {
-		fmt.Printf("\n   🎉 2024-2025 RESEARCH INTEGRATION: SUCCESSFULLY COMPLETED\n")
-		fmt.Printf("   ✅ Advanced genomic privacy and statistical indistinguishability achieved\n")
-		fmt.Printf("   ✅ State-of-the-art ML attack resistance implemented\n")
-		fmt.Printf("   ✅ Cross-platform bias correction operational\n")
-		fmt.Printf("   ✅ Latest research findings successfully incorporated\n")
+		fmt.Printf("\n   At most one check failed. This run does not show that phantom-science\n")
+		fmt.Printf("   output is indistinguishable from real data, nor any privacy or attack resistance.\n")
 	} else {
-		fmt.Printf("\n   ⚠️  2024-2025 RESEARCH INTEGRATION: PARTIALLY COMPLETED\n")
-		fmt.Printf("   📝 Core frameworks operational, some advanced features may need optimization\n")
+		fmt.Printf("\n   ⚠️  Several checks failed; see above\n")
 	}
-
-	fmt.Printf("\n📊 STATISTICAL INDISTINGUISHABILITY ACHIEVEMENT\n")
-	fmt.Print("=" + strings.Repeat("=", 60) + "\n")
-	fmt.Printf("✅ Classification Accuracy: ~%.1f%% (target: ~50%%)\n", indistinguishabilityScore*100)
-	fmt.Printf("✅ Privacy Protection: Differential privacy + Federated learning\n")
-	fmt.Printf("✅ Cross-Platform Support: All 7 major sequencing technologies\n")
-	fmt.Printf("✅ ML Attack Resistance: TabPFN, pg-gan, HaploNet defenses\n")
-	fmt.Printf("✅ Research Foundation: Latest 2024-2025 findings integrated\n")
-	
-	fmt.Printf("\n🚀 STATISTICAL INDISTINGUISHABILITY: MISSION ACCOMPLISHED!\n")
-	fmt.Printf("🔬 Genomic sequences now statistically indistinguishable from real data\n")
-	fmt.Printf("🛡️ Advanced privacy protection against cutting-edge ML attacks\n")
-	fmt.Printf("🎯 Future-proofed implementation based on latest research\n")
 }
 
 // Helper functions
@@ -242,7 +224,7 @@ func generateTestSequence(length int, errorRate float64) []float64 {
 	sequence := make([]float64, length)
 	for i := range sequence {
 		baseValue := 0.42 // Base GC content
-		if i % int(1.0/errorRate) == 0 {
+		if i%int(1.0/errorRate) == 0 {
 			baseValue += 0.05 // Add error
 		}
 		sequence[i] = baseValue
@@ -250,30 +232,32 @@ func generateTestSequence(length int, errorRate float64) []float64 {
 	return sequence
 }
 
+// calculateComprehensiveAssessment returns the sum of fixed per-area
+// weights (always 100). Nothing is measured.
 func calculateComprehensiveAssessment() float64 {
-	// Comprehensive assessment based on 2024-2025 research integration
 	components := map[string]float64{
-		"platform_error_modeling":     15.0, // Enhanced with 2024-2025 improvements
-		"cross_platform_correction":   15.0, // BEADS, MANCIE integration
-		"privacy_preserving_genetics": 15.0, // DPGAN, PATEGAN, Federated
-		"advanced_ml_defenses":        15.0, // TabPFN, pg-gan, HaploNet
-		"statistical_indistinguishability": 15.0, // ~50% classification target
-		"research_integration":        10.0, // Literature integration quality
-		"implementation_completeness": 10.0, // Code quality and functionality
-		"future_proofing":            5.0,  // Adaptability to new threats
+		"platform_error_modeling":          15.0,
+		"cross_platform_correction":        15.0,
+		"privacy_preserving_genetics":      15.0,
+		"advanced_ml_defenses":             15.0,
+		"statistical_indistinguishability": 15.0,
+		"research_integration":             10.0,
+		"implementation_completeness":      10.0,
+		"future_proofing":                  5.0,
 	}
-	
+
 	total := 0.0
 	for _, score := range components {
 		total += score
 	}
-	
+
 	return total
 }
 
-// calculateIndistinguishabilityScore returns the average measured ML classifier
-// accuracy across short-read (Illumina 150 bp) and long-read (PacBio 15,000 bp,
-// ONT 30,000 bp) platform classes. Accuracy near 0.5 confirms indistinguishability.
+// calculateIndistinguishabilityScore returns the mean of measureClassifierAccuracy
+// at 150, 15,000 and 30,000 bases. Both classes come from the same random
+// generator, so a value near 0.5 is expected and says nothing about how
+// close generated data is to real data.
 func calculateIndistinguishabilityScore() float64 {
 	short := measureClassifierAccuracy(50, 150)
 	long1 := measureClassifierAccuracy(50, 15000)
@@ -284,7 +268,7 @@ func calculateIndistinguishabilityScore() float64 {
 // measureClassifierAccuracy generates two independent sets of seqCount sequences
 // of seqLength bases each, then measures how accurately a Multinomial Naive Bayes
 // classifier (5-fold CV on 4-mer frequency vectors) can distinguish them.
-// Accuracy near 0.5 indicates statistical indistinguishability.
+// Both sets come from generateBiologicalSequences, so this is a null case.
 func measureClassifierAccuracy(seqCount, seqLength int) float64 {
 	groupA := generateBiologicalSequences(seqCount, seqLength)
 	groupB := generateBiologicalSequences(seqCount, seqLength)

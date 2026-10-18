@@ -1,3 +1,11 @@
+// Command sequence_classifier reads one FASTA file and prints a
+// 1000 Genomes population, region and a score derived from GC content and
+// 4-mer complexity.
+//
+// It is a one-off experiment, not part of the supported phantom-science CLI.
+// It cannot classify: every population has the same GC target (0.4982), so
+// all populations score equally and the one reported depends on Go's random
+// map iteration order.
 package main
 
 import (
@@ -15,11 +23,12 @@ type PopulationClassifier struct {
 }
 
 func NewPopulationClassifier() *PopulationClassifier {
-	// Based on our authentic VCF training data
+	// One GC value, measured from VCF-trained output, is used for every
+	// population, so these targets do not distinguish populations.
 	return &PopulationClassifier{
 		PopulationGCTargets: map[string]float64{
 			"YRI": 0.4982, // Africa - Yoruba
-			"LWK": 0.4982, // Africa - Luhya 
+			"LWK": 0.4982, // Africa - Luhya
 			"GWD": 0.4982, // Africa - Gambian
 			"CEU": 0.4982, // Europe - CEPH
 			"GBR": 0.4982, // Europe - British
@@ -44,43 +53,43 @@ func (pc *PopulationClassifier) ClassifySequence(filepath string) (string, float
 	if err != nil {
 		return "", 0.0, err
 	}
-	
+
 	// Calculate sequence metrics
 	gcContent := pc.calculateGCContent(sequence)
 	complexity := pc.calculateComplexity(sequence)
-	
+
 	// Simple classification based on GC content and sequence characteristics
 	// This is a basic approach - in practice we'd use the trained HMM models
-	
+
 	bestPopulation := "Unknown"
 	bestScore := 0.0
-	
+
 	for population, targetGC := range pc.PopulationGCTargets {
 		// Score based on GC content proximity and complexity
 		gcDiff := abs(gcContent - targetGC)
 		gcScore := 1.0 - (gcDiff * 10) // Penalize GC deviation
-		
+
 		// Basic complexity threshold
 		complexityScore := 0.5
 		if complexity > 0.7 {
 			complexityScore = 1.0
 		}
-		
+
 		// Simple scoring combining GC and complexity
 		score := (gcScore * 0.6) + (complexityScore * 0.4)
-		
+
 		if score > bestScore {
 			bestScore = score
 			bestPopulation = population
 		}
 	}
-	
+
 	// Ensure minimum score threshold
 	if bestScore < 0.3 {
 		bestPopulation = "Unknown"
 		bestScore = 0.0
 	}
-	
+
 	return bestPopulation, bestScore, nil
 }
 
@@ -90,17 +99,17 @@ func (pc *PopulationClassifier) readSequenceFromFasta(filepath string) (string, 
 		return "", err
 	}
 	defer file.Close()
-	
+
 	scanner := bufio.NewScanner(file)
 	var sequence strings.Builder
-	
+
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if !strings.HasPrefix(line, ">") {
 			sequence.WriteString(strings.ToUpper(line))
 		}
 	}
-	
+
 	return sequence.String(), scanner.Err()
 }
 
@@ -108,10 +117,10 @@ func (pc *PopulationClassifier) calculateGCContent(sequence string) float64 {
 	if len(sequence) == 0 {
 		return 0.0
 	}
-	
+
 	gcCount := 0
 	totalCount := 0
-	
+
 	for _, nucleotide := range sequence {
 		switch nucleotide {
 		case 'G', 'C':
@@ -121,11 +130,11 @@ func (pc *PopulationClassifier) calculateGCContent(sequence string) float64 {
 			totalCount++
 		}
 	}
-	
+
 	if totalCount == 0 {
 		return 0.0
 	}
-	
+
 	return float64(gcCount) / float64(totalCount)
 }
 
@@ -133,10 +142,10 @@ func (pc *PopulationClassifier) calculateComplexity(sequence string) float64 {
 	if len(sequence) < 4 {
 		return 0.0
 	}
-	
+
 	// Count unique 4-mers
 	kmers := make(map[string]bool)
-	
+
 	for i := 0; i <= len(sequence)-4; i++ {
 		kmer := sequence[i : i+4]
 		// Only count valid DNA k-mers
@@ -144,13 +153,13 @@ func (pc *PopulationClassifier) calculateComplexity(sequence string) float64 {
 			kmers[kmer] = true
 		}
 	}
-	
+
 	// Complexity is ratio of unique k-mers to possible positions
 	possiblePositions := len(sequence) - 3
 	if possiblePositions <= 0 {
 		return 0.0
 	}
-	
+
 	return float64(len(kmers)) / float64(possiblePositions)
 }
 
@@ -175,20 +184,20 @@ func main() {
 		fmt.Printf("Usage: %s <sequence.fasta>\n", os.Args[0])
 		os.Exit(1)
 	}
-	
+
 	filepath := os.Args[1]
 	classifier := NewPopulationClassifier()
-	
+
 	population, confidence, err := classifier.ClassifySequence(filepath)
 	if err != nil {
 		log.Fatalf("Classification failed: %v", err)
 	}
-	
+
 	region := classifier.RegionMap[population]
 	if region == "" {
 		region = "Unknown"
 	}
-	
+
 	fmt.Printf("Population: %s\n", population)
 	fmt.Printf("Region: %s\n", region)
 	fmt.Printf("Confidence: %.3f\n", confidence)
@@ -199,7 +208,7 @@ func getStatusFromConfidence(confidence float64) string {
 	if confidence >= 0.8 {
 		return "High Confidence"
 	} else if confidence >= 0.5 {
-		return "Medium Confidence" 
+		return "Medium Confidence"
 	} else if confidence >= 0.3 {
 		return "Low Confidence"
 	} else {

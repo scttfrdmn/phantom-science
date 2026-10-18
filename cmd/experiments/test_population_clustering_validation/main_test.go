@@ -11,7 +11,8 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// Helper logic extracted / mirrored from main() — tested in isolation
+// Copies of logic in main(), tested in isolation. main() does not call
+// these, so the tests do not exercise main() and the copies can drift.
 // ---------------------------------------------------------------------------
 
 // computeDiversityStats mirrors the diversity statistics block in main().
@@ -94,14 +95,14 @@ func buildQualityMetrics(
 	continentsRepresented int,
 ) map[string]bool {
 	return map[string]bool{
-		"PCA clustering validation framework available":    true,
-		"Sequence generation operational":                  numHaplotypeResults >= 3,
-		"Population differentiation detected":              numHaplotypeResults >= 3,
-		"LD structure analysis functional":                 clusteringReadyCount >= 2,
-		"Continental groups represented":                   continentsRepresented >= 3,
-		"Clustering readiness achieved":                    clusteringReadyCount >= numHaplotypeResults*2/3,
-		"Population diversity hierarchy established":       true,
-		"Phase 2 Week 6 foundation complete":               true,
+		"PCA clustering validation framework available": true,
+		"Sequence generation operational":               numHaplotypeResults >= 3,
+		"Population differentiation detected":           numHaplotypeResults >= 3,
+		"LD structure analysis functional":              clusteringReadyCount >= 2,
+		"Continental groups represented":                continentsRepresented >= 3,
+		"Clustering readiness achieved":                 clusteringReadyCount >= numHaplotypeResults*2/3,
+		"Population diversity hierarchy established":    true,
+		"Phase 2 Week 6 foundation complete":            true,
 	}
 }
 
@@ -642,8 +643,8 @@ func TestGetRecombinationMap(t *testing.T) {
 		{StartPosition: 0, EndPosition: 100000, Length: 100000, VariantCount: 50, RSquaredMean: 0.4},
 	}
 	stats := population.HaplotypeStatistics{
-		DiversityPi:     0.0009,
-		MeanRSquared:    0.04,
+		DiversityPi:        0.0009,
+		MeanRSquared:       0.04,
 		GeneticMapLengthCM: 3.0,
 	}
 	result := makeTestHaplotypeResult(population.YRI, 500, blocks, stats)
@@ -664,8 +665,8 @@ func TestGetLDStatistics(t *testing.T) {
 	sim := population.NewHaplotypeSimulator("/tmp/test-project")
 	blocks := []population.HaplotypeBlock{}
 	stats := population.HaplotypeStatistics{
-		DiversityPi:  0.0007,
-		MeanRSquared: 0.03,
+		DiversityPi:      0.0007,
+		MeanRSquared:     0.03,
 		SegregatingSites: 350,
 	}
 	result := makeTestHaplotypeResult(population.CEU, 350, blocks, stats)
@@ -766,8 +767,8 @@ func TestValidateLDPatterns_WithSufficientData(t *testing.T) {
 				{StartPosition: 500000, EndPosition: 1000000},
 			},
 			population.HaplotypeStatistics{
-				DiversityPi:        0.0009,
-				MeanRSquared:       0.03,
+				DiversityPi:         0.0009,
+				MeanRSquared:        0.03,
 				EffectiveRecombRate: 1.0e-8,
 				GeneticMapLengthCM:  4.5,
 			}),
@@ -776,8 +777,8 @@ func TestValidateLDPatterns_WithSufficientData(t *testing.T) {
 				{StartPosition: 0, EndPosition: 700000},
 			},
 			population.HaplotypeStatistics{
-				DiversityPi:        0.0006,
-				MeanRSquared:       0.05,
+				DiversityPi:         0.0006,
+				MeanRSquared:        0.05,
 				EffectiveRecombRate: 1.2e-8,
 				GeneticMapLengthCM:  4.0,
 			}),
@@ -786,8 +787,8 @@ func TestValidateLDPatterns_WithSufficientData(t *testing.T) {
 				{StartPosition: 0, EndPosition: 800000},
 			},
 			population.HaplotypeStatistics{
-				DiversityPi:        0.0005,
-				MeanRSquared:       0.06,
+				DiversityPi:         0.0005,
+				MeanRSquared:        0.06,
 				EffectiveRecombRate: 0.9e-8,
 				GeneticMapLengthCM:  3.5,
 			}),
@@ -816,8 +817,8 @@ func TestValidateLDPatterns_HaplotypeBlocksPresent(t *testing.T) {
 				{StartPosition: 0, EndPosition: 500000},
 			},
 			population.HaplotypeStatistics{
-				DiversityPi:        0.0009,
-				MeanRSquared:       0.04,
+				DiversityPi:         0.0009,
+				MeanRSquared:        0.04,
 				EffectiveRecombRate: 1.0e-8,
 				GeneticMapLengthCM:  4.5,
 			}),
@@ -858,8 +859,8 @@ func TestValidateLDPatterns_ReturnsMultipleKeys(t *testing.T) {
 	results := map[population.Population]*population.HaplotypeSimulationResult{
 		population.YRI: makeTestHaplotypeResult(population.YRI, 600, nil,
 			population.HaplotypeStatistics{
-				DiversityPi:        0.0009,
-				MeanRSquared:       0.04,
+				DiversityPi:         0.0009,
+				MeanRSquared:        0.04,
 				EffectiveRecombRate: 1.0e-8,
 				GeneticMapLengthCM:  4.5,
 			}),
@@ -1006,8 +1007,8 @@ func TestGetPopulationParameters_SuperPopulation(t *testing.T) {
 	sim := population.NewDemographicSimulator("/tmp/test-project")
 
 	tests := []struct {
-		pop         population.Population
-		superPop    string
+		pop      population.Population
+		superPop string
 	}{
 		{population.YRI, "African"},
 		{population.CEU, "European"},

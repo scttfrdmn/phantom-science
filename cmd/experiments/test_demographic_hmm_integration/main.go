@@ -1,3 +1,11 @@
+// Command test_demographic_hmm_integration simulates YRI, CEU and CHB
+// variants with the Python demographic simulator (run from the current
+// directory, which must be the repository root with phantom_science_env),
+// feeds them into an EnhancedHMMKmerModel, generates a 1 kb sequence per
+// population and prints its GC content against a fixed per-population
+// target.
+//
+// It is a one-off experiment, not part of the supported phantom-science CLI.
 package main
 
 import (
@@ -34,13 +42,13 @@ func main() {
 
 	for _, pop := range testPops {
 		fmt.Printf("\n🧬 Processing %s Population...\n", pop)
-		
+
 		// Simulate population with demographic model
 		randomSeed := 42
 		result, err := simulator.SimulatePopulation(
 			pop,
-			50,         // sample size
-			5_000_000,  // 5Mb sequence for speed
+			50,        // sample size
+			5_000_000, // 5Mb sequence for speed
 			&randomSeed,
 		)
 		if err != nil {
@@ -56,7 +64,7 @@ func main() {
 
 		// Convert demographic variants to HMM format
 		hmmVariants := convertToHMMVariants(result.Variants)
-		
+
 		// Integrate demographic data
 		err = enhancedModel.IntegrateDemographicVariants(
 			"chr1",
@@ -101,23 +109,23 @@ func main() {
 
 	// Integration validation
 	fmt.Println("\n🔍 Validating Integration Quality...")
-	
+
 	// Test 1: Cross-population comparison
 	fmt.Println("   📊 Cross-population sequence comparison...")
 	yriModel := authenticity.NewEnhancedHMMKmerModel(8, "YRI")
 	ceuModel := authenticity.NewEnhancedHMMKmerModel(8, "CEU")
-	
+
 	// Generate test sequences
 	yriSeq, _ := generateTestSequence(yriModel, 1000)
 	ceuSeq, _ := generateTestSequence(ceuModel, 1000)
-	
+
 	if yriSeq != nil && ceuSeq != nil {
 		yriGC := calculateGCContent(yriSeq)
 		ceuGC := calculateGCContent(ceuSeq)
-		
+
 		fmt.Printf("   📈 YRI GC: %.3f, CEU GC: %.3f, diff: %.3f\n",
 			yriGC, ceuGC, abs(yriGC-ceuGC))
-		
+
 		if abs(yriGC-ceuGC) > 0.005 {
 			fmt.Printf("   ✅ Population-specific differences detected\n")
 		} else {
@@ -127,34 +135,28 @@ func main() {
 
 	// Test 2: Demographic vs VCF comparison
 	fmt.Println("   🔄 Comparing demographic vs VCF-trained models...")
-	
+
 	// Load existing VCF-trained model for comparison
 	// vcfModel := authenticity.NewHMMKmerModel(8)
 	// Note: In practice, would load actual VCF-trained model
-	
-	fmt.Printf("   📋 Demographic model: Enhanced with population genetics\n")
-	fmt.Printf("   📋 VCF model: Trained on real variant data\n")
-	fmt.Printf("   🎯 Integration provides best of both approaches\n")
+
+	fmt.Printf("   📋 Not implemented: no VCF-trained model is loaded, so no comparison is made\n")
 
 	// Summary
 	fmt.Println("\n📋 DEMOGRAPHIC HMM INTEGRATION SUMMARY")
 	fmt.Println("=" + strings.Repeat("=", 40))
-	fmt.Printf("✅ Population-specific demographic models: INTEGRATED\n")
-	fmt.Printf("✅ HMM k-mer authenticity engine: ENHANCED\n")
-	fmt.Printf("✅ Population-specific sequence generation: VALIDATED\n")
-	fmt.Printf("✅ Cross-population differentiation: CONFIRMED\n")
-	fmt.Printf("\n🚀 Phase 1 Week 2 demographic model implementation: COMPLETE\n")
-	fmt.Printf("🎯 Ready for Phase 1 Week 3: Haplotype simulation\n")
+	fmt.Printf("Run finished. See the per-population lines above for GC checks;\n")
+	fmt.Printf("this summary does not itself validate anything.\n")
 }
 
 // Helper functions
 
 func convertToHMMVariants(variants []population.VariantData) []authenticity.DemographicVariant {
 	hmmVariants := make([]authenticity.DemographicVariant, len(variants))
-	
+
 	for i, variant := range variants {
 		var refAllele, altAllele byte = 'A', 'T'
-		
+
 		if len(variant.Alleles) >= 2 {
 			if len(variant.Alleles[0]) > 0 {
 				refAllele = variant.Alleles[0][0]
@@ -163,7 +165,7 @@ func convertToHMMVariants(variants []population.VariantData) []authenticity.Demo
 				altAllele = variant.Alleles[1][0]
 			}
 		}
-		
+
 		hmmVariants[i] = authenticity.DemographicVariant{
 			Position:        variant.Position,
 			ReferenceAllele: refAllele,
@@ -172,18 +174,18 @@ func convertToHMMVariants(variants []population.VariantData) []authenticity.Demo
 			Genotypes:       variant.Genotypes,
 		}
 	}
-	
+
 	return hmmVariants
 }
 
 func convertStatistics(stats population.PopulationStatistics) map[string]float64 {
 	return map[string]float64{
-		"diversity_pi":      stats.DiversityPi,
-		"watterson_theta":   stats.WattersonTheta,
-		"tajima_d":          stats.TajimaD,
-		"mean_frequency":    stats.MeanAlleleFrequency,
-		"num_variants":      float64(stats.NumVariants),
-		"rare_variants":     float64(stats.RareVariantsCount),
+		"diversity_pi":    stats.DiversityPi,
+		"watterson_theta": stats.WattersonTheta,
+		"tajima_d":        stats.TajimaD,
+		"mean_frequency":  stats.MeanAlleleFrequency,
+		"num_variants":    float64(stats.NumVariants),
+		"rare_variants":   float64(stats.RareVariantsCount),
 	}
 }
 
@@ -203,7 +205,7 @@ func getExpectedGCContent(population string) float64 {
 		"CEU": 0.42,
 		"CHB": 0.40,
 	}
-	
+
 	if gc, exists := expectedGC[population]; exists {
 		return gc
 	}
@@ -221,11 +223,11 @@ func generateTestSequence(model *authenticity.EnhancedHMMKmerModel, length int) 
 	if !model.IsEnhanced() {
 		return nil, fmt.Errorf("model not enhanced")
 	}
-	
+
 	result, err := model.GeneratePopulationSequence(length)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	return result.Sequence, nil
 }

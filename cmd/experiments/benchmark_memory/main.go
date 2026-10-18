@@ -1,3 +1,10 @@
+// Command benchmark_memory compares the hash-map (kmer.FrequencyTable) and
+// packed-array (kmer.PackedFrequencyTable) k-mer counters on generated
+// sequences: duration, throughput, memory, and whether the two give the same
+// counts. Memory is the change in runtime.MemStats.Alloc around each run, so
+// it is approximate and affected by garbage collection.
+//
+// It is a one-off experiment, not part of the supported phantom-science CLI.
 package main
 
 import (
@@ -12,14 +19,14 @@ import (
 
 func main() {
 	var (
-		k                 = flag.Int("k", 8, "K-mer size (1-16)")
-		numSequences      = flag.Int("sequences", 1000, "Number of test sequences")
-		sequenceLength    = flag.Int("length", 1000, "Length of each test sequence")
-		verbose           = flag.Bool("verbose", false, "Enable verbose output")
-		packedOnly        = flag.Bool("packed-only", false, "Test packed arrays only")
-		mapOnly           = flag.Bool("map-only", false, "Test hash maps only")
-		benchmarkMemory   = flag.Bool("memory", false, "Run memory usage benchmarks")
-		compareAccuracy   = flag.Bool("accuracy", false, "Compare accuracy between methods")
+		k               = flag.Int("k", 8, "K-mer size (1-16)")
+		numSequences    = flag.Int("sequences", 1000, "Number of test sequences")
+		sequenceLength  = flag.Int("length", 1000, "Length of each test sequence")
+		verbose         = flag.Bool("verbose", false, "Enable verbose output")
+		packedOnly      = flag.Bool("packed-only", false, "Test packed arrays only")
+		mapOnly         = flag.Bool("map-only", false, "Test hash maps only")
+		benchmarkMemory = flag.Bool("memory", false, "Run memory usage benchmarks")
+		compareAccuracy = flag.Bool("accuracy", false, "Compare accuracy between methods")
 	)
 	flag.Parse()
 
@@ -267,7 +274,7 @@ func runPerformanceComparison(sequences [][]byte, k int, verbose bool) {
 func runMemoryBenchmark(sequences [][]byte, k int, verbose bool) {
 	// Test different k-mer sizes to show memory scaling
 	kSizes := []int{4, 6, 8, 10, 12}
-	
+
 	fmt.Printf("K-mer Size | Hash Map Memory | Packed Memory | Compression Ratio\n")
 	fmt.Printf("-----------|-----------------|---------------|------------------\n")
 
@@ -298,7 +305,7 @@ func runMemoryBenchmark(sequences [][]byte, k int, verbose bool) {
 		}
 
 		compression := float64(mapMemory) / float64(packedMemory)
-		
+
 		fmt.Printf("%-10d | %-15.2f | %-13.2f | %.2fx\n",
 			testK,
 			float64(mapMemory)/(1024*1024),
@@ -322,12 +329,12 @@ func runAccuracyComparison(sequences [][]byte, k int, verbose bool) {
 
 	// Detailed accuracy verification
 	correctness := verifyResults(mapResult, packedResult, k)
-	
+
 	if correctness {
 		fmt.Printf("✅ Perfect accuracy: All k-mer frequencies match exactly\n")
 		fmt.Printf("   Total k-mers: %d (both methods)\n", mapResult.TotalCount)
 		fmt.Printf("   Unique k-mers: %d (both methods)\n", len(mapResult.Frequencies))
-		
+
 		if verbose {
 			// Show some example k-mers
 			topKmers := mapResult.GetTopKmers(5)

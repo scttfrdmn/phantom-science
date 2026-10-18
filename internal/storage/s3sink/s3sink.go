@@ -9,6 +9,12 @@
 // Uploads go through the small Uploader interface so tests use a fake; the
 // real implementation (NewUploader, NewDefaultUploader) is aws-sdk-go v1's
 // s3manager, with credentials and region from the default chain.
+//
+// Testing is limited to fakes: the Sink tests use a fake Uploader, and the
+// s3manager path is exercised against a fake S3 client that records the
+// multipart calls. Nothing in the repository runs against real AWS (or an
+// S3-compatible store), so permissions, tagging limits, retries and other
+// service-side behaviour are untested.
 package s3sink
 
 import (

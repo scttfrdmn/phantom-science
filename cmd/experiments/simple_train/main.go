@@ -1,3 +1,10 @@
+// Command simple_train trains k-mer HMM models (k = 3 to 6) from
+// <dir>/GRCh38.fasta, where <dir> is the first argument, test-generates a
+// sequence from each, and writes a text summary per model to
+// ./models/trained/hmm_<k>mer_summary.txt. The trained models are not saved.
+//
+// It is a one-off experiment, not part of the supported phantom-science CLI;
+// use "phantom-science train" instead.
 package main
 
 import (
@@ -78,7 +85,7 @@ func (r *SimpleReferenceGenome) LoadChromosome(name string) (authenticity.Chromo
 func (r *SimpleReferenceGenome) loadChromosomeFromFasta(chrName string) ([]byte, error) {
 	// Try to load from GRCh38.fasta (contains all chromosomes)
 	fastaPath := r.refDir + "/GRCh38.fasta"
-	
+
 	file, err := os.Open(fastaPath) // #nosec G304
 	if err != nil {
 		return nil, fmt.Errorf("failed to open FASTA file: %w", err)
@@ -94,7 +101,7 @@ func (r *SimpleReferenceGenome) loadChromosomeFromFasta(chrName string) ([]byte,
 
 	for scanner.Scan() {
 		line := scanner.Text()
-		
+
 		if strings.HasPrefix(line, ">") {
 			if strings.HasPrefix(line, targetHeader) {
 				inTargetChromosome = true
@@ -143,13 +150,13 @@ func main() {
 
 	// Train models for different k-mer sizes
 	kmerSizes := []int{3, 4, 5, 6}
-	
+
 	for _, k := range kmerSizes {
 		log.Printf("Training %d-mer HMM model...", k)
-		
+
 		// Create model
 		model := authenticity.NewHMMKmerModel(k)
-		
+
 		// Train model
 		start := time.Now()
 		err := model.TrainFromReferenceGenome(refGenome)
@@ -157,27 +164,27 @@ func main() {
 			log.Fatalf("Training failed for %d-mer model: %v", k, err)
 		}
 		trainingTime := time.Since(start)
-		
+
 		log.Printf("✓ %d-mer model trained in %v", k, trainingTime)
-		
+
 		// Validate model
 		err = model.ValidateModel()
 		if err != nil {
 			log.Fatalf("Validation failed for %d-mer model: %v", k, err)
 		}
-		
+
 		log.Printf("✓ %d-mer model validated", k)
-		
+
 		// Test generation
 		log.Printf("Testing %d-mer model generation...", k)
 		testResult, err := model.GenerateSequence(10000)
 		if err != nil {
 			log.Fatalf("Generation test failed for %d-mer model: %v", k, err)
 		}
-		
+
 		log.Printf("✓ %d-mer model generated %d bases in %v", k, len(testResult.Sequence), testResult.GenerationTime)
 		log.Printf("  - Unique k-mers: %d", len(testResult.KmerFrequencies))
-		
+
 		// Calculate basic statistics
 		gcCount := 0
 		for _, base := range testResult.Sequence {
@@ -187,7 +194,7 @@ func main() {
 		}
 		gcContent := float64(gcCount) / float64(len(testResult.Sequence))
 		log.Printf("  - GC content: %.1f%%", gcContent*100)
-		
+
 		// Save model summary
 		summaryPath := fmt.Sprintf("./models/trained/hmm_%dmer_summary.txt", k)
 		file, err := os.Create(summaryPath) // #nosec G304
@@ -203,12 +210,12 @@ func main() {
 			fmt.Fprintf(file, "Generation time: %v\n", testResult.GenerationTime)
 			file.Close()
 		}
-		
+
 		log.Printf("✓ %d-mer model summary saved to %s", k, summaryPath)
 	}
-	
+
 	log.Printf("=== Training Complete ===")
-	log.Printf("All HMM models trained successfully!")
+	log.Printf("All HMM models trained (summaries only; models are not saved)")
 	log.Printf("Next steps:")
 	log.Printf("1. Run tests: go test ./internal/genomics/authenticity/...")
 	log.Printf("2. Validate against real FASTQ datasets")

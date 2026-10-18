@@ -1,3 +1,12 @@
+// Command test_population_structure_validation runs
+// internal/population/pca_validation.py and ld_decay_validation.py on their
+// own (they are not given the generated data), simulates YRI, CEU and CHB
+// haplotypes on chr22 with the Python haplotype simulator, and prints
+// diversity ordering, LD validation counts and a PCA "readiness" tally from
+// variant and block counts. Run it from the repository root.
+//
+// It is a one-off experiment, not part of the supported phantom-science CLI.
+// Some items in its final assessment are hard-coded to true.
 package main
 
 import (
@@ -27,17 +36,17 @@ func main() {
 
 	// Test 1: Check Python dependencies for PCA validation
 	fmt.Println("\n1️⃣ Testing PCA Validation Dependencies...")
-	
+
 	pcaScriptPath := fmt.Sprintf("%s/internal/population/pca_validation.py", projectRoot)
 	if _, err := os.Stat(pcaScriptPath); err != nil {
 		fmt.Printf("   ❌ PCA validation script not found: %s\n", pcaScriptPath)
 	} else {
 		fmt.Printf("   ✅ PCA validation script available: %s\n", pcaScriptPath)
-		
+
 		// Test PCA validation script
 		cmd := exec.Command("python3", pcaScriptPath) // #nosec G204
 		cmd.Dir = projectRoot
-		
+
 		output, err := cmd.CombinedOutput()
 		if err != nil {
 			fmt.Printf("   ⚠️  PCA validation test failed: %v\n", err)
@@ -56,17 +65,17 @@ func main() {
 
 	// Test 2: Check LD decay validation
 	fmt.Println("\n2️⃣ Testing LD Decay Validation...")
-	
+
 	ldScriptPath := fmt.Sprintf("%s/internal/population/ld_decay_validation.py", projectRoot)
 	if _, err := os.Stat(ldScriptPath); err != nil {
 		fmt.Printf("   ❌ LD decay validation script not found: %s\n", ldScriptPath)
 	} else {
 		fmt.Printf("   ✅ LD decay validation script available: %s\n", ldScriptPath)
-		
-		// Test LD decay validation script  
+
+		// Test LD decay validation script
 		cmd := exec.Command("python3", ldScriptPath) // #nosec G204
 		cmd.Dir = projectRoot
-		
+
 		output, err := cmd.CombinedOutput()
 		if err != nil {
 			fmt.Printf("   ⚠️  LD decay validation test failed: %v\n", err)
@@ -85,14 +94,14 @@ func main() {
 
 	// Test 3: Integration with existing haplotype simulation
 	fmt.Println("\n3️⃣ Testing Integration with Haplotype Simulation...")
-	
+
 	simulator := population.NewHaplotypeSimulator(projectRoot)
-	
+
 	// Test haplotype simulation for structure validation
 	randomSeed := 42
 	testPopulations := []population.Population{
 		population.YRI, // African
-		population.CEU, // European  
+		population.CEU, // European
 		population.CHB, // East Asian
 	}
 
@@ -103,8 +112,8 @@ func main() {
 		result, err := simulator.SimulateHaplotypes(
 			pop,
 			"chr22",
-			30,         // sample size
-			5_000_000,  // 5Mb sequence
+			30,        // sample size
+			5_000_000, // 5Mb sequence
 			&randomSeed,
 			false, // don't include matrix for now
 		)
@@ -128,7 +137,7 @@ func main() {
 		// Calculate basic population differentiation metrics
 		diversities := make(map[population.Population]float64)
 		ldMeans := make(map[population.Population]float64)
-		
+
 		for pop, result := range haplotypeResults {
 			diversities[pop] = result.Statistics.DiversityPi
 			ldMeans[pop] = result.Statistics.MeanRSquared
@@ -137,19 +146,19 @@ func main() {
 		// Calculate diversity coefficient of variation
 		var diversitySum, diversitySquareSum float64
 		count := float64(len(diversities))
-		
+
 		for _, diversity := range diversities {
 			diversitySum += diversity
 			diversitySquareSum += diversity * diversity
 		}
-		
+
 		diversityMean := diversitySum / count
 		diversityVariance := (diversitySquareSum / count) - (diversityMean * diversityMean)
 		diversityStd := 0.0
 		if diversityVariance > 0 {
 			diversityStd = math.Sqrt(diversityVariance)
 		}
-		
+
 		diversityCV := 0.0
 		if diversityMean > 0 {
 			diversityCV = diversityStd / diversityMean
@@ -158,15 +167,15 @@ func main() {
 		fmt.Printf("   📊 Population Diversity Analysis:\n")
 		fmt.Printf("      Mean Diversity: %.6f\n", diversityMean)
 		fmt.Printf("      Diversity CV: %.3f\n", diversityCV)
-		
+
 		// Test expected diversity hierarchy (African > European > East Asian)
 		yriDiversity := diversities[population.YRI]
 		ceuDiversity := diversities[population.CEU]
 		chbDiversity := diversities[population.CHB]
-		
+
 		hierarchyCorrect := yriDiversity > ceuDiversity && ceuDiversity > chbDiversity
 		fmt.Printf("      Diversity Hierarchy (YRI>CEU>CHB): %t\n", hierarchyCorrect)
-		
+
 		if hierarchyCorrect {
 			fmt.Printf("   ✅ Population diversity patterns match expectations\n")
 		} else {
@@ -189,9 +198,9 @@ func main() {
 					passedTests++
 				}
 			}
-			
+
 			fmt.Printf("   📊 LD Pattern Validation: %d/%d tests passed\n", passedTests, totalTests)
-			
+
 			if passedTests >= totalTests*3/4 {
 				fmt.Printf("   ✅ LD patterns show proper population structure\n")
 			} else {
@@ -200,7 +209,7 @@ func main() {
 		}
 	}
 
-	// Test 6: Preparation for PCA Analysis Integration  
+	// Test 6: Preparation for PCA Analysis Integration
 	fmt.Println("\n6️⃣ Testing Preparation for PCA Analysis Integration...")
 
 	// Verify haplotype matrices can be generated for PCA
@@ -225,14 +234,14 @@ func main() {
 
 	// Quality metrics
 	qualityMetrics := map[string]bool{
-		"PCA validation framework available":     true, // Scripts created
-		"LD decay validation framework ready":   true, // Scripts created
-		"Haplotype simulation operational":      len(haplotypeResults) >= 3,
-		"Population differentiation detected":   len(haplotypeResults) >= 3,
-		"LD structure modeling functional":      len(haplotypeResults) >= 3,
-		"Cross-population analysis ready":       pcaReadyCount >= 2,
-		"Integration pipeline established":      true, // Framework in place
-		"Phase 2 Week 5 foundation complete":   true, // Core functionality ready
+		"PCA validation script (not checked)":                     true,
+		"LD decay validation script (not checked)":                true,
+		"Haplotype simulation (>= 3 populations simulated)":       len(haplotypeResults) >= 3,
+		"Population differentiation (only checks >= 3 simulated)": len(haplotypeResults) >= 3,
+		"LD structure modeling (only checks >= 3 simulated)":      len(haplotypeResults) >= 3,
+		"Cross-population analysis (>= 2 populations PCA-ready)":  pcaReadyCount >= 2,
+		"Integration pipeline (not checked)":                      true,
+		"Phase 2 Week 5 foundation (not checked)":                 true,
 	}
 
 	passedQuality := 0
@@ -250,35 +259,11 @@ func main() {
 
 	// Final assessment
 	fmt.Printf("\n🎯 PHASE 2 WEEK 5 COMPLETION ASSESSMENT\n")
-	fmt.Printf("   Validation Quality: %d/%d tests passed\n", passedQuality, totalQuality)
+	fmt.Printf("   Validation Quality: %d/%d checks true (4 of them hard-coded)\n", passedQuality, totalQuality)
 
 	if passedQuality >= totalQuality*3/4 {
-		fmt.Printf("   🎉 PHASE 2 WEEK 5: SUCCESSFULLY COMPLETED\n")
-		fmt.Printf("   ✅ PCA validation framework implemented\n")
-		fmt.Printf("   ✅ LD decay validation framework ready\n")
-		fmt.Printf("   ✅ Population structure analysis operational\n")
+		fmt.Printf("   Most checks true; no PCA, LD decay or F_ST analysis of the simulated data was performed\n")
 	} else {
-		fmt.Printf("   ⚠️  PHASE 2 WEEK 5: PARTIALLY COMPLETED\n")
-		fmt.Printf("   📝 Core frameworks ready, integration may need refinement\n")
+		fmt.Printf("   ⚠️  Several checks failed; see above\n")
 	}
-
-	// Summary and next steps
-	fmt.Printf("\n📊 POPULATION STRUCTURE VALIDATION SUMMARY\n")
-	fmt.Print("=" + strings.Repeat("=", 45) + "\n")
-	fmt.Printf("✅ PCA Framework: Principal component analysis with population clustering\n")
-	fmt.Printf("✅ LD Decay Validation: Empirical linkage disequilibrium pattern validation\n")
-	fmt.Printf("✅ Population Differentiation: Cross-population structure analysis\n")
-	fmt.Printf("✅ Statistical Testing: Comprehensive validation metrics framework\n")
-	fmt.Printf("✅ Haplotype Integration: Seamless connection with existing simulation\n")
-	fmt.Printf("✅ Continental Grouping: African, European, East Asian pattern recognition\n")
-	
-	fmt.Printf("\n🔬 VALIDATION CAPABILITIES\n")
-	fmt.Printf("📊 PCA Analysis: Population clustering and continental grouping validation\n")
-	fmt.Printf("📈 LD Decay: Realistic linkage patterns with empirical parameter comparison\n")
-	fmt.Printf("🧬 Population Structure: F_ST calculation and population differentiation\n")
-	fmt.Printf("✅ Statistical Framework: Comprehensive testing with literature benchmarks\n")
-
-	fmt.Printf("\n🎯 PHASE 2 WEEK 5 IMPLEMENTATION: COMPLETE\n")
-	fmt.Printf("Ready for Week 6: Population Structure Metrics and F_ST Analysis\n")
-	fmt.Printf("🚀 Advanced population structure validation foundation established!\n")
 }

@@ -1,3 +1,12 @@
+// Command production_training trains a k=4 authenticity.AdaptiveHMMModel on
+// the reference genome in data/astrapi_training/human, generates five
+// 50 kb sequences, computes complexity, GC, homopolymer, CpG and
+// Jensen-Shannon divergence against reference windows, and writes JSON
+// progress reports and a text summary to training_progress/. Improvement
+// factors are relative to constants from earlier runs (complexity 0.005, JS
+// divergence 0.055).
+//
+// It is a one-off experiment, not part of the supported phantom-science CLI.
 package main
 
 import (
@@ -15,22 +24,22 @@ import (
 
 // ProgressReport represents training progress that can be written to files
 type ProgressReport struct {
-	Timestamp           time.Time `json:"timestamp"`
-	Phase               string    `json:"phase"`
-	Status              string    `json:"status"`
-	TrainingStartTime   time.Time `json:"training_start_time,omitempty"`
-	TrainingDuration    string    `json:"training_duration,omitempty"`
-	KmersProcessed      int64     `json:"kmers_processed,omitempty"`
-	ChromosomesLoaded   int       `json:"chromosomes_loaded,omitempty"`
-	SequenceComplexity  float64   `json:"sequence_complexity,omitempty"`
-	GCContent           float64   `json:"gc_content,omitempty"`
-	JSdivergence        float64   `json:"js_divergence,omitempty"`
-	MaxHomopolymer      int       `json:"max_homopolymer,omitempty"`
-	CpGDepletion        float64   `json:"cpg_depletion,omitempty"`
-	GenerationSpeed     float64   `json:"generation_speed_kb_per_sec,omitempty"`
-	OverallStatus       string    `json:"overall_status,omitempty"`
-	Message             string    `json:"message,omitempty"`
-	ErrorMessage        string    `json:"error_message,omitempty"`
+	Timestamp          time.Time `json:"timestamp"`
+	Phase              string    `json:"phase"`
+	Status             string    `json:"status"`
+	TrainingStartTime  time.Time `json:"training_start_time,omitempty"`
+	TrainingDuration   string    `json:"training_duration,omitempty"`
+	KmersProcessed     int64     `json:"kmers_processed,omitempty"`
+	ChromosomesLoaded  int       `json:"chromosomes_loaded,omitempty"`
+	SequenceComplexity float64   `json:"sequence_complexity,omitempty"`
+	GCContent          float64   `json:"gc_content,omitempty"`
+	JSdivergence       float64   `json:"js_divergence,omitempty"`
+	MaxHomopolymer     int       `json:"max_homopolymer,omitempty"`
+	CpGDepletion       float64   `json:"cpg_depletion,omitempty"`
+	GenerationSpeed    float64   `json:"generation_speed_kb_per_sec,omitempty"`
+	OverallStatus      string    `json:"overall_status,omitempty"`
+	Message            string    `json:"message,omitempty"`
+	ErrorMessage       string    `json:"error_message,omitempty"`
 }
 
 func writeProgressReport(report ProgressReport, outputDir string) {
@@ -38,19 +47,19 @@ func writeProgressReport(report ProgressReport, outputDir string) {
 	timestamp := time.Now().Format("20060102_150405")
 	filename := fmt.Sprintf("progress_%s_%s.json", report.Phase, timestamp)
 	filePath := filepath.Join(outputDir, filename)
-	
+
 	data, err := json.MarshalIndent(report, "", "  ")
 	if err != nil {
 		log.Printf("Warning: Could not marshal progress report: %v", err)
 		return
 	}
-	
+
 	err = os.WriteFile(filePath, data, 0600)
 	if err != nil {
 		log.Printf("Warning: Could not write progress file %s: %v", filePath, err)
 		return
 	}
-	
+
 	// Also write latest status
 	latestPath := filepath.Join(outputDir, "latest_progress.json")
 	err = os.WriteFile(latestPath, data, 0600)
@@ -90,7 +99,7 @@ func main() {
 
 	// Step 3: Production training on complete genome
 	logTrainingStepHeader(outputDir)
-	
+
 	writeTrainingStartReport(outputDir)
 
 	// Start training
@@ -100,36 +109,36 @@ func main() {
 		writeTrainingFailReport(outputDir, trainingStart, fmt.Sprintf("Training failed: %v", err))
 		os.Exit(1)
 	}
-	
+
 	trainingTime := time.Since(trainingStart)
 	totalKmers := adaptiveModel.TotalKmers()
-	
+
 	logTrainingComplete(trainingTime, totalKmers)
 	writeTrainingCompleteReport(outputDir, trainingTime, totalKmers)
-	
+
 	// Step 4: Generate validation sequences
 	log.Printf("\n[STEP 4] Generating validation sequences...")
 	sequenceLength := 50000
 	numSequences := 5
-	
+
 	writeValidationStartReport(outputDir, numSequences, sequenceLength)
 
 	var sequences [][]byte
 	var totalGenTime time.Duration
-	
+
 	for i := 0; i < numSequences; i++ {
 		log.Printf("  Generating validation sequence %d/%d...", i+1, numSequences)
-		
+
 		result, err := adaptiveModel.GenerateSequence(sequenceLength)
 		if err != nil {
 			writeGenerationFailReport(outputDir, fmt.Sprintf("Generation failed: %v", err))
 			os.Exit(1)
 		}
-		
+
 		sequences = append(sequences, result.Sequence)
 		totalGenTime += result.GenerationTime
 	}
-	
+
 	avgGenTime := totalGenTime / time.Duration(numSequences)
 	generationSpeed := float64(sequenceLength) / avgGenTime.Seconds() / 1000.0
 
@@ -171,7 +180,7 @@ func runValidationAndReport(
 	} else {
 		jsDivergence = calculateJensenShannonDivergence(sequences, referenceSequences, k)
 		jsImprovement := 0.055 / jsDivergence
-		log.Printf("  JS Divergence: %.6f (%.1fx improvement)", jsDivergence, jsImprovement)
+		log.Printf("  JS Divergence: %.6f (%.1fx lower than the 0.055 baseline)", jsDivergence, jsImprovement)
 	}
 
 	results := evaluateProductionPassing(metrics, jsDivergence)
@@ -218,14 +227,14 @@ func runValidationAndReport(
 
 // ProductionMetrics holds the comprehensive authenticity metrics for production validation.
 type ProductionMetrics struct {
-	Complexity             float64
-	ComplexityImprovement  float64
-	GCContent              float64
-	GCError                float64
-	MaxHomopolymer         int
-	CpGDepletion           float64
-	JSDivergence           float64
-	GenerationSpeed        float64
+	Complexity            float64
+	ComplexityImprovement float64
+	GCContent             float64
+	GCError               float64
+	MaxHomopolymer        int
+	CpGDepletion          float64
+	JSDivergence          float64
+	GenerationSpeed       float64
 }
 
 // ProductionPassResults records the pass/fail outcome for each production criterion.
@@ -303,7 +312,7 @@ Training Duration: %v
 Total K-mers: %d
 
 AUTHENTICITY METRICS:
-- Sequence Complexity: %.4f (%.1fx improvement)
+- Sequence Complexity: %.4f (%.1fx the 0.005 baseline)
 - GC Content: %.2f%% (target: 42%%)
 - JS Divergence: %.6f (target: < 0.02)
 - Max Homopolymer: %d (target: < 15)
@@ -312,15 +321,11 @@ AUTHENTICITY METRICS:
 
 OVERALL STATUS: %s
 
-%s Production-ready genomic authenticity achieved!
-%s Ready for population genomics expansion
-%s Astrapi infrastructure validated for world-class training
-
 Next Steps:
 1. Download 1000 Genomes population data (2TB subset)
 2. Train population-aware model for additional improvements
 3. Add mammalian genomes for universal patterns
-4. Target final complexity: 0.5+ (100x total improvement)
+4. Target final complexity: 0.5+
 `,
 		completedAt,
 		trainingTime,
@@ -332,7 +337,7 @@ Next Steps:
 		m.CpGDepletion,
 		m.GenerationSpeed,
 		overallStatus,
-		"✅", "✅", "✅")
+	)
 }
 
 // writeFinalSummary writes the summary text file to the output directory.
@@ -369,7 +374,7 @@ func buildFinalProgressReport(
 		CpGDepletion:       m.CpGDepletion,
 		GenerationSpeed:    m.GenerationSpeed,
 		OverallStatus:      overallStatus,
-		Message:            fmt.Sprintf("Production training completed with %.1fx complexity improvement", complexityImprovement),
+		Message:            fmt.Sprintf("Production training completed; complexity %.1fx the 0.005 baseline", complexityImprovement),
 	}
 }
 
@@ -386,8 +391,7 @@ func determineOverallStatus(overallPass bool) string {
 func logProductionIntroduction(outputDir string) {
 	log.Printf("=== PRODUCTION FULL GENOME TRAINING ===")
 	log.Printf("Astrapi High-Capacity Training with Progress Monitoring")
-	log.Printf("Target: JS Divergence < 0.01 for production authenticity")
-	log.Printf("Expected: 20-50x complexity improvement")
+	log.Printf("Target: JS Divergence < 0.02 (pass threshold)")
 	log.Printf("📊 Progress monitoring: %s/", outputDir)
 	log.Printf("📊 Monitor with: watch 'cat %s/latest_progress.json | jq .'", outputDir)
 }
@@ -398,13 +402,13 @@ func logProductionModelSetup(k int, refGenomeDir string, numChromosomes int) {
 	log.Printf("✓ Data location: %s", refGenomeDir)
 	log.Printf("✓ Available chromosomes: %d", numChromosomes)
 	log.Printf("✓ Production model created with k=%d", k)
-	log.Printf("✓ Configured for complete genome training")
+	log.Printf("✓ Configured to train on all chromosomes found")
 }
 
 // logTrainingStepHeader logs the Step 3 training header lines.
 func logTrainingStepHeader(outputDir string) {
 	log.Printf("\n[STEP 3] PRODUCTION TRAINING - Complete Human Genome...")
-	log.Printf("Training on complete GRCh38 (3.2GB) - estimated 2+ hours")
+	log.Printf("Training on every chromosome in the reference directory")
 	log.Printf("Progress will be written to %s/", outputDir)
 	log.Printf("This process will run uninterrupted until completion...")
 }
@@ -456,7 +460,7 @@ func computeJSDivergenceWithLogging(sequences [][]byte, refGenome *reference.Sim
 	}
 	jsDivergence := calculateJensenShannonDivergence(sequences, referenceSequences, k)
 	jsImprovement := 0.055 / jsDivergence
-	log.Printf("  JS Divergence: %.6f (%.1fx improvement)", jsDivergence, jsImprovement)
+	log.Printf("  JS Divergence: %.6f (%.1fx lower than the 0.055 baseline)", jsDivergence, jsImprovement)
 	return jsDivergence
 }
 
@@ -530,7 +534,7 @@ func writeTrainingCompleteReport(outputDir string, trainingTime time.Duration, t
 
 // logProductionMetricsResults logs individual metric pass/fail lines.
 func logProductionMetricsResults(m ProductionMetrics, r ProductionPassResults, jsDivergence float64) {
-	log.Printf("  Complexity: %.4f (%.1fx improvement) %s", m.Complexity, m.ComplexityImprovement, passFailIcon(r.ComplexityPass))
+	log.Printf("  Complexity: %.4f (%.1fx the 0.005 baseline) %s", m.Complexity, m.ComplexityImprovement, passFailIcon(r.ComplexityPass))
 	log.Printf("  GC Content: %.2f%% (error: %.4f) %s", m.GCContent*100, m.GCError, passFailIcon(r.GCPass))
 	log.Printf("  Max Homopolymer: %d %s", m.MaxHomopolymer, passFailIcon(r.HomopolymerPass))
 	log.Printf("  CpG Depletion: %.3f %s", m.CpGDepletion, passFailIcon(r.CpGPass))
@@ -543,10 +547,10 @@ func logProductionMetricsResults(m ProductionMetrics, r ProductionPassResults, j
 func logProductionResultsSummary(trainingTime time.Duration, totalKmers uint64, m ProductionMetrics, jsDivergence float64, overallStatus string) {
 	log.Printf("\n🧬 PRODUCTION TRAINING RESULTS:")
 	log.Printf("=====================================")
-	log.Printf("Training Data:       Complete GRCh38 genome (3.2GB)")
+	log.Printf("Training Data:       reference genome chromosomes found on disk")
 	log.Printf("Training Time:       %v", trainingTime)
 	log.Printf("K-mers Processed:    %d", totalKmers)
-	log.Printf("Complexity:          %.4f (%.1fx improvement)", m.Complexity, m.ComplexityImprovement)
+	log.Printf("Complexity:          %.4f (%.1fx the 0.005 baseline)", m.Complexity, m.ComplexityImprovement)
 	log.Printf("GC Content:          %.2f%% (error: %.4f)", m.GCContent*100, m.GCError)
 	log.Printf("JS Divergence:       %.6f", jsDivergence)
 	log.Printf("Generation Speed:    %.1f kb/s", m.GenerationSpeed)
@@ -556,11 +560,10 @@ func logProductionResultsSummary(trainingTime time.Duration, totalKmers uint64, 
 // logProductionFinalOutcome prints SUCCESS or PROGRESS message depending on overallPass.
 func logProductionFinalOutcome(overallPass bool) {
 	if overallPass {
-		log.Printf("\n✅ SUCCESS: Production training achieved world-class authenticity!")
-		log.Printf("✅ Ready for population genomics expansion")
-		log.Printf("✅ Astrapi infrastructure validated for massive scale")
+		log.Printf("\n✅ SUCCESS: all metric thresholds passed")
+		log.Printf("✅ Next: population-aware training")
 	} else {
-		log.Printf("\n⚠ PROGRESS: Significant improvements achieved")
+		log.Printf("\n⚠ PARTIAL: some metric thresholds failed")
 		log.Printf("⚠ Consider population data for further enhancement")
 	}
 }
@@ -576,13 +579,13 @@ func calculateSequenceComplexity(sequence []byte, k int) float64 {
 	if len(sequence) < k {
 		return 0.0
 	}
-	
+
 	uniqueKmers := make(map[string]bool)
 	for i := 0; i <= len(sequence)-k; i++ {
 		kmer := string(sequence[i : i+k])
 		uniqueKmers[kmer] = true
 	}
-	
+
 	totalKmers := len(sequence) - k + 1
 	return float64(len(uniqueKmers)) / float64(totalKmers)
 }
@@ -590,7 +593,7 @@ func calculateSequenceComplexity(sequence []byte, k int) float64 {
 func calculateGCContent(sequences [][]byte) float64 {
 	totalBases := 0
 	gcCount := 0
-	
+
 	for _, seq := range sequences {
 		for _, base := range seq {
 			totalBases++
@@ -599,7 +602,7 @@ func calculateGCContent(sequences [][]byte) float64 {
 			}
 		}
 	}
-	
+
 	if totalBases == 0 {
 		return 0.0
 	}
@@ -608,7 +611,7 @@ func calculateGCContent(sequences [][]byte) float64 {
 
 func findMaxHomopolymerRun(sequences [][]byte) int {
 	maxRun := 0
-	
+
 	for _, seq := range sequences {
 		currentRun := 1
 		for i := 1; i < len(seq); i++ {
@@ -625,7 +628,7 @@ func findMaxHomopolymerRun(sequences [][]byte) int {
 			maxRun = currentRun
 		}
 	}
-	
+
 	return maxRun
 }
 
@@ -633,7 +636,7 @@ func calculateCpGDepletion(sequences [][]byte) float64 {
 	totalCpG := 0
 	totalC := 0
 	totalG := 0
-	
+
 	for _, seq := range sequences {
 		for i := 0; i < len(seq)-1; i++ {
 			if seq[i] == 'C' && seq[i+1] == 'G' {
@@ -647,30 +650,30 @@ func calculateCpGDepletion(sequences [][]byte) float64 {
 			}
 		}
 	}
-	
+
 	if totalC == 0 || totalG == 0 {
 		return 0.0
 	}
-	
-	expectedCpG := float64(totalC * totalG) / float64(len(sequences)*50000)
+
+	expectedCpG := float64(totalC*totalG) / float64(len(sequences)*50000)
 	if expectedCpG == 0 {
 		return 0.0
 	}
-	
+
 	return float64(totalCpG) / expectedCpG
 }
 
 func loadReferenceSequences(refGenome *reference.SimpleReferenceGenome, numSequences, length int) ([][]byte, error) {
 	var sequences [][]byte
-	
+
 	chr1, err := refGenome.LoadChromosome("chr1")
 	if err != nil {
 		return nil, err
 	}
-	
+
 	chrSequence := chr1.GetSequence()
 	chrLength := chr1.GetLength()
-	
+
 	for i := 0; i < numSequences; i++ {
 		start := i * length * 10
 		if start >= chrLength {
@@ -679,44 +682,44 @@ func loadReferenceSequences(refGenome *reference.SimpleReferenceGenome, numSeque
 		if start < 0 {
 			start = 0
 		}
-		
+
 		end := start + length
 		if end > chrLength {
 			end = chrLength
 		}
-		
+
 		if end <= start {
 			break
 		}
-		
+
 		sequence := make([]byte, end-start)
 		copy(sequence, chrSequence[start:end])
 		sequences = append(sequences, sequence)
 	}
-	
+
 	return sequences, nil
 }
 
 func calculateJensenShannonDivergence(syntheticSeqs, realSeqs [][]byte, k int) float64 {
 	syntheticKmers := extractKmerCounts(syntheticSeqs, k)
 	realKmers := extractKmerCounts(realSeqs, k)
-	
+
 	syntheticProbs := normalizeCounts(syntheticKmers)
 	realProbs := normalizeCounts(realKmers)
-	
+
 	return jensenShannonDivergence(syntheticProbs, realProbs)
 }
 
 func extractKmerCounts(sequences [][]byte, k int) map[string]int {
 	counts := make(map[string]int)
-	
+
 	for _, seq := range sequences {
 		for i := 0; i <= len(seq)-k; i++ {
 			kmer := string(seq[i : i+k])
 			counts[kmer]++
 		}
 	}
-	
+
 	return counts
 }
 
@@ -725,12 +728,12 @@ func normalizeCounts(counts map[string]int) map[string]float64 {
 	for _, count := range counts {
 		total += count
 	}
-	
+
 	probs := make(map[string]float64)
 	for kmer, count := range counts {
 		probs[kmer] = float64(count) / float64(total)
 	}
-	
+
 	return probs
 }
 
@@ -742,18 +745,18 @@ func jensenShannonDivergence(p, q map[string]float64) float64 {
 	for kmer := range q {
 		allKmers[kmer] = true
 	}
-	
+
 	jsd := 0.0
 	for kmer := range allKmers {
 		pVal := p[kmer]
 		qVal := q[kmer]
-		
+
 		if pVal == 0 && qVal == 0 {
 			continue
 		}
-		
+
 		m := (pVal + qVal) / 2.0
-		
+
 		if pVal > 0 && m > 0 {
 			jsd += pVal * math.Log2(pVal/m)
 		}
@@ -761,6 +764,6 @@ func jensenShannonDivergence(p, q map[string]float64) float64 {
 			jsd += qVal * math.Log2(qVal/m)
 		}
 	}
-	
+
 	return jsd / 2.0
 }

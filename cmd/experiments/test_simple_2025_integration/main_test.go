@@ -33,7 +33,8 @@ func TestCalculateComprehensiveAssessment_Positive(t *testing.T) {
 
 func TestCalculateIndistinguishabilityScore_NearHalf(t *testing.T) {
 	score := calculateIndistinguishabilityScore()
-	// Should be close to 0.5 (target is ~50% classification accuracy)
+	// Both classes come from the same generator, so CV accuracy should be
+	// near chance.
 	if score < 0.4 || score > 0.6 {
 		t.Errorf("calculateIndistinguishabilityScore() = %f, expected near 0.5", score)
 	}

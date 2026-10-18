@@ -1,3 +1,15 @@
+// Command test_complete_vcf_integration runs the Python demographic and
+// haplotype simulators through internal/population (which need the
+// phantom_science_env virtual environment under the working directory) for
+// YRI, CEU and CHB, prints variant counts, LD blocks and diversity, and runs
+// ValidateLDPatterns on the results.
+//
+// It is a one-off experiment, not part of the supported phantom-science CLI.
+// It reads no VCF data: it only checks whether the hard-coded
+// /Volumes/Public/genomics_training/populations directory and a
+// parallel_vcf_training.log file exist. Three of its checklist items are
+// hard-coded true, and the closing summary lists design goals, not results
+// measured by this program.
 package main
 
 import (
@@ -11,7 +23,7 @@ import (
 )
 
 func main() {
-	fmt.Println("🔗 COMPREHENSIVE VCF-HAPLOTYPE INTEGRATION TEST")
+	fmt.Println("🔗 VCF-HAPLOTYPE INTEGRATION SMOKE TEST (experiment)")
 	fmt.Println("=" + strings.Repeat("=", 50))
 
 	// Get project root
@@ -20,54 +32,50 @@ func main() {
 		log.Fatalf("Failed to get project root: %v", err)
 	}
 
-	fmt.Println("\n📊 PHASE 1 WEEK 4 VALIDATION SUMMARY")
-	fmt.Println("Integration of 888M+ processed variants with haplotype generation")
+	fmt.Println("\n📊 Runs the demographic and haplotype simulators; reads no VCF data")
 
-	// Test 1: VCF Data Access Validation
-	fmt.Println("\n1️⃣ Testing VCF Data Access...")
-	
-	// Test VCF data availability
+	// Test 1: VCF data path check
+	fmt.Println("\n1️⃣ Checking VCF data path...")
+
 	vcfPath := "/Volumes/Public/genomics_training/populations"
 	if _, err := os.Stat(vcfPath); err != nil {
 		fmt.Printf("   ⚠️  VCF data path not accessible: %s\n", vcfPath)
-		fmt.Printf("   📝 Note: VCF integration tested with available 888M+ variant dataset\n")
 	} else {
-		fmt.Printf("   ✅ VCF data path accessible: %s\n", vcfPath)
+		fmt.Printf("   ✅ VCF data path accessible: %s (not read)\n", vcfPath)
 	}
 
 	// Test 2: Demographic Model Integration
 	fmt.Println("\n2️⃣ Testing Demographic Model Integration...")
-	
+
 	simulator := population.NewDemographicSimulator(projectRoot)
-	
-	// Test demographic simulation capabilities
+
 	randomSeed := 42
 	testResult, err := simulator.SimulatePopulation(
 		population.YRI,
-		50,         // sample size
-		5_000_000,  // 5Mb sequence
+		50,        // sample size
+		5_000_000, // 5Mb sequence
 		&randomSeed,
 	)
 	if err != nil {
 		log.Printf("   ❌ Demographic simulation failed: %v", err)
 	} else {
 		fmt.Printf("   ✅ Demographic simulation successful\n")
-		fmt.Printf("      Variants: %d, Diversity: %.6f\n", 
+		fmt.Printf("      Variants: %d, Diversity: %.6f\n",
 			testResult.NumVariants, testResult.Statistics.DiversityPi)
 	}
 
 	// Test 3: Haplotype Simulation Integration
 	fmt.Println("\n3️⃣ Testing Haplotype Simulation Integration...")
-	
+
 	haplotypeSimulator := population.NewHaplotypeSimulator(projectRoot)
-	
+
 	haplotypeResult, err := haplotypeSimulator.SimulateHaplotypes(
 		population.YRI,
 		"chr22",
-		30,         // sample size
-		5_000_000,  // 5Mb sequence
+		30,        // sample size
+		5_000_000, // 5Mb sequence
 		&randomSeed,
-		false,      // don't include matrix
+		false, // don't include matrix
 	)
 	if err != nil {
 		log.Printf("   ❌ Haplotype simulation failed: %v", err)
@@ -78,9 +86,9 @@ func main() {
 			haplotypeResult.Statistics.MeanRSquared)
 	}
 
-	// Test 4: Cross-Platform Integration
-	fmt.Println("\n4️⃣ Testing Cross-Platform Integration...")
-	
+	// Test 4: Multiple populations
+	fmt.Println("\n4️⃣ Testing Multiple Populations...")
+
 	testPops := []population.Population{
 		population.YRI, // African
 		population.CEU, // European
@@ -94,13 +102,13 @@ func main() {
 		result, err := haplotypeSimulator.SimulateHaplotypes(
 			pop,
 			"chr22",
-			20,         // smaller sample for speed
-			3_000_000,  // 3Mb sequence
+			20,        // smaller sample for speed
+			3_000_000, // 3Mb sequence
 			&randomSeed,
 			false,
 		)
 		if err != nil {
-			fmt.Printf("   ❌ %s integration failed: %v\n", pop, err)
+			fmt.Printf("   ❌ %s simulation failed: %v\n", pop, err)
 			continue
 		}
 
@@ -111,15 +119,15 @@ func main() {
 	}
 
 	totalTime := time.Since(totalStart)
-	fmt.Printf("   🎉 All populations integrated in %.2fs\n", totalTime.Seconds())
+	fmt.Printf("   Simulated %d/%d populations in %.2fs\n", len(integrationResults), len(testPops), totalTime.Seconds())
 
-	// Test 5: Statistical Framework Validation
-	fmt.Println("\n5️⃣ Testing Statistical Framework Validation...")
+	// Test 5: LD pattern checks
+	fmt.Println("\n5️⃣ Running ValidateLDPatterns...")
 
 	if len(integrationResults) > 0 {
 		validation, err := haplotypeSimulator.ValidateLDPatterns(integrationResults)
 		if err != nil {
-			fmt.Printf("   ❌ Statistical validation failed: %v\n", err)
+			fmt.Printf("   ❌ LD pattern checks failed: %v\n", err)
 		} else {
 			passedTests := 0
 			totalTests := len(validation)
@@ -128,41 +136,34 @@ func main() {
 					passedTests++
 				}
 			}
-			fmt.Printf("   📊 Statistical validation: %d/%d tests passed\n", 
+			fmt.Printf("   📊 LD pattern checks: %d/%d passed\n",
 				passedTests, totalTests)
 		}
 	}
 
-	// Test 6: Existing Framework Integration
-	fmt.Println("\n6️⃣ Testing Existing Framework Integration...")
+	// Test 6: Earlier training log
+	fmt.Println("\n6️⃣ Checking for an earlier VCF training log...")
 
-	// Test integration with existing authenticity engine
-	fmt.Printf("   📋 Existing VCF Training Results Available:\n")
-	
-	// Reference to existing parallel VCF training
 	vcfTrainingLog := "parallel_vcf_training.log"
 	if _, err := os.Stat(vcfTrainingLog); err == nil {
-		fmt.Printf("   ✅ 888M+ variant training log accessible\n")
-		fmt.Printf("   📊 11 populations trained with parallel processing\n")
-		fmt.Printf("   ⚡ 8x speedup achieved in authentic VCF processing\n")
+		fmt.Printf("   ✅ %s found (contents not checked)\n", vcfTrainingLog)
 	} else {
-		fmt.Printf("   📝 VCF training results documented in project history\n")
+		fmt.Printf("   📝 %s not found\n", vcfTrainingLog)
 	}
 
-	// Validate integration quality
-	fmt.Println("\n📋 INTEGRATION QUALITY ASSESSMENT")
+	fmt.Println("\n📋 CHECKLIST")
 	fmt.Println("=" + strings.Repeat("=", 40))
 
-	// Quality metrics
+	// The last three items are hard-coded true; nothing here checks them.
 	qualityMetrics := map[string]bool{
-		"Demographic models integrated":     testResult != nil,
-		"Haplotype simulation operational":  haplotypeResult != nil,
-		"Cross-population validation":       len(integrationResults) >= 3,
-		"LD structure modeling":             haplotypeResult != nil && len(haplotypeResult.LDBlocks) > 0,
-		"Population differentiation":        len(integrationResults) >= 3,
-		"Statistical framework validated":   true, // Comprehensive validation performed
-		"Memory efficiency confirmed":       true, // <30MB per simulation validated
-		"Production readiness achieved":     true, // Integration pipeline operational
+		"Demographic simulation ran":              testResult != nil,
+		"Haplotype simulation ran":                haplotypeResult != nil,
+		"Three populations simulated":             len(integrationResults) >= 3,
+		"LD blocks present":                       haplotypeResult != nil && len(haplotypeResult.LDBlocks) > 0,
+		"Population results available to compare": len(integrationResults) >= 3,
+		"Statistical framework (hard-coded true)": true,
+		"Memory efficiency (hard-coded true)":     true,
+		"Pipeline operational (hard-coded true)":  true,
 	}
 
 	passedQuality := 0
@@ -178,37 +179,18 @@ func main() {
 		fmt.Printf("   %s: %s\n", metric, status)
 	}
 
-	// Final assessment
-	fmt.Printf("\n🎯 PHASE 1 WEEK 4 COMPLETION ASSESSMENT")
-	fmt.Printf("\n   Integration Quality: %d/%d tests passed\n", passedQuality, totalQuality)
+	fmt.Printf("\n🎯 RESULT")
+	fmt.Printf("\n   Checklist: %d/%d items true\n", passedQuality, totalQuality)
 
 	if passedQuality >= totalQuality*3/4 {
-		fmt.Printf("   🎉 PHASE 1 WEEK 4: SUCCESSFULLY COMPLETED\n")
-		fmt.Printf("   ✅ VCF-Haplotype integration operational\n")
-		fmt.Printf("   ✅ Statistical framework validation passed\n")
-		fmt.Printf("   ✅ Cross-population authenticity confirmed\n")
+		fmt.Printf("   ✅ Simulators ran for the test populations\n")
 	} else {
-		fmt.Printf("   ⚠️  PHASE 1 WEEK 4: PARTIALLY COMPLETED\n")
-		fmt.Printf("   📝 Core functionality operational with room for enhancement\n")
+		fmt.Printf("   ⚠️  Some simulator runs failed\n")
 	}
 
-	// Summary and next steps
-	fmt.Printf("\n📊 COMPREHENSIVE INTEGRATION SUMMARY\n")
+	fmt.Printf("\n📊 NOT MEASURED BY THIS PROGRAM\n")
 	fmt.Print("=" + strings.Repeat("=", 40) + "\n")
-	fmt.Printf("✅ Demographic Models: 11 populations with literature-validated parameters\n")
-	fmt.Printf("✅ Haplotype Simulation: Coalescent-based with realistic LD structure\n")
-	fmt.Printf("✅ Recombination Maps: Population-specific rates with hotspot modeling\n")
-	fmt.Printf("✅ Statistical Validation: Comprehensive population genetics metrics\n")
-	fmt.Printf("✅ Cross-Platform Integration: Go-Python bridge with production quality\n")
-	fmt.Printf("✅ Memory Efficiency: <30MB per simulation, production-ready scaling\n")
-	
-	fmt.Printf("\n🔗 VCF INTEGRATION STATUS\n")
-	fmt.Printf("📊 888M+ Variant Dataset: Available from parallel VCF training\n")
-	fmt.Printf("🧬 Population-Specific Frequencies: Integrated via demographic models\n")
-	fmt.Printf("📈 Authentic Patterns: Coalescent simulation ensures biological realism\n")
-	fmt.Printf("✅ Statistical Framework: Comprehensive validation with established metrics\n")
-
-	fmt.Printf("\n🎯 PHASE 1 IMPLEMENTATION: COMPLETE\n")
-	fmt.Printf("Ready for Phase 2: Enhanced Authenticity Engine\n")
-	fmt.Printf("🚀 Statistical indistinguishability foundation established!\n")
+	fmt.Printf("Agreement of the demographic parameters with the literature, realism of\n")
+	fmt.Printf("the simulated LD, memory use, and any comparison with real VCF data are\n")
+	fmt.Printf("not checked here.\n")
 }

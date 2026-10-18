@@ -32,9 +32,9 @@ func TestElementAVITIPlatform(t *testing.T) {
 		BatchInterval:    "30s",
 		TotalBatches:     2,
 		PairedEnd:        true,
-		BaseQuality:      44, // Q44 peak quality for AVITI
+		BaseQuality:      44,
 		QualityDecay:     0.02,
-		Q30Percentage:    96.2, // AVITI's superior accuracy
+		Q30Percentage:    96.2,
 	}
 
 	// Test timing profile retrieval
@@ -61,7 +61,7 @@ func TestElementAVITIPlatform(t *testing.T) {
 	if totalFiles != expectedFiles {
 		t.Errorf("Expected %d files estimate, got %d", expectedFiles, totalFiles)
 	}
-	
+
 	if totalBytes <= 0 {
 		t.Errorf("Expected positive byte estimate, got %d", totalBytes)
 	}
@@ -124,7 +124,7 @@ func TestPromethION24Platform(t *testing.T) {
 	if totalFiles != expectedFiles {
 		t.Errorf("Expected %d files estimate, got %d", expectedFiles, totalFiles)
 	}
-	
+
 	if totalBytes <= 0 {
 		t.Errorf("Expected positive byte estimate, got %d", totalBytes)
 	}
@@ -169,18 +169,18 @@ func TestPromethION24LegacyChemistry(t *testing.T) {
 	}
 }
 
+// TestAVITIQualityCharacteristics only reads back the literal config below;
+// it does not check generated qualities or any production default.
 func TestAVITIQualityCharacteristics(t *testing.T) {
-	// Test AVITI's unique quality characteristics
 	config := types.SequencerConfig{
 		SequencerModel: "Element AVITI",
 		FlowCellType:   "Dual",
 		ReadLength:     150,
-		BaseQuality:    44,    // Q44 peak quality
-		QualityDecay:   0.02,  // Moderate decay
-		Q30Percentage:  96.2,  // 96.2% Q30+ bases
+		BaseQuality:    44,
+		QualityDecay:   0.02,
+		Q30Percentage:  96.2,
 	}
 
-	// Verify quality parameters are within AVITI specifications
 	if config.BaseQuality != 44 {
 		t.Errorf("AVITI should have Q44 base quality, got Q%d", config.BaseQuality)
 	}
@@ -194,8 +194,9 @@ func TestAVITIQualityCharacteristics(t *testing.T) {
 	}
 }
 
+// TestNanoporeRealTimeCharacteristics, like TestAVITIQualityCharacteristics,
+// only reads back the literal config below.
 func TestNanoporeRealTimeCharacteristics(t *testing.T) {
-	// Test nanopore real-time characteristics
 	config := types.SequencerConfig{
 		SequencerModel: "PromethION 24",
 		FlowCellType:   "R10.4.1",
@@ -226,21 +227,21 @@ func TestNanoporeRealTimeCharacteristics(t *testing.T) {
 
 func TestPlatformSpecificFileNaming(t *testing.T) {
 	tests := []struct {
-		name        string
-		model       string
-		flowCell    string
+		name            string
+		model           string
+		flowCell        string
 		expectedPattern string
 	}{
 		{
 			name:            "Element AVITI",
-			model:           "Element AVITI", 
+			model:           "Element AVITI",
 			flowCell:        "Dual",
 			expectedPattern: "sample_S1_L001_R1_001.fastq", // Illumina-like pattern
 		},
 		{
 			name:            "PromethION 24 R10.4.1",
 			model:           "PromethION 24",
-			flowCell:        "R10.4.1", 
+			flowCell:        "R10.4.1",
 			expectedPattern: "sample_barcode_001.fastq", // Nanopore pattern
 		},
 		{
@@ -257,7 +258,8 @@ func TestPlatformSpecificFileNaming(t *testing.T) {
 			if timingProfile.Model != tt.model {
 				t.Errorf("Expected model %s, got %s", tt.model, timingProfile.Model)
 			}
-			// File naming pattern validation would be implemented in the actual file generation logic
+			// expectedPattern is not checked: only the timing profile's
+			// model is compared.
 		})
 	}
 }

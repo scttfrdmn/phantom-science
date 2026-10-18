@@ -1,3 +1,10 @@
+// Command test_haplotype_integration runs the Python haplotype simulator
+// (from the current directory, which must be the repository root with
+// phantom_science_env) for several populations on chr22 and prints variant
+// counts, LD blocks, r², diversity, recombination-map length and block-size
+// statistics.
+//
+// It is a one-off experiment, not part of the supported phantom-science CLI.
 package main
 
 import (
@@ -64,8 +71,8 @@ func main() {
 		result, err := simulator.SimulateHaplotypes(
 			pop,
 			"chr22",
-			20,         // smaller sample for speed
-			5_000_000,  // 5Mb sequence
+			20,        // smaller sample for speed
+			5_000_000, // 5Mb sequence
 			&randomSeed,
 			false,
 		)
@@ -166,13 +173,8 @@ func main() {
 	// Summary
 	fmt.Println("\n📋 HAPLOTYPE INTEGRATION TEST SUMMARY")
 	fmt.Println("=" + strings.Repeat("=", 40))
-	fmt.Printf("✅ Single population haplotype simulation: PASSED\n")
-	fmt.Printf("✅ Multiple population simulation: PASSED\n")
-	fmt.Printf("✅ LD pattern validation: %d/%d tests PASSED\n", passedTests, totalTests)
-	fmt.Printf("✅ Cross-population analysis: PASSED\n")
-	fmt.Printf("✅ Recombination map integration: PASSED\n")
-	fmt.Printf("✅ Haplotype block structure analysis: PASSED\n")
-	fmt.Printf("\n🚀 All haplotype integration tests completed!\n")
+	fmt.Printf("LD pattern validation: %d/%d tests passed\n", passedTests, totalTests)
+	fmt.Printf("Other steps have no pass/fail criterion; per-population failures are logged above.\n")
 
 	// Performance summary
 	fmt.Println("\n⚡ Performance Summary:")
@@ -194,6 +196,4 @@ func main() {
 	fmt.Printf("   Total Simulation Time: %.2f seconds\n", totalSimTime)
 	fmt.Printf("   Average Memory per Population: %.1f MB\n", totalMemory/float64(len(results)))
 	fmt.Printf("   Average Time per Population: %.2f seconds\n", totalSimTime/float64(len(results)))
-
-	fmt.Printf("\n🎯 Ready for Phase 1 Week 4 implementation!\n")
 }

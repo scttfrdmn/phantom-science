@@ -1,3 +1,12 @@
+// Command stream_vcf streams a VCF file (-input) through vcf.StreamProcessor
+// and vcf.AuthenticityProcessor, prints throughput and cache statistics and
+// the mean, median and spread of the per-window k-mer diversity score, and
+// optionally writes the results to -output.
+//
+// It is a one-off experiment, not part of the supported phantom-science CLI.
+// Despite the "authenticity" names, the score is a k-mer diversity heuristic
+// compared with a reference value; it is not a measure of how real the data
+// is.
 package main
 
 import (
@@ -13,19 +22,19 @@ import (
 
 func main() {
 	var (
-		inputFile      = flag.String("input", "", "Input VCF file (required)")
-		outputFile     = flag.String("output", "", "Output analysis file (optional)")
-		kmerSize       = flag.Int("k", 8, "K-mer size for authenticity analysis")
-		bufferSize     = flag.Int("buffer", 65536, "Buffer size for streaming (bytes)")
-		maxCache       = flag.Int64("cache", 1073741824, "Maximum cache size in bytes (1GB default)")
-		numWorkers     = flag.Int("workers", 4, "Number of worker goroutines")
-		useGPU         = flag.Bool("gpu", false, "Enable GPU acceleration")
-		useML          = flag.Bool("ml", false, "Enable ML-based authenticity validation")
-		targetScore    = flag.Float64("target", 50.0, "Reference value for the mean k-mer diversity score (50 = half of all possible k-mers observed per context window); a heuristic, not a classifier accuracy")
-		tolerance      = flag.Float64("tolerance", 2.1, "Allowed absolute deviation of the mean score from -target")
-		verbose        = flag.Bool("verbose", false, "Enable verbose output")
-		showProgress   = flag.Bool("progress", false, "Show processing progress")
-		contextWindow  = flag.Int("context", 1000, "Genomic context window size")
+		inputFile        = flag.String("input", "", "Input VCF file (required)")
+		outputFile       = flag.String("output", "", "Output analysis file (optional)")
+		kmerSize         = flag.Int("k", 8, "K-mer size for authenticity analysis")
+		bufferSize       = flag.Int("buffer", 65536, "Buffer size for streaming (bytes)")
+		maxCache         = flag.Int64("cache", 1073741824, "Maximum cache size in bytes (1GB default)")
+		numWorkers       = flag.Int("workers", 4, "Number of worker goroutines")
+		useGPU           = flag.Bool("gpu", false, "Enable GPU acceleration")
+		useML            = flag.Bool("ml", false, "Enable ML-based authenticity validation")
+		targetScore      = flag.Float64("target", 50.0, "Reference value for the mean k-mer diversity score (50 = half of all possible k-mers observed per context window); a heuristic, not a classifier accuracy")
+		tolerance        = flag.Float64("tolerance", 2.1, "Allowed absolute deviation of the mean score from -target")
+		verbose          = flag.Bool("verbose", false, "Enable verbose output")
+		showProgress     = flag.Bool("progress", false, "Show processing progress")
+		contextWindow    = flag.Int("context", 1000, "Genomic context window size")
 		populationPanels = flag.String("populations", "", "Comma-separated population panel list")
 	)
 	flag.Parse()
@@ -53,7 +62,7 @@ func main() {
 	fmt.Printf("🗄️  Cache size: %d bytes (%.1f MB)\n", *maxCache, float64(*maxCache)/(1024*1024))
 	fmt.Printf("⚙️  Workers: %d\n", *numWorkers)
 	fmt.Printf("🎯 Score reference range: %.1f ± %.1f\n", *targetScore, *tolerance)
-	
+
 	if *useGPU {
 		fmt.Printf("🚀 GPU acceleration: enabled\n")
 	}
@@ -121,7 +130,7 @@ func main() {
 	if *showProgress {
 		progressTicker = time.NewTicker(5 * time.Second)
 		defer progressTicker.Stop()
-		
+
 		go func() {
 			for range progressTicker.C {
 				stats := streamProcessor.GetStatistics()
@@ -173,36 +182,36 @@ func main() {
 	if withinRange {
 		fmt.Printf("\n✅ Mean k-mer diversity score within reference range\n")
 		fmt.Printf("   Reference: %.1f ± %.1f\n", *targetScore, *tolerance)
-		fmt.Printf("   Achieved: %.1f (deviation: %.1f)\n", 
+		fmt.Printf("   Achieved: %.1f (deviation: %.1f)\n",
 			authResults.MeanAuthenticityScore, authResults.TargetScoreDeviation)
 		os.Exit(0)
 	} else {
 		fmt.Printf("\n⚠️  WARNING: Mean k-mer diversity score outside reference range\n")
 		fmt.Printf("   Reference: %.1f ± %.1f\n", *targetScore, *tolerance)
-		fmt.Printf("   Achieved: %.1f (deviation: %.1f)\n", 
+		fmt.Printf("   Achieved: %.1f (deviation: %.1f)\n",
 			authResults.MeanAuthenticityScore, authResults.TargetScoreDeviation)
 		os.Exit(1)
 	}
 }
 
-func displayResults(streamStats vcf.ProcessingStatistics, authResults *vcf.AuthenticityResults, 
-					processingTime time.Duration, targetScore, tolerance float64, verbose bool) {
-	
+func displayResults(streamStats vcf.ProcessingStatistics, authResults *vcf.AuthenticityResults,
+	processingTime time.Duration, targetScore, tolerance float64, verbose bool) {
+
 	fmt.Printf("📊 Processing Results\n")
 	fmt.Printf("====================\n")
-	
+
 	// Stream processing stats
 	fmt.Printf("🔄 Stream Processing:\n")
 	fmt.Printf("   Variants processed: %d\n", streamStats.ProcessedVariants)
 	fmt.Printf("   Data processed: %.2f MB\n", float64(streamStats.ProcessedBytes)/(1024*1024))
 	fmt.Printf("   Processing time: %v\n", processingTime)
-	fmt.Printf("   Throughput: %.2f variants/sec\n", 
+	fmt.Printf("   Throughput: %.2f variants/sec\n",
 		float64(streamStats.ProcessedVariants)/processingTime.Seconds())
 	fmt.Printf("   Cache hit ratio: %.1f%%\n", streamStats.CacheHitRatio*100)
 	fmt.Printf("   Cache utilization: %.1f%%\n", streamStats.CacheUtilization*100)
 
-	fmt.Printf("\n🎯 Authenticity Analysis:\n")
-	fmt.Printf("   Mean authenticity score: %.2f\n", authResults.MeanAuthenticityScore)
+	fmt.Printf("\n🎯 K-mer Diversity Analysis (heuristic, not a real-vs-synthetic test):\n")
+	fmt.Printf("   Mean score: %.2f\n", authResults.MeanAuthenticityScore)
 	fmt.Printf("   Median authenticity score: %.2f\n", authResults.MedianScore)
 	fmt.Printf("   Standard deviation: %.2f\n", authResults.StandardDeviation)
 	fmt.Printf("   Reference range: %.1f ± %.1f\n", targetScore, tolerance)
@@ -245,9 +254,9 @@ func displayResults(streamStats vcf.ProcessingStatistics, authResults *vcf.Authe
 		fmt.Printf("   Cache misses: %d\n", streamStats.CacheMisses)
 		fmt.Printf("   Cached regions: %d\n", streamStats.CachedRegions)
 		fmt.Printf("   Cache size: %.2f MB\n", float64(streamStats.CacheSize)/(1024*1024))
-		
+
 		if len(authResults.AuthenticityScores) > 0 {
-			fmt.Printf("   Score range: %.2f - %.2f\n", 
+			fmt.Printf("   Score range: %.2f - %.2f\n",
 				findMin(authResults.AuthenticityScores),
 				findMax(authResults.AuthenticityScores))
 		}
@@ -269,7 +278,7 @@ func writeOutputFile(filename string, streamStats vcf.ProcessingStatistics, auth
 	fmt.Fprintf(file, "    \"cache_hit_ratio\": %.4f,\n", streamStats.CacheHitRatio)
 	fmt.Fprintf(file, "    \"cache_utilization\": %.4f\n", streamStats.CacheUtilization)
 	fmt.Fprintf(file, "  },\n")
-	
+
 	fmt.Fprintf(file, "  \"authenticity_results\": {\n")
 	fmt.Fprintf(file, "    \"processed_variants\": %d,\n", authResults.ProcessedVariants)
 	fmt.Fprintf(file, "    \"mean_authenticity_score\": %.4f,\n", authResults.MeanAuthenticityScore)
@@ -313,4 +322,3 @@ func findMax(scores []float64) float64 {
 	}
 	return max
 }
-

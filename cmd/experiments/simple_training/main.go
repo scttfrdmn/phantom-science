@@ -1,3 +1,11 @@
+// Command simple_training trains one k=4 adaptive HMM on the hard-coded
+// FASTA /Volumes/Public/genomics_training/human/GRCh38_complete.fasta in
+// 100 kB chunks across worker goroutines, then generates five 50 kb
+// sequences and prints their complexity and GC content. The model is not
+// saved.
+//
+// It is a one-off experiment, not part of the supported phantom-science CLI.
+// The "improvement" factor is relative to an assumed 0.005 baseline.
 package main
 
 import (
@@ -16,26 +24,26 @@ import (
 
 func main() {
 	log.SetFlags(log.LstdFlags)
-	
+
 	fmt.Println("=== SIMPLE HIGH-PERFORMANCE GENOMICS TRAINING ===")
 	totalCores := runtime.NumCPU()
 	perfCores := detectAppleSiliconCores()
-	fmt.Printf("🍎 Apple Silicon: %d total cores (%d P-cores + %d E-cores)\n", 
+	fmt.Printf("🍎 Apple Silicon: %d total cores (%d P-cores + %d E-cores)\n",
 		totalCores, perfCores, totalCores-perfCores)
 	fmt.Printf("⚡ Using %d P-cores for training\n", perfCores)
 	fmt.Println()
 
 	runtime.GOMAXPROCS(perfCores)
-	
+
 	genomeFile := "/Volumes/Public/genomics_training/human/GRCh38_complete.fasta"
-	
+
 	// Check if file exists
 	if _, err := os.Stat(genomeFile); os.IsNotExist(err) {
 		log.Fatalf("Genome file not found: %s", genomeFile)
 	}
-	
+
 	fmt.Printf("📁 Training on: %s\n", genomeFile)
-	
+
 	// Initialize simple model
 	fmt.Println("[STEP 1] Initializing simple HMM model...")
 	model := authenticity.NewAdaptiveHMMModel(4)
@@ -45,13 +53,13 @@ func main() {
 	// Train with heavy CPU usage
 	fmt.Println("[STEP 2] High-intensity training...")
 	fmt.Printf("🔥 Using %d P-cores for maximum performance\n", perfCores)
-	
+
 	start := time.Now()
 	if err := trainIntensively(model, genomeFile, perfCores); err != nil {
 		log.Fatalf("Training failed: %v", err)
 	}
 	duration := time.Since(start)
-	
+
 	fmt.Printf("✅ Training completed in %v\n", duration)
 	fmt.Println()
 
@@ -65,16 +73,16 @@ func main() {
 		}
 		sequences[i] = result.Sequence
 	}
-	
+
 	// Calculate metrics
-	fmt.Println("[STEP 4] Calculating authenticity metrics...")
+	fmt.Println("[STEP 4] Calculating sequence statistics...")
 	complexity := calculateComplexity(sequences)
 	gcContent := calculateGCContent(sequences)
-	
+
 	fmt.Printf("📊 RESULTS:\n")
 	fmt.Printf("  Complexity: %.4f", complexity)
 	if complexity > 0.01 {
-		fmt.Printf(" (%.1fx improvement) ✅", complexity/0.005)
+		fmt.Printf(" (%.1fx an assumed 0.005 baseline) ✅", complexity/0.005)
 	}
 	fmt.Println()
 	fmt.Printf("  GC Content: %.2f%%", gcContent*100)
@@ -82,36 +90,35 @@ func main() {
 		fmt.Print(" ✅")
 	}
 	fmt.Println()
-	
+
 	fmt.Println()
 	fmt.Println("🎉 SIMPLE TRAINING COMPLETE!")
 	fmt.Printf("⚡ Training time: %v\n", duration)
-	fmt.Printf("🧬 Successfully trained on full human genome\n")
-	fmt.Printf("🎯 Ready for population genomics expansion\n")
+	fmt.Printf("🧬 Trained on %s (model not saved)\n", genomeFile)
 }
 
 func trainIntensively(model *authenticity.AdaptiveHMMModel, filename string, numCores int) error {
 	fmt.Printf("🚀 Starting intensive training with %d cores...\n", numCores)
-	
+
 	// Open file
 	file, err := os.Open(filename) // #nosec G304
 	if err != nil {
 		return fmt.Errorf("failed to open file: %w", err)
 	}
 	defer file.Close()
-	
+
 	// Read file in chunks and process with multiple goroutines
 	scanner := bufio.NewScanner(file)
 	buf := make([]byte, 0, 64*1024)
 	scanner.Buffer(buf, 1024*1024)
-	
+
 	var sequence []byte
 	var wg sync.WaitGroup
 	var processedChunks int64
-	
+
 	// Create worker pool
 	chunkChan := make(chan []byte, numCores*2)
-	
+
 	// Start workers
 	for i := 0; i < numCores; i++ {
 		wg.Add(1)
@@ -125,19 +132,19 @@ func trainIntensively(model *authenticity.AdaptiveHMMModel, filename string, num
 					}
 				}
 				atomic.AddInt64(&processedChunks, 1)
-				
+
 				if processedChunks%100 == 0 {
 					fmt.Printf("🔥 Processed %d chunks across %d cores\n", processedChunks, numCores)
 				}
 			}
 		}(i)
 	}
-	
+
 	// Read and distribute work
 	chunkSize := 100000 // 100KB chunks
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
-		
+
 		if strings.HasPrefix(line, ">") {
 			// Process accumulated sequence
 			if len(sequence) > 0 {
@@ -147,7 +154,7 @@ func trainIntensively(model *authenticity.AdaptiveHMMModel, filename string, num
 					if end > len(sequence) {
 						end = len(sequence)
 					}
-					
+
 					chunk := make([]byte, end-i)
 					copy(chunk, sequence[i:end])
 					chunkChan <- chunk
@@ -158,7 +165,7 @@ func trainIntensively(model *authenticity.AdaptiveHMMModel, filename string, num
 			sequence = append(sequence, []byte(strings.ToUpper(line))...)
 		}
 	}
-	
+
 	// Process final sequence
 	if len(sequence) > 0 {
 		for i := 0; i < len(sequence); i += chunkSize {
@@ -166,17 +173,17 @@ func trainIntensively(model *authenticity.AdaptiveHMMModel, filename string, num
 			if end > len(sequence) {
 				end = len(sequence)
 			}
-			
+
 			chunk := make([]byte, end-i)
 			copy(chunk, sequence[i:end])
 			chunkChan <- chunk
 		}
 	}
-	
+
 	// Close channel and wait for workers
 	close(chunkChan)
 	wg.Wait()
-	
+
 	fmt.Printf("✅ Intensive training complete: %d chunks processed\n", processedChunks)
 	return nil
 }
@@ -185,24 +192,24 @@ func calculateComplexity(sequences [][]byte) float64 {
 	if len(sequences) == 0 {
 		return 0
 	}
-	
+
 	totalComplexity := 0.0
 	for _, seq := range sequences {
 		k := 4
 		if len(seq) < k {
 			continue
 		}
-		
+
 		uniqueKmers := make(map[string]bool)
 		for i := 0; i <= len(seq)-k; i++ {
 			kmer := string(seq[i : i+k])
 			uniqueKmers[kmer] = true
 		}
-		
+
 		complexity := float64(len(uniqueKmers)) / float64(len(seq)-k+1)
 		totalComplexity += complexity
 	}
-	
+
 	return totalComplexity / float64(len(sequences))
 }
 
@@ -210,33 +217,33 @@ func calculateGCContent(sequences [][]byte) float64 {
 	if len(sequences) == 0 {
 		return 0
 	}
-	
+
 	totalGC := 0.0
 	for _, seq := range sequences {
 		if len(seq) == 0 {
 			continue
 		}
-		
+
 		gcCount := 0
 		for _, base := range seq {
 			if base == 'G' || base == 'C' {
 				gcCount++
 			}
 		}
-		
+
 		gc := float64(gcCount) / float64(len(seq))
 		totalGC += gc
 	}
-	
+
 	return totalGC / float64(len(sequences))
 }
 
 func detectAppleSiliconCores() int {
 	totalCores := runtime.NumCPU()
-	
+
 	if totalCores >= 8 {
 		switch totalCores {
-		case 8:  // M1: 4P + 4E
+		case 8: // M1: 4P + 4E
 			return 4
 		case 10: // M1 Pro: 6P + 4E
 			return 6
@@ -252,10 +259,10 @@ func detectAppleSiliconCores() int {
 			return (totalCores * 2) / 3
 		}
 	}
-	
+
 	if totalCores > 4 {
 		return totalCores - 2
 	}
-	
+
 	return totalCores
 }

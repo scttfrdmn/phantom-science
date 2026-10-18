@@ -1,3 +1,13 @@
+// Command population_weighted_training trains a k=6
+// authenticity.AdaptiveHMMModel on the YRI, CEU and CHB VCFs under the
+// hard-coded path /Volumes/Public/genomics_training/populations, repeating
+// each population's training sequences according to a fixed diversity weight
+// (YRI 2.0, CEU 1.0, CHB 1.2). It prints complexity and GC content of
+// generated sequences and writes a summary to population_weighted_progress/.
+// The weights are chosen by hand, and earlier-phase figures (complexity
+// 0.0051 and 0.0819) are constants from earlier runs.
+//
+// It is a one-off experiment, not part of the supported phantom-science CLI.
 package main
 
 import (
@@ -30,24 +40,24 @@ type PopulationWeights struct {
 
 func main() {
 	log.SetFlags(log.LstdFlags)
-	
+
 	fmt.Println("=== PHASE 2.2 POPULATION-WEIGHTED TRAINING ===")
 	fmt.Println("Population-specific complexity weighting based on genetic diversity")
 	fmt.Println("Target: Complexity >0.08 + GC Content 42% ±2%")
-	
+
 	totalCores := runtime.NumCPU()
 	perfCores := detectAppleSiliconCores()
-	fmt.Printf("🍎 Apple Silicon: %d total cores (%d P-cores + %d E-cores)\n", 
+	fmt.Printf("🍎 Apple Silicon: %d total cores (%d P-cores + %d E-cores)\n",
 		totalCores, perfCores, totalCores-perfCores)
 	fmt.Printf("⚡ Using %d P-cores for weighted processing\n", perfCores)
 	fmt.Println()
 
 	runtime.GOMAXPROCS(perfCores)
-	
+
 	// Configuration
 	populationDir := "/Volumes/Public/genomics_training/populations"
 	progressDir := "population_weighted_progress"
-	
+
 	// Create progress directory
 	if err := os.MkdirAll(progressDir, 0750); err != nil {
 		log.Fatalf("Failed to create progress directory: %v", err)
@@ -57,12 +67,12 @@ func main() {
 	if _, err := os.Stat(populationDir); os.IsNotExist(err) {
 		log.Fatalf("1000 Genomes dataset not found: %s", populationDir)
 	}
-	
+
 	// Initialize population weights based on genetic diversity
 	weights := initializePopulationWeights()
-	
+
 	// Test on multiple populations with diversity weighting
-	testPopulations := []string{"YRI", "CEU", "CHB"}  // High, medium, medium diversity
+	testPopulations := []string{"YRI", "CEU", "CHB"} // High, medium, medium diversity
 	fmt.Printf("📊 PHASE 2.2 TEST: Processing %v populations with diversity weighting\n", testPopulations)
 	fmt.Printf("🧬 Population weighting based on known genetic diversity patterns\n")
 	fmt.Printf("⚖️  African populations: %.1fx weight (highest diversity)\n", weights.African["YRI"])
@@ -76,7 +86,7 @@ func main() {
 	fmt.Printf("✅ Model initialized with k=6 + POPULATION WEIGHTING\n")
 	fmt.Printf("📊 State space size: %d states\n", calculateStateSpaceSize(6))
 	fmt.Printf("⚖️  Diversity weighting: African 2.0x, European 1.0x, Asian 1.2x, Admixed 1.8x\n")
-	fmt.Printf("🎯 Expected benefit: Enhanced complexity from high-diversity populations\n")
+	fmt.Printf("🎯 Hypothesis: high-diversity populations raise complexity\n")
 	fmt.Println()
 
 	// Process population-weighted VCF files
@@ -91,7 +101,7 @@ func main() {
 	start := time.Now()
 	totalBytes, totalVariants := processWeightedPopulations(model, populationDir, testPopulations, weights, perfCores)
 	duration := time.Since(start)
-	
+
 	fmt.Printf("✅ POPULATION-WEIGHTED PROCESSING COMPLETED!\n")
 	fmt.Printf("✅ Processing time: %v\n", duration)
 	fmt.Printf("✅ Data processed: %s\n", formatBytes(totalBytes))
@@ -112,11 +122,11 @@ func main() {
 	fmt.Println("[STEP 4] Calculating population-weighted authenticity metrics...")
 	complexity := calculateComplexity(sequences)
 	gcContent := calculateGCContent(sequences)
-	
+
 	// Calculate improvements
 	complexityImprovement := complexity / 0.0051
 	gcDeviation := abs(gcContent - 0.42)
-	
+
 	fmt.Printf("📊 PHASE 2.2 POPULATION-WEIGHTED RESULTS:\n")
 	fmt.Printf("  Complexity: %.4f", complexity)
 	if complexity > 0.08 {
@@ -127,7 +137,7 @@ func main() {
 		fmt.Printf(" (%.1fx improvement) ❌ INSUFFICIENT", complexityImprovement)
 	}
 	fmt.Println()
-	
+
 	fmt.Printf("  GC Content: %.2f%%", gcContent*100)
 	if gcContent >= 0.40 && gcContent <= 0.44 {
 		fmt.Printf(" (deviation: %.3f%%) ✅ EXCELLENT GC CONTROL", gcDeviation*100)
@@ -153,14 +163,14 @@ func main() {
 	fmt.Printf("Weighting Strategy:  Diversity-based population scaling\n")
 	fmt.Printf("Complexity:          %.4f (%.1fx vs baseline)\n", complexity, complexityImprovement)
 	fmt.Printf("GC Content:          %.2f%% (deviation: %.3f%%)\n", gcContent*100, gcDeviation*100)
-	
+
 	// Decision Logic
 	nextStep := ""
 	status := ""
 	if complexity > 0.08 && gcContent >= 0.40 && gcContent <= 0.44 {
 		nextStep = "PROCEED TO FULL 11-POPULATION WEIGHTED TRAINING"
 		status = "PHASE 2.2 COMPLETE SUCCESS"
-		fmt.Printf("🎯 STATUS: PHASE 2.2 COMPLETE SUCCESS - Ready for production training\n")
+		fmt.Printf("🎯 STATUS: PHASE 2.2 TARGETS MET - next step is full 11-population training\n")
 	} else if complexity > 0.05 && gcContent >= 0.38 && gcContent <= 0.46 {
 		nextStep = "PROCEED TO FULL TRAINING WITH WEIGHT TUNING"
 		status = "PHASE 2.2 GOOD PROGRESS"
@@ -170,12 +180,12 @@ func main() {
 		status = "PHASE 2.2 NEEDS REFINEMENT"
 		fmt.Printf("⚠  STATUS: NEEDS REFINEMENT - May need advanced methods\n")
 	}
-	
+
 	fmt.Printf("Next Action:         %s\n", nextStep)
 	fmt.Println()
 	fmt.Printf("📊 Results saved in: %s/\n", progressDir)
 	fmt.Printf("🏁 PHASE 2.2 POPULATION-WEIGHTED TRAINING COMPLETE IN %v\n", duration)
-	
+
 	// Population weighting insights
 	fmt.Println()
 	fmt.Println("📈 POPULATION WEIGHTING INSIGHTS:")
@@ -185,8 +195,7 @@ func main() {
 	fmt.Printf("Asian populations (CHB): Moderate diversity → 1.2x weight\n")
 	fmt.Printf("Admixed populations: High diversity → 1.8x weight\n")
 	fmt.Println()
-	fmt.Printf("Expected benefit: Higher complexity from diversity-rich populations\n")
-	fmt.Printf("GC benefit: Population-balanced training reduces regional bias\n")
+	fmt.Printf("Hypothesis (not tested here): weighting diverse populations raises complexity\n")
 
 	// Save detailed results for documentation
 	savePhase22Results(progressDir, duration, complexity, gcContent, totalBytes, totalVariants, perfCores, status, weights)
@@ -196,26 +205,26 @@ func initializePopulationWeights() PopulationWeights {
 	return PopulationWeights{
 		// African populations have highest genetic diversity
 		African: map[string]float64{
-			"YRI": 2.0,  // Yoruba - highest diversity
-			"LWK": 1.9,  // Luhya - very high diversity
-			"GWD": 1.8,  // Gambian - high diversity
+			"YRI": 2.0, // Yoruba - highest diversity
+			"LWK": 1.9, // Luhya - very high diversity
+			"GWD": 1.8, // Gambian - high diversity
 		},
 		// European populations have moderate diversity
 		European: map[string]float64{
-			"CEU": 1.0,  // Utah Europeans - baseline
-			"GBR": 1.0,  // British - baseline
-			"TSI": 1.1,  // Tuscan - slightly higher
+			"CEU": 1.0, // Utah Europeans - baseline
+			"GBR": 1.0, // British - baseline
+			"TSI": 1.1, // Tuscan - slightly higher
 		},
 		// Asian populations have moderate diversity
 		Asian: map[string]float64{
-			"CHB": 1.2,  // Han Chinese Beijing
-			"JPT": 1.1,  // Japanese Tokyo
-			"CHS": 1.2,  // Han Chinese South
+			"CHB": 1.2, // Han Chinese Beijing
+			"JPT": 1.1, // Japanese Tokyo
+			"CHS": 1.2, // Han Chinese South
 		},
 		// Admixed populations have high diversity
 		Admixed: map[string]float64{
-			"MXL": 1.8,  // Mexican - high admixture
-			"PUR": 1.7,  // Puerto Rican - high admixture
+			"MXL": 1.8, // Mexican - high admixture
+			"PUR": 1.7, // Puerto Rican - high admixture
 		},
 	}
 }
@@ -251,81 +260,81 @@ func processWeightedPopulations(model *authenticity.AdaptiveHMMModel, population
 	var totalBytes int64
 	var totalVariants int64
 	var wg sync.WaitGroup
-	
+
 	fmt.Printf("🔥 Starting population-weighted VCF processing with %d P-cores\n", numCores)
-	
+
 	// Process populations with limited concurrency to avoid overwhelming I/O
 	semaphore := make(chan struct{}, 2) // Limit to 2 concurrent populations
-	
+
 	for _, pop := range populations {
 		popDir := filepath.Join(populationDir, pop)
 		if _, err := os.Stat(popDir); os.IsNotExist(err) {
 			fmt.Printf("⚠ Population %s not found, skipping\n", pop)
 			continue
 		}
-		
+
 		weight := getPopulationWeight(pop, weights)
-		
+
 		wg.Add(1)
 		go func(population string, popWeight float64) {
 			defer wg.Done()
-			
-			semaphore <- struct{}{} // Acquire
+
+			semaphore <- struct{}{}        // Acquire
 			defer func() { <-semaphore }() // Release
-			
+
 			bytes, variants := processWeightedPopulationVCFs(model, population, populationDir, popWeight, numCores)
 			atomic.AddInt64(&totalBytes, bytes)
 			atomic.AddInt64(&totalVariants, variants)
-			
-			fmt.Printf("✅ Population %s complete (%.1fx weight): %s processed, %d variants\n", 
+
+			fmt.Printf("✅ Population %s complete (%.1fx weight): %s processed, %d variants\n",
 				population, popWeight, formatBytes(bytes), variants)
 		}(pop, weight)
 	}
-	
+
 	wg.Wait()
-	
+
 	return totalBytes, totalVariants
 }
 
 func processWeightedPopulationVCFs(model *authenticity.AdaptiveHMMModel, pop, populationDir string, weight float64, numCores int) (int64, int64) {
 	popDir := filepath.Join(populationDir, pop)
 	fmt.Printf("🧬 Processing population %s with %.1fx diversity weight (real VCF files)...\n", pop, weight)
-	
+
 	// Get all VCF files for this population
 	vcfFiles, err := filepath.Glob(filepath.Join(popDir, "*.vcf.gz"))
 	if err != nil {
 		fmt.Printf("⚠ Error finding VCF files for %s: %v\n", pop, err)
 		return 0, 0
 	}
-	
+
 	var totalBytes int64
 	var totalVariants int64
 	var wg sync.WaitGroup
-	
+
 	// Process VCF files with limited concurrency for I/O
 	semaphore := make(chan struct{}, 4) // Limit concurrent file processing
-	
+
 	for _, vcfFile := range vcfFiles {
 		wg.Add(1)
 		go func(file string) {
 			defer wg.Done()
-			
-			semaphore <- struct{}{} // Acquire
+
+			semaphore <- struct{}{}        // Acquire
 			defer func() { <-semaphore }() // Release
-			
+
 			bytes, variants := processWeightedVCFFile(model, file, pop, weight)
 			atomic.AddInt64(&totalBytes, bytes)
 			atomic.AddInt64(&totalVariants, variants)
-			
+
 			if variants > 0 {
-				fmt.Printf("  📄 %s: %s, %d variants (%.1fx weighted)\n", 
+				fmt.Printf("  📄 %s: %s, %d variants (%.1fx weighted)\n",
 					filepath.Base(file), formatBytes(bytes), variants, weight)
 			}
 		}(vcfFile)
 	}
-	
+
 	wg.Wait()
-	
+
 	return totalBytes, totalVariants
 }
 
@@ -337,7 +346,7 @@ func processWeightedVCFFile(model *authenticity.AdaptiveHMMModel, vcfFile, pop s
 		return 0, 0
 	}
 	defer file.Close()
-	
+
 	// Get file size
 	stat, err := file.Stat()
 	if err != nil {
@@ -345,7 +354,7 @@ func processWeightedVCFFile(model *authenticity.AdaptiveHMMModel, vcfFile, pop s
 		return 0, 0
 	}
 	fileSize := stat.Size()
-	
+
 	// Create gzip reader
 	gzipReader, err := gzip.NewReader(file)
 	if err != nil {
@@ -353,33 +362,33 @@ func processWeightedVCFFile(model *authenticity.AdaptiveHMMModel, vcfFile, pop s
 		return 0, 0
 	}
 	defer gzipReader.Close()
-	
+
 	// Read and process the VCF file with population weighting
 	scanner := bufio.NewScanner(gzipReader)
 	buf := make([]byte, 0, 64*1024)
 	scanner.Buffer(buf, 1024*1024) // 1MB buffer
-	
+
 	var variantCount int64
 	var sequenceBuilder strings.Builder
-	
+
 	for scanner.Scan() {
 		line := scanner.Text()
-		
+
 		// Skip header lines
 		if strings.HasPrefix(line, "#") {
 			continue
 		}
-		
+
 		// Parse VCF line
 		fields := strings.Split(line, "\t")
 		if len(fields) < 5 {
 			continue
 		}
-		
+
 		// Extract reference and alternate alleles
 		ref := fields[3]
 		alt := fields[4]
-		
+
 		// Add sequences to our training data with population weighting
 		if len(ref) > 0 && len(alt) > 0 {
 			// Apply population weight by repeating sequences
@@ -390,14 +399,14 @@ func processWeightedVCFFile(model *authenticity.AdaptiveHMMModel, vcfFile, pop s
 					repetitions++
 				}
 			}
-			
+
 			for i := 0; i < repetitions; i++ {
 				sequenceBuilder.WriteString(ref)
 				sequenceBuilder.WriteString(alt)
 			}
 			variantCount++
 		}
-		
+
 		// Process accumulated sequence when we have enough data
 		if sequenceBuilder.Len() > 100000 { // 100KB chunks
 			sequence := sequenceBuilder.String()
@@ -407,7 +416,7 @@ func processWeightedVCFFile(model *authenticity.AdaptiveHMMModel, vcfFile, pop s
 			sequenceBuilder.Reset()
 		}
 	}
-	
+
 	// Process any remaining sequence
 	if sequenceBuilder.Len() > 0 {
 		sequence := sequenceBuilder.String()
@@ -415,17 +424,17 @@ func processWeightedVCFFile(model *authenticity.AdaptiveHMMModel, vcfFile, pop s
 			fmt.Printf("⚠ Error training on final sequence from %s: %v\n", vcfFile, err)
 		}
 	}
-	
+
 	if err := scanner.Err(); err != nil {
 		fmt.Printf("⚠ Error reading %s: %v\n", vcfFile, err)
 	}
-	
+
 	return fileSize, variantCount
 }
 
 func generateValidationSequences(model *authenticity.AdaptiveHMMModel, numSequences, length int) ([][]byte, error) {
 	sequences := make([][]byte, numSequences)
-	
+
 	for i := 0; i < numSequences; i++ {
 		result, err := model.GenerateSequence(length)
 		if err != nil {
@@ -433,7 +442,7 @@ func generateValidationSequences(model *authenticity.AdaptiveHMMModel, numSequen
 		}
 		sequences[i] = result.Sequence
 	}
-	
+
 	return sequences, nil
 }
 
@@ -441,24 +450,24 @@ func calculateComplexity(sequences [][]byte) float64 {
 	if len(sequences) == 0 {
 		return 0
 	}
-	
+
 	totalComplexity := 0.0
 	for _, seq := range sequences {
 		k := 6 // Using k=6 for complexity calculation
 		if len(seq) < k {
 			continue
 		}
-		
+
 		uniqueKmers := make(map[string]bool)
 		for i := 0; i <= len(seq)-k; i++ {
 			kmer := string(seq[i : i+k])
 			uniqueKmers[kmer] = true
 		}
-		
+
 		complexity := float64(len(uniqueKmers)) / float64(len(seq)-k+1)
 		totalComplexity += complexity
 	}
-	
+
 	return totalComplexity / float64(len(sequences))
 }
 
@@ -466,24 +475,24 @@ func calculateGCContent(sequences [][]byte) float64 {
 	if len(sequences) == 0 {
 		return 0
 	}
-	
+
 	totalGC := 0.0
 	for _, seq := range sequences {
 		if len(seq) == 0 {
 			continue
 		}
-		
+
 		gcCount := 0
 		for _, base := range seq {
 			if base == 'G' || base == 'C' {
 				gcCount++
 			}
 		}
-		
+
 		gc := float64(gcCount) / float64(len(seq))
 		totalGC += gc
 	}
-	
+
 	return totalGC / float64(len(sequences))
 }
 
@@ -502,10 +511,10 @@ func formatBytes(bytes int64) string {
 
 func detectAppleSiliconCores() int {
 	totalCores := runtime.NumCPU()
-	
+
 	if totalCores >= 8 {
 		switch totalCores {
-		case 8:  // M1: 4P + 4E
+		case 8: // M1: 4P + 4E
 			return 4
 		case 10: // M1 Pro: 6P + 4E
 			return 6
@@ -521,11 +530,11 @@ func detectAppleSiliconCores() int {
 			return (totalCores * 2) / 3
 		}
 	}
-	
+
 	if totalCores > 4 {
 		return totalCores - 2
 	}
-	
+
 	return totalCores
 }
 
@@ -538,10 +547,10 @@ func abs(x float64) float64 {
 
 func savePhase22Results(progressDir string, duration time.Duration, complexity, gcContent float64, totalBytes, totalVariants int64, perfCores int, status string, weights PopulationWeights) {
 	resultsFile := filepath.Join(progressDir, "phase2_2_population_weighted_results.txt")
-	
+
 	complexityImprovement := complexity / 0.0051
 	gcDeviation := abs(gcContent - 0.42)
-	
+
 	results := fmt.Sprintf(`PHASE 2.2 POPULATION-WEIGHTED TRAINING RESULTS
 ==============================================
 
@@ -552,7 +561,7 @@ Total Training Time: %v
 Apple Silicon P-Cores: %d
 
 MODEL CONFIGURATION:
-- K-mer Size: 6 (proven effective)
+- K-mer Size: 6
 - State Space: %d states
 - Weighting Strategy: Diversity-based population scaling
 - African Populations: %.1fx weight (highest diversity)
@@ -578,7 +587,7 @@ POPULATION WEIGHTING RATIONALE:
 - CHB (Han Chinese): 1.2x weight - Moderate diversity, large population
 - Strategy: Leverage high-diversity populations for complexity enhancement
 
-PHASE PROGRESSION SUMMARY:
+PHASE PROGRESSION SUMMARY (earlier phases are constants from earlier runs):
 - k=4 Baseline: Complexity 0.0051, GC 48.37%%
 - Phase 1 (k=6): Complexity 0.0819, GC 48.17%%
 - Phase 1.2 (Enhanced GC): Complexity 0.0819, GC 47.90%%
@@ -597,33 +606,22 @@ CURRENT RESULT: %.4f complexity, %.2f%% GC → %s
 NEXT STEPS:
 %s
 
-POPULATION DIVERSITY SCIENCE:
-✅ African populations have highest human genetic diversity
-✅ Out-of-Africa migration created founder effects in other populations
-✅ Weighting by diversity should enhance model complexity
-✅ Population-balanced training reduces regional bias
-✅ Leverages population genomics principles
-
-TECHNICAL ACHIEVEMENTS:
-✅ Population-specific diversity weighting implemented
-✅ Genetic diversity principles applied to training
-✅ Multi-population balanced processing
-✅ Maintained high-performance Apple Silicon optimization
-%s Population genomics expertise demonstrated
+TARGET CHECK:
+%s Complexity >0.08 and GC 40-44%%
 
 Training Status: PHASE 2.2 %s
-`, time.Now().Format("2006-01-02 15:04:05"), duration, perfCores, 
-	calculateStateSpaceSize(6), weights.African["YRI"], weights.European["CEU"], 
-	weights.Asian["CHB"], weights.Admixed["MXL"],
-	complexity, complexityImprovement, gcContent*100, gcDeviation*100, status,
-	formatBytes(totalBytes), totalVariants, duration, 
-	float64(totalBytes)/duration.Seconds()/1024/1024, perfCores,
-	complexity, gcContent*100,
-	getWeightingEffectiveness(complexity, 0.0819),
-	complexity, gcContent*100, status,
-	getNextStepsPhase22(complexity, gcContent),
-	getSuccessEmojiPhase22(complexity, gcContent), status)
-	
+`, time.Now().Format("2006-01-02 15:04:05"), duration, perfCores,
+		calculateStateSpaceSize(6), weights.African["YRI"], weights.European["CEU"],
+		weights.Asian["CHB"], weights.Admixed["MXL"],
+		complexity, complexityImprovement, gcContent*100, gcDeviation*100, status,
+		formatBytes(totalBytes), totalVariants, duration,
+		float64(totalBytes)/duration.Seconds()/1024/1024, perfCores,
+		complexity, gcContent*100,
+		getWeightingEffectiveness(complexity, 0.0819),
+		complexity, gcContent*100, status,
+		getNextStepsPhase22(complexity, gcContent),
+		getSuccessEmojiPhase22(complexity, gcContent), status)
+
 	if err := os.WriteFile(resultsFile, []byte(results), 0600); err != nil {
 		fmt.Printf("⚠ Could not save results file: %v\n", err)
 	}
@@ -632,9 +630,9 @@ Training Status: PHASE 2.2 %s
 func getWeightingEffectiveness(currentComplexity, previousComplexity float64) string {
 	if currentComplexity > previousComplexity {
 		improvement := (currentComplexity - previousComplexity) / previousComplexity * 100
-		return fmt.Sprintf("✅ Population weighting increased complexity by %.1f%%\n   High-diversity populations successfully enhanced model", improvement)
-	} else if currentComplexity >= previousComplexity * 0.95 {
-		return "🟡 Population weighting maintained complexity levels\n   Diversity benefits may be subtle but preserved quality"
+		return fmt.Sprintf("✅ Population weighting increased complexity by %.1f%%", improvement)
+	} else if currentComplexity >= previousComplexity*0.95 {
+		return "🟡 Population weighting maintained complexity levels"
 	} else {
 		decrease := (previousComplexity - currentComplexity) / previousComplexity * 100
 		return fmt.Sprintf("⚠ Population weighting decreased complexity by %.1f%%\n   May need weight tuning or different approach", decrease)
@@ -643,7 +641,7 @@ func getWeightingEffectiveness(currentComplexity, previousComplexity float64) st
 
 func getNextStepsPhase22(complexity, gcContent float64) string {
 	if complexity > 0.08 && gcContent >= 0.40 && gcContent <= 0.44 {
-		return "1. Scale to full 11-population weighted training\n2. Prepare for expert validation\n3. Production deployment with population weighting"
+		return "1. Scale to full 11-population weighted training\n2. Prepare for expert validation"
 	} else if complexity > 0.05 && gcContent >= 0.38 && gcContent <= 0.46 {
 		return "1. Fine-tune population weights\n2. Test on full dataset with adjusted weights\n3. Consider combining with contextual processing"
 	} else {

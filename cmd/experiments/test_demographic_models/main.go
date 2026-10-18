@@ -1,3 +1,11 @@
+// Command test_demographic_models runs the Python demographic simulator
+// (from the current directory, which must be the repository root with
+// phantom_science_env) for YRI, CEU, CHB and MXL, prints variant counts,
+// diversity and Tajima's D, the stored demographic parameters, and builds a
+// k-mer HMM from a YRI simulation.
+//
+// It is a one-off experiment, not part of the supported phantom-science CLI.
+// It has no tests.
 package main
 
 import (
@@ -28,8 +36,8 @@ func main() {
 	randomSeed := 42
 	result, err := simulator.SimulatePopulation(
 		population.YRI,
-		50,          // sample size
-		10_000_000,  // 10Mb sequence
+		50,         // sample size
+		10_000_000, // 10Mb sequence
 		&randomSeed,
 	)
 	if err != nil {
@@ -50,7 +58,7 @@ func main() {
 	fmt.Println("\n🌍 Testing Multiple Population Simulations...")
 	testPops := []population.Population{
 		population.YRI, // African
-		population.CEU, // European  
+		population.CEU, // European
 		population.CHB, // East Asian
 		population.MXL, // Americas
 	}
@@ -60,11 +68,11 @@ func main() {
 
 	for _, pop := range testPops {
 		fmt.Printf("🧬 Simulating %s...\n", pop)
-		
+
 		result, err := simulator.SimulatePopulation(
 			pop,
-			30,         // smaller sample for speed
-			5_000_000,  // 5Mb sequence
+			30,        // smaller sample for speed
+			5_000_000, // 5Mb sequence
 			&randomSeed,
 		)
 		if err != nil {
@@ -107,9 +115,9 @@ func main() {
 	fmt.Println("\n🔗 Testing HMM Integration...")
 	model, err := simulator.IntegrateWithHMMModel(
 		population.YRI,
-		50,         // sample size
-		5_000_000,  // sequence length
-		8,          // k-mer size
+		50,        // sample size
+		5_000_000, // sequence length
+		8,         // k-mer size
 	)
 	if err != nil {
 		log.Printf("HMM integration failed: %v", err)
@@ -120,11 +128,6 @@ func main() {
 	// Summary
 	fmt.Println("\n📋 INTEGRATION TEST SUMMARY")
 	fmt.Println("=" + strings.Repeat("=", 30))
-	fmt.Printf("✅ Single population simulation: PASSED\n")
-	fmt.Printf("✅ Multiple population simulation: PASSED\n")
-	fmt.Printf("✅ Population statistics validation: PASSED\n")
-	fmt.Printf("✅ Parameter retrieval: PASSED\n")
-	fmt.Printf("✅ HMM integration: PASSED\n")
-	fmt.Printf("\n🚀 All demographic model tests completed successfully!\n")
-	fmt.Printf("🎯 Ready for Phase 1 Week 3 implementation\n")
+	fmt.Printf("All steps ran. Failures in steps 2-5 are logged above and do not\n")
+	fmt.Printf("stop the run, so check the log rather than this summary.\n")
 }

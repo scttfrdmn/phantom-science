@@ -1,3 +1,13 @@
+// Command create_expert_package copies the FASTA files for five populations
+// from the hard-coded directory sequences/validation (the output of
+// complete_11_population_training) into expert_validation_package/: header-
+// stripped copies named SEQ_NNNN.fasta for blind review, labelled copies in
+// reference_sequences/, and a Markdown evaluation protocol and README for
+// reviewers. The review is not really blind: sequences are numbered in
+// population order, and both the labelled copies and the ID-to-file key
+// (sequence_mapping_CONFIDENTIAL.txt) are written into the same package.
+//
+// It is a one-off experiment, not part of the supported phantom-science CLI.
 package main
 
 import (
@@ -11,47 +21,47 @@ import (
 
 func main() {
 	log.SetFlags(log.LstdFlags)
-	
+
 	fmt.Println("=== EXPERT VALIDATION PACKAGE CREATION ===")
 	fmt.Println("Creating anonymized sequences for expert validation")
 	fmt.Println()
-	
+
 	// Source: validated sequences from working populations
 	sourceDir := "sequences/validation"
 	outputDir := "expert_validation_package"
-	
+
 	// Working populations (from validation analysis)
 	workingPopulations := []string{"YRI", "CHB", "JPT", "PUR", "TSI"}
-	
+
 	fmt.Printf("📁 Source directory: %s\n", sourceDir)
 	fmt.Printf("📦 Output package: %s\n", outputDir)
 	fmt.Printf("🧬 Working populations: %v\n", workingPopulations)
 	fmt.Println()
-	
+
 	// Create output directory
 	err := os.MkdirAll(outputDir, 0750)
 	if err != nil {
 		log.Fatalf("Failed to create output directory: %v", err)
 	}
-	
+
 	// Create package structure
 	err = createPackageStructure(outputDir)
 	if err != nil {
 		log.Fatalf("Failed to create package structure: %v", err)
 	}
-	
+
 	// Create anonymized sequences for blind testing
 	totalSequences, err := createAnonymizedSequences(sourceDir, outputDir, workingPopulations)
 	if err != nil {
 		log.Fatalf("Failed to create anonymized sequences: %v", err)
 	}
-	
+
 	// Create expert evaluation materials
 	err = createExpertMaterials(outputDir, totalSequences)
 	if err != nil {
 		log.Fatalf("Failed to create expert materials: %v", err)
 	}
-	
+
 	fmt.Printf("\n✅ Expert validation package created successfully\n")
 	fmt.Printf("📦 Package location: %s\n", outputDir)
 	fmt.Printf("🧬 Total sequences: %d from %d populations\n", totalSequences, len(workingPopulations))
@@ -61,97 +71,96 @@ func main() {
 func createPackageStructure(outputDir string) error {
 	subdirs := []string{
 		"blind_test_sequences",
-		"reference_sequences", 
+		"reference_sequences",
 		"evaluation_materials",
 		"results",
 	}
-	
+
 	for _, subdir := range subdirs {
 		err := os.MkdirAll(filepath.Join(outputDir, subdir), 0750)
 		if err != nil {
 			return err
 		}
 	}
-	
+
 	fmt.Println("📁 Package structure created:")
 	for _, subdir := range subdirs {
 		fmt.Printf("   • %s/\n", subdir)
 	}
-	
+
 	return nil
 }
 
 func createAnonymizedSequences(sourceDir, outputDir string, populations []string) (int, error) {
 	fmt.Println("\n🎭 Creating anonymized sequences for blind testing:")
-	
+
 	blindDir := filepath.Join(outputDir, "blind_test_sequences")
 	refDir := filepath.Join(outputDir, "reference_sequences")
-	
+
 	// Create mapping file for de-anonymization
 	mappingFile, err := os.Create(filepath.Join(outputDir, "sequence_mapping_CONFIDENTIAL.txt")) // #nosec G304
 	if err != nil {
 		return 0, err
 	}
 	defer mappingFile.Close()
-	
+
 	// Write mapping header
 	mappingFile.WriteString("# CONFIDENTIAL: Sequence Anonymization Mapping\n")
 	mappingFile.WriteString("# Generated: " + time.Now().Format("2006-01-02 15:04:05") + "\n")
 	mappingFile.WriteString("# Anonymous_ID -> Original_Population_File\n\n")
-	
+
 	totalSequences := 0
 	anonymousID := 1
-	
-	
+
 	// Process each working population
 	for _, pop := range populations {
 		popDir := filepath.Join(sourceDir, pop)
-		
+
 		// Check if population directory exists
 		if _, err := os.Stat(popDir); os.IsNotExist(err) {
 			fmt.Printf("   ⚠️  %s: Directory not found, skipping\n", pop)
 			continue
 		}
-		
+
 		// Get all FASTA files for this population
 		pattern := filepath.Join(popDir, "*.fasta")
 		files, err := filepath.Glob(pattern)
 		if err != nil {
 			return 0, err
 		}
-		
+
 		popSequences := 0
-		
+
 		// Create anonymized copies
 		for _, file := range files {
 			// Generate anonymous filename
 			anonymousFilename := fmt.Sprintf("SEQ_%04d.fasta", anonymousID)
-			
+
 			// Copy to blind test directory with anonymous name
 			err = copyAndAnonymizeFile(file, filepath.Join(blindDir, anonymousFilename))
 			if err != nil {
 				log.Printf("Warning: Failed to anonymize %s: %v", filepath.Base(file), err)
 				continue
 			}
-			
+
 			// Copy to reference directory with original name for expert reference
 			err = copyFile(file, filepath.Join(refDir, pop+"_"+filepath.Base(file)))
 			if err != nil {
 				log.Printf("Warning: Failed to copy reference %s: %v", filepath.Base(file), err)
 			}
-			
+
 			// Record mapping
-			mappingFile.WriteString(fmt.Sprintf("SEQ_%04d.fasta -> %s/%s\n", 
+			mappingFile.WriteString(fmt.Sprintf("SEQ_%04d.fasta -> %s/%s\n",
 				anonymousID, pop, filepath.Base(file)))
-			
+
 			anonymousID++
 			popSequences++
 			totalSequences++
 		}
-		
+
 		fmt.Printf("   ✅ %s: %d sequences anonymized\n", pop, popSequences)
 	}
-	
+
 	return totalSequences, nil
 }
 
@@ -161,10 +170,10 @@ func copyAndAnonymizeFile(srcPath, dstPath string) error {
 	if err != nil {
 		return err
 	}
-	
+
 	// Anonymize header (remove population-specific information)
 	anonymizedContent := anonymizeSequence(content)
-	
+
 	// Write anonymized file
 	return os.WriteFile(dstPath, anonymizedContent, 0600)
 }
@@ -180,11 +189,11 @@ func copyFile(srcPath, dstPath string) error {
 func anonymizeSequence(content []byte) []byte {
 	contentStr := string(content)
 	lines := strings.Split(contentStr, "\n")
-	
+
 	if len(lines) == 0 {
 		return content
 	}
-	
+
 	// Anonymize the header line (first line starting with >)
 	if strings.HasPrefix(lines[0], ">") {
 		// Extract just the sequence ID, remove population/region info
@@ -194,7 +203,7 @@ func anonymizeSequence(content []byte) []byte {
 			lines[0] = ">ANONYMOUS_SEQUENCE length=" + extractLength(lines[0])
 		}
 	}
-	
+
 	return []byte(strings.Join(lines, "\n"))
 }
 
@@ -211,30 +220,30 @@ func extractLength(header string) string {
 
 func createExpertMaterials(outputDir string, totalSequences int) error {
 	fmt.Println("\n📋 Creating expert evaluation materials:")
-	
+
 	materialsDir := filepath.Join(outputDir, "evaluation_materials")
-	
+
 	// Create evaluation protocol
 	err := createEvaluationProtocol(materialsDir, totalSequences)
 	if err != nil {
 		return err
 	}
-	
+
 	// Create expert README
 	err = createExpertREADME(materialsDir)
 	if err != nil {
 		return err
 	}
-	
+
 	fmt.Println("   ✅ Evaluation protocol created")
 	fmt.Println("   ✅ Expert README created")
-	
+
 	return nil
 }
 
 func createEvaluationProtocol(materialsDir string, totalSequences int) error {
 	protocolPath := filepath.Join(materialsDir, "EVALUATION_PROTOCOL.md")
-	
+
 	protocol := fmt.Sprintf(`# GENOMIC SEQUENCE AUTHENTICITY EVALUATION PROTOCOL
 
 ## Overview
@@ -320,7 +329,7 @@ If sequence patterns suggest specific population characteristics:
 ### Phase 3: Discussion and Feedback
 1. Discuss findings with research team
 2. Provide recommendations for improvement
-3. Assess potential clinical/research applications
+3. Assess whether the sequences are fit for testing and research use
 
 ---
 
@@ -340,7 +349,7 @@ If sequence patterns suggest specific population characteristics:
 
 func createExpertREADME(materialsDir string) error {
 	readmePath := filepath.Join(materialsDir, "README_FOR_EXPERTS.md")
-	
+
 	readme := `# EXPERT VALIDATION PACKAGE - README
 
 ## Welcome, Genomics Specialist!
@@ -399,21 +408,21 @@ Review EVALUATION_PROTOCOL.md carefully for:
 
 **Project**: Population-specific genomic sequence generation using adaptive k-mer HMM models
 
-**Innovation**: First approach to generate population-authentic genomic sequences for precision medicine applications
+**Status**: Experimental; the models have not been validated against real population data
 
-**Your Role**: Critical validation of biological authenticity and clinical suitability
+**Your Role**: Critical assessment of how closely the sequences resemble real human sequence
 
 ---
 
 ## Technical Background
 
-**Method**: k=8 Hidden Markov Models trained on population-specific genomic data
+**Method**: k=8 adaptive HMMs, one per population label (see the generating program for the training data used)
 
 **Populations**: 5 global populations (anonymized during blind testing)
 
 **Metrics**: K-mer complexity, GC content, homopolymer analysis, biological authenticity
 
-**Goal**: Generate sequences indistinguishable from real human genomic sequences
+**Goal**: Find out how far the sequences are from real human genomic sequence
 
 ---
 
@@ -425,11 +434,11 @@ Review EVALUATION_PROTOCOL.md carefully for:
 
 🔬 **Expertise**: Your genomics knowledge is essential for validation
 
-📊 **Impact**: Results will guide clinical applications and further development
+📊 **Impact**: Results will guide further development
 
 ---
 
-**Thank you for your valuable contribution to advancing population genomics!**
+**Thank you for your help.**
 `
 
 	return os.WriteFile(readmePath, []byte(readme), 0600)

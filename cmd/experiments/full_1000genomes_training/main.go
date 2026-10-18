@@ -1,3 +1,12 @@
+// Command full_1000genomes_training walks the VCF files of 11 populations
+// under the hard-coded directory /Volumes/Public/genomics_training/populations,
+// trains a k=4 adaptive HMM, generates ten 100 kb sequences, prints their
+// complexity and GC content, and writes full_1000genomes_progress/final_results.txt.
+// Despite the name it does not read the VCFs: processVCFFile trains on ten
+// generated periodic sequences per file that depend only on the population
+// label, so the result reflects none of the 1000 Genomes data.
+//
+// It is a one-off experiment, not part of the supported phantom-science CLI.
 package main
 
 import (
@@ -15,24 +24,24 @@ import (
 
 func main() {
 	log.SetFlags(log.LstdFlags)
-	
+
 	fmt.Println("=== FULL 1000 GENOMES TRAINING ===")
-	fmt.Println("Training on complete 159GB 1000 Genomes dataset")
-	fmt.Println("11 populations, all chromosomes, maximum genomic diversity")
-	
+	fmt.Println("Walks the 1000 Genomes VCF directory but trains on generated periodic sequences, not VCF content")
+	fmt.Println("11 population labels")
+
 	totalCores := runtime.NumCPU()
 	perfCores := detectAppleSiliconCores()
-	fmt.Printf("🍎 Apple Silicon: %d total cores (%d P-cores + %d E-cores)\n", 
+	fmt.Printf("🍎 CPU: %d cores (%d assumed performance cores + %d others)\n",
 		totalCores, perfCores, totalCores-perfCores)
-	fmt.Printf("⚡ Using %d P-cores for training\n", perfCores)
+	fmt.Printf("⚡ GOMAXPROCS set to %d\n", perfCores)
 	fmt.Println()
 
 	runtime.GOMAXPROCS(perfCores)
-	
+
 	// Configuration
 	populationDir := "/Volumes/Public/genomics_training/populations"
 	progressDir := "full_1000genomes_progress"
-	
+
 	// Create progress directory
 	if err := os.MkdirAll(progressDir, 0750); err != nil {
 		log.Fatalf("Failed to create progress directory: %v", err)
@@ -42,13 +51,12 @@ func main() {
 	if _, err := os.Stat(populationDir); os.IsNotExist(err) {
 		log.Fatalf("1000 Genomes dataset not found: %s", populationDir)
 	}
-	
+
 	// Count total data
 	totalSize, totalFiles := countDataset(populationDir)
 	fmt.Printf("📊 Dataset overview:\n")
 	fmt.Printf("  Total size: %s\n", totalSize)
 	fmt.Printf("  Total VCF files: %d\n", totalFiles)
-	fmt.Printf("  Expected training time: 6-12 hours\n")
 	fmt.Println()
 
 	// Initialize model
@@ -58,10 +66,9 @@ func main() {
 	fmt.Println()
 
 	// Train on full dataset
-	fmt.Println("[STEP 2] TRAINING ON FULL 1000 GENOMES DATASET...")
-	fmt.Printf("🧬 Processing 159GB across 11 populations\n")
-	fmt.Printf("📈 All chromosomes (1-22, X, Y)\n")
-	fmt.Printf("⚡ Apple Silicon optimization: %d P-cores\n", perfCores)
+	fmt.Println("[STEP 2] TRAINING (one batch of generated sequences per VCF file)...")
+	fmt.Printf("🧬 VCF contents are not read\n")
+	fmt.Printf("⚡ Workers: %d\n", perfCores)
 	fmt.Println()
 
 	start := time.Now()
@@ -69,8 +76,8 @@ func main() {
 		log.Fatalf("Training failed: %v", err)
 	}
 	duration := time.Since(start)
-	
-	fmt.Printf("✅ FULL 1000 GENOMES TRAINING COMPLETED!\n")
+
+	fmt.Printf("✅ TRAINING COMPLETED\n")
 	fmt.Printf("✅ Training time: %v\n", duration)
 	fmt.Println()
 
@@ -87,18 +94,18 @@ func main() {
 	fmt.Println("[STEP 4] Calculating authenticity metrics...")
 	complexity := calculateComplexity(sequences)
 	gcContent := calculateGCContent(sequences)
-	
+
 	fmt.Printf("📊 AUTHENTICITY RESULTS:\n")
 	fmt.Printf("  Complexity: %.4f", complexity)
 	if complexity > 0.05 {
-		fmt.Printf(" (%.1fx improvement) ✅", complexity/0.005)
+		fmt.Printf(" (%.1fx the 0.005 baseline) ✅", complexity/0.005)
 	} else if complexity > 0.01 {
-		fmt.Printf(" (%.1fx improvement) 🟡", complexity/0.005)
+		fmt.Printf(" (%.1fx the 0.005 baseline) 🟡", complexity/0.005)
 	} else {
 		fmt.Print(" ❌")
 	}
 	fmt.Println()
-	
+
 	fmt.Printf("  GC Content: %.2f%%", gcContent*100)
 	if gcContent >= 0.40 && gcContent <= 0.44 {
 		fmt.Print(" ✅")
@@ -111,51 +118,45 @@ func main() {
 	fmt.Println()
 
 	// Final results
-	fmt.Println("🎉 FULL 1000 GENOMES TRAINING RESULTS:")
+	fmt.Println("🎉 TRAINING RESULTS:")
 	fmt.Println("=====================================")
-	fmt.Printf("Training Method:     Apple Silicon + Full 1000 Genomes\n")
-	fmt.Printf("Dataset:             159GB, 11 populations, all chromosomes\n")
+	fmt.Printf("Training Method:     k=4 adaptive HMM on generated periodic sequences\n")
+	fmt.Printf("Dataset:             %s (file names only)\n", populationDir)
 	fmt.Printf("Total Training Time: %v\n", duration)
-	fmt.Printf("Apple Silicon:       %d P-cores (E-cores preserved)\n", perfCores)
+	fmt.Printf("Workers:             %d\n", perfCores)
 	fmt.Printf("Complexity:          %.4f", complexity)
 	if complexity > 0.05 {
-		fmt.Printf(" (%.1fx improvement)", complexity/0.005)
+		fmt.Printf(" (%.1fx the 0.005 baseline)", complexity/0.005)
 	}
 	fmt.Println()
 	fmt.Printf("GC Content:          %.2f%% (error: %.4f)\n", gcContent*100, abs(gcContent-0.42))
-	
+
 	// Status assessment
 	status := "SUCCESS"
 	if complexity > 0.05 && gcContent >= 0.40 && gcContent <= 0.44 {
-		status = "PRODUCTION_READY"
+		status = "THRESHOLDS_MET"
 	} else if complexity > 0.01 {
 		status = "GOOD_PROGRESS"
 	}
-	
+
 	fmt.Printf("Overall Status:      %s\n", status)
 	fmt.Println()
 
 	// Save results
 	saveResults(progressDir, duration, complexity, gcContent, status, perfCores)
-	
+
 	switch status {
-	case "PRODUCTION_READY":
-		fmt.Println("🎉 PRODUCTION-READY AUTHENTICITY ACHIEVED!")
-		fmt.Println("✅ Full population genomics diversity captured")
-		fmt.Println("✅ Ready for expert validation and deployment")
+	case "THRESHOLDS_MET":
+		fmt.Println("🎉 Complexity and GC thresholds met")
 	case "GOOD_PROGRESS":
-		fmt.Println("📈 EXCELLENT PROGRESS!")
-		fmt.Println("✅ Significant improvements from population diversity")
-		fmt.Println("✅ Apple Silicon optimization successful")
+		fmt.Println("📈 Complexity above 0.01; not all thresholds met")
 	default:
-		fmt.Println("📊 FULL DATASET TRAINING COMPLETE!")
-		fmt.Println("✅ 159GB dataset processed successfully")
-		fmt.Println("✅ Population genomics foundation established")
+		fmt.Println("📊 Training complete; thresholds not met")
 	}
-	
+
 	fmt.Println()
 	fmt.Printf("📊 Results saved in: %s/\n", progressDir)
-	fmt.Printf("🏁 FULL 1000 GENOMES TRAINING COMPLETE IN %v\n", duration)
+	fmt.Printf("🏁 TRAINING COMPLETE IN %v\n", duration)
 }
 
 func countDataset(populationDir string) (string, int) {
@@ -164,7 +165,7 @@ func countDataset(populationDir string) (string, int) {
 	if err != nil {
 		return "unknown", 0
 	}
-	
+
 	// Get directory size
 	size := getDirSize(populationDir)
 	return formatSize(size), len(vcfFiles)
@@ -199,42 +200,42 @@ func formatSize(bytes int64) string {
 
 func trainOnFullDataset(model *authenticity.AdaptiveHMMModel, populationDir, progressDir string, numCores int) error {
 	populations := []string{"YRI", "LWK", "GWD", "CEU", "GBR", "TSI", "CHB", "JPT", "CHS", "MXL", "PUR"}
-	
-	fmt.Printf("🧬 Processing %d populations with %d P-cores\n", len(populations), numCores)
-	
+
+	fmt.Printf("🧬 Processing %d populations with %d workers\n", len(populations), numCores)
+
 	var totalProcessed int64
 	var wg sync.WaitGroup
-	
+
 	// Process populations in parallel
 	semaphore := make(chan struct{}, numCores/2) // Use half cores for populations
-	
+
 	for _, pop := range populations {
 		popDir := filepath.Join(populationDir, pop)
 		if _, err := os.Stat(popDir); os.IsNotExist(err) {
 			fmt.Printf("⚠ Population %s not found, skipping\n", pop)
 			continue
 		}
-		
+
 		wg.Add(1)
 		go func(population string) {
 			defer wg.Done()
-			
-			semaphore <- struct{}{} // Acquire
+
+			semaphore <- struct{}{}        // Acquire
 			defer func() { <-semaphore }() // Release
-			
+
 			processed, err := processPopulation(model, population, populationDir, numCores)
 			if err != nil {
 				fmt.Printf("⚠ Error processing population %s: %v\n", population, err)
 				return
 			}
-			
+
 			atomic.AddInt64(&totalProcessed, processed)
 			fmt.Printf("✅ Population %s complete: %d files processed\n", population, processed)
 		}(pop)
 	}
-	
+
 	wg.Wait()
-	
+
 	fmt.Printf("✅ All populations processed: %d total files\n", totalProcessed)
 	return nil
 }
@@ -242,76 +243,76 @@ func trainOnFullDataset(model *authenticity.AdaptiveHMMModel, populationDir, pro
 func processPopulation(model *authenticity.AdaptiveHMMModel, pop, populationDir string, numCores int) (int64, error) {
 	popDir := filepath.Join(populationDir, pop)
 	fmt.Printf("🧬 Processing population %s...\n", pop)
-	
+
 	// Get all VCF files for this population
 	vcfFiles, err := filepath.Glob(filepath.Join(popDir, "*.vcf.gz"))
 	if err != nil {
 		return 0, err
 	}
-	
+
 	if len(vcfFiles) == 0 {
 		return 0, fmt.Errorf("no VCF files found for population %s", pop)
 	}
-	
+
 	var processed int64
 	var wg sync.WaitGroup
-	
+
 	// Process VCF files in parallel
 	semaphore := make(chan struct{}, numCores) // Use all cores for VCF processing
-	
+
 	for _, vcfFile := range vcfFiles {
 		wg.Add(1)
 		go func(file string) {
 			defer wg.Done()
-			
-			semaphore <- struct{}{} // Acquire
+
+			semaphore <- struct{}{}        // Acquire
 			defer func() { <-semaphore }() // Release
-			
+
 			if err := processVCFFile(model, file, pop); err != nil {
 				fmt.Printf("⚠ Error processing %s: %v\n", file, err)
 				return
 			}
-			
+
 			atomic.AddInt64(&processed, 1)
-			
+
 			if processed%10 == 0 {
 				fmt.Printf("  📊 %s: %d/%d files processed\n", pop, processed, len(vcfFiles))
 			}
 		}(vcfFile)
 	}
-	
+
 	wg.Wait()
-	
+
 	return processed, nil
 }
 
 func processVCFFile(model *authenticity.AdaptiveHMMModel, vcfFile, pop string) error {
-	// For now, simulate VCF processing with population-specific patterns
-	// In production, this would parse VCF files and extract variant sequences
-	
+	// The VCF file is not opened: the model is trained on ten generated
+	// periodic sequences per file, which depend only on the population label.
+
 	// Generate population-specific training sequences
-	numSequences := 10 // Generate 10 sequences per VCF file
+	numSequences := 10      // Generate 10 sequences per VCF file
 	sequenceLength := 50000 // 50KB per sequence
-	
+
 	for i := 0; i < numSequences; i++ {
 		sequence := generatePopulationSequence(pop, sequenceLength, i)
-		
+
 		// Train model on this sequence
 		if err := model.TrainFromSequence(sequence); err != nil {
 			return fmt.Errorf("failed to train on sequence: %w", err)
 		}
 	}
-	
+
 	return nil
 }
 
 func generatePopulationSequence(pop string, length, variant int) []byte {
 	sequence := make([]byte, length)
 	bases := []byte{'A', 'T', 'C', 'G'}
-	
-	// Population-specific patterns for diversity
+
+	// Periodic pattern whose stride depends on the population group
 	seed := int64(variant) * 1000
-	
+
 	for i := 0; i < length; i++ {
 		// Create population-specific bias
 		var baseIndex int
@@ -327,16 +328,16 @@ func generatePopulationSequence(pop string, length, variant int) []byte {
 		default:
 			baseIndex = (i + variant) % 4
 		}
-		
+
 		sequence[i] = bases[baseIndex]
 	}
-	
+
 	return sequence
 }
 
 func generateValidationSequences(model *authenticity.AdaptiveHMMModel, numSequences, length int) ([][]byte, error) {
 	sequences := make([][]byte, numSequences)
-	
+
 	for i := 0; i < numSequences; i++ {
 		result, err := model.GenerateSequence(length)
 		if err != nil {
@@ -344,7 +345,7 @@ func generateValidationSequences(model *authenticity.AdaptiveHMMModel, numSequen
 		}
 		sequences[i] = result.Sequence
 	}
-	
+
 	return sequences, nil
 }
 
@@ -352,24 +353,24 @@ func calculateComplexity(sequences [][]byte) float64 {
 	if len(sequences) == 0 {
 		return 0
 	}
-	
+
 	totalComplexity := 0.0
 	for _, seq := range sequences {
 		k := 4
 		if len(seq) < k {
 			continue
 		}
-		
+
 		uniqueKmers := make(map[string]bool)
 		for i := 0; i <= len(seq)-k; i++ {
 			kmer := string(seq[i : i+k])
 			uniqueKmers[kmer] = true
 		}
-		
+
 		complexity := float64(len(uniqueKmers)) / float64(len(seq)-k+1)
 		totalComplexity += complexity
 	}
-	
+
 	return totalComplexity / float64(len(sequences))
 }
 
@@ -377,72 +378,54 @@ func calculateGCContent(sequences [][]byte) float64 {
 	if len(sequences) == 0 {
 		return 0
 	}
-	
+
 	totalGC := 0.0
 	for _, seq := range sequences {
 		if len(seq) == 0 {
 			continue
 		}
-		
+
 		gcCount := 0
 		for _, base := range seq {
 			if base == 'G' || base == 'C' {
 				gcCount++
 			}
 		}
-		
+
 		gc := float64(gcCount) / float64(len(seq))
 		totalGC += gc
 	}
-	
+
 	return totalGC / float64(len(sequences))
 }
 
 func saveResults(progressDir string, duration time.Duration, complexity, gcContent float64, status string, perfCores int) {
 	resultsFile := filepath.Join(progressDir, "final_results.txt")
-	
-	results := fmt.Sprintf(`FULL 1000 GENOMES TRAINING RESULTS
-==================================
+
+	results := fmt.Sprintf(`TRAINING RESULTS (full_1000genomes_training experiment)
+=======================================================
 
 Training Completed: %s
 Total Training Time: %v
-Apple Silicon P-Cores: %d
-Dataset: 159GB, 11 populations, all chromosomes
+Workers (GOMAXPROCS): %d
 
-AUTHENTICITY METRICS:
-- Sequence Complexity: %.4f (%.1fx improvement)
+METRICS:
+- Sequence Complexity: %.4f (%.1fx the 0.005 baseline)
 - GC Content: %.2f%% (target: 42%%)
 - Overall Status: %s
 
-DATASET COVERAGE:
-- Populations: YRI, LWK, GWD, CEU, GBR, TSI, CHB, JPT, CHS, MXL, PUR
-- Chromosomes: 1-22, X, Y (complete coverage)
-- Total Size: 159GB VCF files
-- Training Approach: Population-aware genomic diversity
-
-PERFORMANCE SUMMARY:
-- Apple Silicon: P-core optimization (E-cores preserved)
-- Parallel Processing: Multi-population concurrent training
-- Memory Efficiency: Streaming VCF processing
-- Genomic Diversity: Maximum population representation
+TRAINING DATA:
+- Population labels: YRI, LWK, GWD, CEU, GBR, TSI, CHB, JPT, CHS, MXL, PUR
+- VCF files are enumerated but not read; each one adds ten generated
+  periodic 50 kb sequences that depend only on the population label
 
 NEXT STEPS:
-1. Expert validation with real bioinformaticians
-2. Production deployment preparation
+1. Train on real VCF content before drawing conclusions
+2. Expert review of generated sequences
 3. Integration with existing sequencer simulation
-4. Performance benchmarking and optimization
+`, time.Now().Format("2006-01-02 15:04:05"), duration, perfCores,
+		complexity, complexity/0.005, gcContent*100, status)
 
-TECHNICAL ACHIEVEMENTS:
-✅ Full 1000 Genomes dataset processed (159GB)
-✅ 11 diverse populations captured
-✅ Apple Silicon optimization successful
-✅ Population-aware authenticity patterns established
-✅ Production-ready infrastructure validated
-
-Training Status: FULL DATASET SUCCESS
-`, time.Now().Format("2006-01-02 15:04:05"), duration, perfCores, 
-	complexity, complexity/0.005, gcContent*100, status)
-	
 	if err := os.WriteFile(resultsFile, []byte(results), 0600); err != nil {
 		fmt.Printf("⚠ Could not save results file: %v\n", err)
 	}
@@ -450,10 +433,10 @@ Training Status: FULL DATASET SUCCESS
 
 func detectAppleSiliconCores() int {
 	totalCores := runtime.NumCPU()
-	
+
 	if totalCores >= 8 {
 		switch totalCores {
-		case 8:  // M1: 4P + 4E
+		case 8: // M1: 4P + 4E
 			return 4
 		case 10: // M1 Pro: 6P + 4E
 			return 6
@@ -469,11 +452,11 @@ func detectAppleSiliconCores() int {
 			return (totalCores * 2) / 3
 		}
 	}
-	
+
 	if totalCores > 4 {
 		return totalCores - 2
 	}
-	
+
 	return totalCores
 }
 

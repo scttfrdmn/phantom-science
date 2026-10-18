@@ -15,30 +15,30 @@ func TestMainVersionFlag(t *testing.T) {
 	// Build the binary first
 	tmpDir := t.TempDir()
 	binaryPath := filepath.Join(tmpDir, "phantom-science-test")
-	
+
 	cmd := exec.Command("go", "build", "-o", binaryPath, ".")
 	err := cmd.Run()
 	if err != nil {
 		t.Fatalf("Failed to build binary: %v", err)
 	}
-	
+
 	// Test version flag
 	cmd = exec.Command(binaryPath, "--version")
 	output, err := cmd.Output()
 	if err != nil {
 		t.Fatalf("Failed to run version command: %v", err)
 	}
-	
+
 	outputStr := string(output)
 	want := "Phantom Science v" + phantomcmd.Version
 	if !strings.Contains(outputStr, want) {
 		t.Errorf("Expected version output to contain %q, got: %s", want, outputStr)
 	}
-	
+
 	if !strings.Contains(outputStr, "Scientific Simulation Platform") {
 		t.Errorf("Expected version output to contain platform description, got: %s", outputStr)
 	}
-	
+
 	if !strings.Contains(outputStr, "Copyright 2025-2026 Scott Friedman") {
 		t.Errorf("Expected version output to contain copyright, got: %s", outputStr)
 	}
@@ -47,20 +47,20 @@ func TestMainVersionFlag(t *testing.T) {
 func TestMainNoConfig(t *testing.T) {
 	tmpDir := t.TempDir()
 	binaryPath := filepath.Join(tmpDir, "phantom-science-test")
-	
+
 	cmd := exec.Command("go", "build", "-o", binaryPath, ".")
 	err := cmd.Run()
 	if err != nil {
 		t.Fatalf("Failed to build binary: %v", err)
 	}
-	
+
 	// Test without config flag - should fail
 	cmd = exec.Command(binaryPath)
 	output, err := cmd.CombinedOutput()
 	if err == nil {
 		t.Error("Expected command to fail without config flag")
 	}
-	
+
 	outputStr := string(output)
 	if !strings.Contains(outputStr, "Sequencer configuration file is required") {
 		t.Errorf("Expected error message about required config, got: %s", outputStr)
@@ -69,7 +69,7 @@ func TestMainNoConfig(t *testing.T) {
 
 func TestMainWithValidConfig(t *testing.T) {
 	tmpDir := t.TempDir()
-	
+
 	// Create test config
 	configContent := `{
   "sequencer_model": "MiSeq",
@@ -85,13 +85,13 @@ func TestMainWithValidConfig(t *testing.T) {
   "quality_decay": 0.1,
   "q30_percentage": 85.0
 }`
-	
+
 	configPath := filepath.Join(tmpDir, "test_config.json")
 	err := os.WriteFile(configPath, []byte(configContent), 0600)
 	if err != nil {
 		t.Fatalf("Failed to create test config: %v", err)
 	}
-	
+
 	// Build binary
 	binaryPath := filepath.Join(tmpDir, "phantom-science-test")
 	cmd := exec.Command("go", "build", "-o", binaryPath, ".")
@@ -99,7 +99,7 @@ func TestMainWithValidConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to build binary: %v", err)
 	}
-	
+
 	// Test with valid config
 	cmd = exec.Command(binaryPath, "--config", configPath, "--command", "generate")
 	output, err := cmd.CombinedOutput()
@@ -107,12 +107,12 @@ func TestMainWithValidConfig(t *testing.T) {
 		t.Logf("Command output: %s", string(output))
 		t.Fatalf("Expected command to succeed with valid config: %v", err)
 	}
-	
+
 	outputStr := string(output)
 	if !strings.Contains(outputStr, "Starting Phantom Science genomic data generation") {
 		t.Errorf("Expected generation start message, got: %s", outputStr)
 	}
-	
+
 	if !strings.Contains(outputStr, "Generation completed successfully") {
 		t.Errorf("Expected success message, got: %s", outputStr)
 	}
@@ -120,7 +120,7 @@ func TestMainWithValidConfig(t *testing.T) {
 
 func TestMainWithPhantomConfig(t *testing.T) {
 	tmpDir := t.TempDir()
-	
+
 	// Create test configs
 	sequencerConfig := `{
   "sequencer_model": "NovaSeq 6000",
@@ -148,20 +148,20 @@ func TestMainWithPhantomConfig(t *testing.T) {
     "enable": false
   }
 }`
-	
+
 	sequencerPath := filepath.Join(tmpDir, "sequencer.json")
 	phantomPath := filepath.Join(tmpDir, "phantom.json")
-	
+
 	err := os.WriteFile(sequencerPath, []byte(sequencerConfig), 0600)
 	if err != nil {
 		t.Fatalf("Failed to create sequencer config: %v", err)
 	}
-	
+
 	err = os.WriteFile(phantomPath, []byte(phantomConfig), 0600)
 	if err != nil {
 		t.Fatalf("Failed to create phantom config: %v", err)
 	}
-	
+
 	// Build binary
 	binaryPath := filepath.Join(tmpDir, "phantom-science-test")
 	cmd := exec.Command("go", "build", "-o", binaryPath, ".")
@@ -169,7 +169,7 @@ func TestMainWithPhantomConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to build binary: %v", err)
 	}
-	
+
 	// Test with both configs
 	cmd = exec.Command(binaryPath, "--config", sequencerPath, "--phantom", phantomPath, "--command", "generate")
 	output, err := cmd.CombinedOutput()
@@ -177,7 +177,7 @@ func TestMainWithPhantomConfig(t *testing.T) {
 		t.Logf("Command output: %s", string(output))
 		t.Fatalf("Expected command to succeed with both configs: %v", err)
 	}
-	
+
 	outputStr := string(output)
 	if !strings.Contains(outputStr, "Generation completed successfully") {
 		t.Errorf("Expected success message with phantom config, got: %s", outputStr)
@@ -253,7 +253,7 @@ func TestMainValidateCommand(t *testing.T) {
 
 func TestMainUnknownCommand(t *testing.T) {
 	tmpDir := t.TempDir()
-	
+
 	configContent := `{
   "sequencer_model": "MiSeq",
   "sample_name": "Test_Sample",
@@ -267,13 +267,13 @@ func TestMainUnknownCommand(t *testing.T) {
   "quality_decay": 0.1,
   "q30_percentage": 85.0
 }`
-	
+
 	configPath := filepath.Join(tmpDir, "test_config.json")
 	err := os.WriteFile(configPath, []byte(configContent), 0600)
 	if err != nil {
 		t.Fatalf("Failed to create test config: %v", err)
 	}
-	
+
 	// Build binary
 	binaryPath := filepath.Join(tmpDir, "phantom-science-test")
 	cmd := exec.Command("go", "build", "-o", binaryPath, ".")
@@ -281,14 +281,14 @@ func TestMainUnknownCommand(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to build binary: %v", err)
 	}
-	
+
 	// Test with unknown command
 	cmd = exec.Command(binaryPath, "--config", configPath, "--command", "unknown")
 	output, err := cmd.CombinedOutput()
 	if err == nil {
 		t.Error("Expected command to fail with unknown command")
 	}
-	
+
 	outputStr := string(output)
 	if !strings.Contains(outputStr, "Unknown command: unknown") {
 		t.Errorf("Expected unknown command error, got: %s", outputStr)
@@ -297,7 +297,7 @@ func TestMainUnknownCommand(t *testing.T) {
 
 func TestMainVerboseFlag(t *testing.T) {
 	tmpDir := t.TempDir()
-	
+
 	configContent := `{
   "sequencer_model": "MiSeq",
   "sample_name": "Test_Sample",
@@ -312,13 +312,13 @@ func TestMainVerboseFlag(t *testing.T) {
   "quality_decay": 0.1,
   "q30_percentage": 85.0
 }`
-	
+
 	configPath := filepath.Join(tmpDir, "test_config.json")
 	err := os.WriteFile(configPath, []byte(configContent), 0600)
 	if err != nil {
 		t.Fatalf("Failed to create test config: %v", err)
 	}
-	
+
 	// Build binary
 	binaryPath := filepath.Join(tmpDir, "phantom-science-test")
 	cmd := exec.Command("go", "build", "-o", binaryPath, ".")
@@ -326,7 +326,7 @@ func TestMainVerboseFlag(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to build binary: %v", err)
 	}
-	
+
 	// Test with verbose flag
 	cmd = exec.Command(binaryPath, "--config", configPath, "--verbose", "--command", "generate")
 	output, err := cmd.CombinedOutput()
@@ -334,7 +334,7 @@ func TestMainVerboseFlag(t *testing.T) {
 		t.Logf("Command output: %s", string(output))
 		t.Fatalf("Expected command to succeed with verbose flag: %v", err)
 	}
-	
+
 	// Verbose mode should produce more detailed output
 	outputStr := string(output)
 	if !strings.Contains(outputStr, "Phantom Science genomic data generation") {
@@ -346,29 +346,31 @@ func TestMainHelpFlag(t *testing.T) {
 	// Build the binary first
 	tmpDir := t.TempDir()
 	binaryPath := filepath.Join(tmpDir, "phantom-science-test")
-	
+
 	cmd := exec.Command("go", "build", "-o", binaryPath, ".")
 	err := cmd.Run()
 	if err != nil {
 		t.Fatalf("Failed to build binary: %v", err)
 	}
-	
+
 	// Test help flag
 	cmd = exec.Command(binaryPath, "--help")
 	output, err := cmd.Output()
 	if err != nil {
 		t.Fatalf("Failed to run help command: %v", err)
 	}
-	
+
 	outputStr := string(output)
-	if !strings.Contains(outputStr, "enterprise-grade scientific simulation platform") {
+	// Match the product name only, so rewording the root command's
+	// description does not break this test.
+	if !strings.Contains(outputStr, "Phantom Science") {
 		t.Errorf("Expected help output to contain platform description, got: %s", outputStr)
 	}
-	
+
 	if !strings.Contains(outputStr, "Usage:") {
 		t.Errorf("Expected help output to contain usage information, got: %s", outputStr)
 	}
-	
+
 	if !strings.Contains(outputStr, "phantom-science") {
 		t.Errorf("Expected help output to contain command name, got: %s", outputStr)
 	}
@@ -378,20 +380,20 @@ func TestMainConfigValidation(t *testing.T) {
 	// Build the binary first
 	tmpDir := t.TempDir()
 	binaryPath := filepath.Join(tmpDir, "phantom-science-test")
-	
+
 	cmd := exec.Command("go", "build", "-o", binaryPath, ".")
 	err := cmd.Run()
 	if err != nil {
 		t.Fatalf("Failed to build binary: %v", err)
 	}
-	
+
 	// Test with missing config - should fail
 	cmd = exec.Command(binaryPath)
 	output, err := cmd.CombinedOutput()
 	if err == nil {
 		t.Error("Expected command to fail without config file")
 	}
-	
+
 	outputStr := string(output)
 	if !strings.Contains(outputStr, "configuration file is required") {
 		t.Errorf("Expected error about missing config, got: %s", outputStr)
@@ -402,26 +404,26 @@ func TestMainErrorHandling(t *testing.T) {
 	// Build the binary first
 	tmpDir := t.TempDir()
 	binaryPath := filepath.Join(tmpDir, "phantom-science-test")
-	
+
 	cmd := exec.Command("go", "build", "-o", binaryPath, ".")
 	err := cmd.Run()
 	if err != nil {
 		t.Fatalf("Failed to build binary: %v", err)
 	}
-	
+
 	// Test with invalid config file
 	invalidConfigPath := filepath.Join(tmpDir, "invalid.json")
 	err = os.WriteFile(invalidConfigPath, []byte("{invalid json}"), 0600)
 	if err != nil {
 		t.Fatalf("Failed to create invalid config: %v", err)
 	}
-	
+
 	cmd = exec.Command(binaryPath, "--config", invalidConfigPath)
 	output, err := cmd.CombinedOutput()
 	if err == nil {
 		t.Error("Expected command to fail with invalid config")
 	}
-	
+
 	// Should get an error about invalid JSON or config parsing
 	outputStr := string(output)
 	if !strings.Contains(outputStr, "invalid") && !strings.Contains(outputStr, "error") && !strings.Contains(outputStr, "failed") {
@@ -433,20 +435,20 @@ func TestMainUnknownFlag(t *testing.T) {
 	// Build the binary first
 	tmpDir := t.TempDir()
 	binaryPath := filepath.Join(tmpDir, "phantom-science-test")
-	
+
 	cmd := exec.Command("go", "build", "-o", binaryPath, ".")
 	err := cmd.Run()
 	if err != nil {
 		t.Fatalf("Failed to build binary: %v", err)
 	}
-	
+
 	// Test with unknown flag
 	cmd = exec.Command(binaryPath, "--unknown-flag")
 	output, err := cmd.CombinedOutput()
 	if err == nil {
 		t.Error("Expected command to fail with unknown flag")
 	}
-	
+
 	outputStr := string(output)
 	if !strings.Contains(outputStr, "unknown") && !strings.Contains(outputStr, "flag") {
 		t.Errorf("Expected error about unknown flag, got: %s", outputStr)

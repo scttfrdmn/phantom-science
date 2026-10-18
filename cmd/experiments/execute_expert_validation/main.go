@@ -1,3 +1,15 @@
+// Command execute_expert_validation drives the internal/genomics/validation
+// expert-validation orchestrator, academic integration and publication
+// workflow from a JSON config (-config, default
+// expert_validation_config.json), in one of the modes full,
+// orchestrate-only, academic-only or publication-only.
+//
+// The expert sessions are simulated: simulateExpertSession submits
+// fabricated feedback and each session's accuracy is a made-up value, so
+// the authenticity score and report it prints say nothing about the
+// sequences.
+//
+// It is a one-off experiment, not part of the supported phantom-science CLI.
 package main
 
 import (
@@ -17,40 +29,40 @@ import (
 // ExpertValidationConfig contains configuration for expert validation execution
 type ExpertValidationConfig struct {
 	// Expert package configuration
-	ExpertPackagePath     string `json:"expert_package_path"`
-	
+	ExpertPackagePath string `json:"expert_package_path"`
+
 	// Orchestrator configuration
 	MaxConcurrentSessions int           `json:"max_concurrent_sessions"`
 	SessionTimeout        time.Duration `json:"session_timeout"`
 	AutoReportGeneration  bool          `json:"auto_report_generation"`
-	
+
 	// Academic integration
-	AcademicIntegration   bool `json:"academic_integration"`
-	PubMedAPIKey string `json:"-" yaml:"-"`
-	ORCIDAPIKey  string `json:"-" yaml:"-"`
-	
+	AcademicIntegration bool   `json:"academic_integration"`
+	PubMedAPIKey        string `json:"-" yaml:"-"`
+	ORCIDAPIKey         string `json:"-" yaml:"-"`
+
 	// Publication workflow
-	PublicationWorkflow   bool   `json:"publication_workflow"`
-	TargetJournals       []string `json:"target_journals"`
-	WorkingDirectory     string `json:"working_directory"`
-	
+	PublicationWorkflow bool     `json:"publication_workflow"`
+	TargetJournals      []string `json:"target_journals"`
+	WorkingDirectory    string   `json:"working_directory"`
+
 	// Email notifications
-	EmailNotifications    bool   `json:"email_notifications"`
-	SMTPHost             string `json:"smtp_host"`
-	SMTPPort             int    `json:"smtp_port"`
-	SMTPUsername         string `json:"smtp_username"`
-	SMTPPassword string `json:"-" yaml:"-"`
-	FromEmail            string `json:"from_email"`
-	
+	EmailNotifications bool   `json:"email_notifications"`
+	SMTPHost           string `json:"smtp_host"`
+	SMTPPort           int    `json:"smtp_port"`
+	SMTPUsername       string `json:"smtp_username"`
+	SMTPPassword       string `json:"-" yaml:"-"`
+	FromEmail          string `json:"from_email"`
+
 	// Expert recruitment
-	AutoRecruitment      bool     `json:"auto_recruitment"`
-	MinimumExperts       int      `json:"minimum_experts"`
-	ExpertiseAreas       []string `json:"expertise_areas"`
-	InstitutionTargets   []string `json:"institution_targets"`
-	
+	AutoRecruitment    bool     `json:"auto_recruitment"`
+	MinimumExperts     int      `json:"minimum_experts"`
+	ExpertiseAreas     []string `json:"expertise_areas"`
+	InstitutionTargets []string `json:"institution_targets"`
+
 	// Validation thresholds
-	ConsensusThreshold   float64 `json:"consensus_threshold"`
-	AuthenticityTarget   float64 `json:"authenticity_target"`
+	ConsensusThreshold float64 `json:"consensus_threshold"`
+	AuthenticityTarget float64 `json:"authenticity_target"`
 }
 
 func main() {
@@ -136,12 +148,12 @@ func loadConfiguration(configFile string) (*ExpertValidationConfig, error) {
 		TargetJournals:        []string{"Nature Genetics", "Nature Biotechnology", "Genome Research"},
 		WorkingDirectory:      "./publication_workspace",
 		EmailNotifications:    false,
-		AutoRecruitment:      true,
-		MinimumExperts:       3,
-		ExpertiseAreas:       []string{"population genomics", "computational genomics", "clinical genomics"},
-		InstitutionTargets:   []string{"Stanford", "Harvard", "UCSF", "Broad Institute"},
-		ConsensusThreshold:   0.70,
-		AuthenticityTarget:   75.0,
+		AutoRecruitment:       true,
+		MinimumExperts:        3,
+		ExpertiseAreas:        []string{"population genomics", "computational genomics", "clinical genomics"},
+		InstitutionTargets:    []string{"Stanford", "Harvard", "UCSF", "Broad Institute"},
+		ConsensusThreshold:    0.70,
+		AuthenticityTarget:    75.0,
 	}
 
 	// Load from file if it exists
@@ -276,13 +288,13 @@ func executeFullValidationWorkflow(ctx context.Context, config *ExpertValidation
 
 	fmt.Printf("📊 Validation Results Summary:\n")
 	fmt.Printf("  - Total Experts: %d\n", overallReport.TotalExperts)
-	fmt.Printf("  - Authenticity Score: %.1f%%\n", overallReport.AuthenticityScore)
+	fmt.Printf("  - Authenticity Score (from simulated expert responses): %.1f%%\n", overallReport.AuthenticityScore)
 	fmt.Printf("  - Consensus Results: %d\n", len(overallReport.ConsensusResults))
 
 	// Step 7: Execute publication workflow if enabled
 	if config.PublicationWorkflow && publicationManager != nil {
 		fmt.Println("📝 Starting publication workflow...")
-		
+
 		publicationWorkflow, err := publicationManager.StartPublicationWorkflow(
 			ctx, overallReport, config.TargetJournals)
 		if err != nil {
@@ -299,11 +311,11 @@ func executeFullValidationWorkflow(ctx context.Context, config *ExpertValidation
 	// Step 8: Setup collaboration workspace if academic integration enabled
 	if config.AcademicIntegration && academicAPI != nil {
 		fmt.Println("🤝 Setting up collaboration workspace...")
-		
+
 		projectDetails := &validation.ProjectDetails{
 			Title:       "Expert Validation of Population-Specific Genomic Sequences",
 			Description: "Comprehensive validation study of computationally generated genomic sequences",
-			Innovation:  "First complete authentic population-specific genomic sequence generation",
+			Innovation:  "Experimental population-specific genomic sequence generation",
 		}
 
 		workspace, err := academicAPI.SetupCollaborationWorkspace(ctx, experts, projectDetails)
@@ -314,7 +326,7 @@ func executeFullValidationWorkflow(ctx context.Context, config *ExpertValidation
 		}
 	}
 
-	fmt.Println("🎉 Complete expert validation workflow executed successfully!")
+	fmt.Println("🎉 Expert validation workflow finished (expert responses were simulated)")
 	return nil
 }
 
@@ -466,21 +478,21 @@ func initializeAcademicIntegration(config *ExpertValidationConfig) (*validation.
 	academicConfig := validation.AcademicConfig{
 		PubMedAPIKey: config.PubMedAPIKey,
 		ORCIDAPIKey:  config.ORCIDAPIKey,
-		
+
 		InstitutionConfigs: make(map[string]validation.InstitutionConfig),
-		
+
 		ManuscriptConfig: validation.ManuscriptConfig{
 			TargetJournals: createJournalConfigs(config.TargetJournals),
 			AutoGeneration: true,
 			ReviewWorkflow: true,
 		},
-		
+
 		CollaborationConfig: validation.CollaborationConfig{
 			PlatformType:      "slack",
 			AutoInviteExperts: true,
 			SharedWorkspace:   true,
 		},
-		
+
 		ResearchNetworking: validation.ResearchNetworkingConfig{
 			AutoProfileUpdate: true,
 			PublicationSync:   true,
@@ -490,11 +502,11 @@ func initializeAcademicIntegration(config *ExpertValidationConfig) (*validation.
 	// Configure institutions
 	for _, institution := range config.InstitutionTargets {
 		academicConfig.InstitutionConfigs[institution] = validation.InstitutionConfig{
-			Name:                    institution,
-			APIEndpoint:            fmt.Sprintf("https://api.%s.edu", strings.ToLower(institution)),
+			Name:                     institution,
+			APIEndpoint:              fmt.Sprintf("https://api.%s.edu", strings.ToLower(institution)),
 			SupportsDirectSubmission: false,
-			SupportsCollaboration:   true,
-			SupportsDataSharing:     true,
+			SupportsCollaboration:    true,
+			SupportsDataSharing:      true,
 			Departments: map[string]validation.DepartmentContact{
 				"genomics": {
 					Name:          "Genomics Department",
@@ -514,7 +526,7 @@ func initializePublicationWorkflow(config *ExpertValidationConfig) (*validation.
 		WorkingDirectory:  config.WorkingDirectory,
 		TemplateDirectory: filepath.Join(config.WorkingDirectory, "templates"),
 		OutputDirectory:   filepath.Join(config.WorkingDirectory, "output"),
-		
+
 		ManuscriptSettings: validation.ManuscriptGenerationSettings{
 			AutoGenerate:          true,
 			TemplateSelection:     "automatic",
@@ -532,32 +544,32 @@ func initializePublicationWorkflow(config *ExpertValidationConfig) (*validation.
 			WritingStyle:          "academic",
 			TargetAudience:        "researchers",
 		},
-		
+
 		JournalAPIs: createJournalAPIConfigs(config.TargetJournals),
-		
+
 		ReviewSettings: validation.ReviewWorkflowSettings{
 			EnableReviewWorkflow: true,
-			SuggestedReviewers:  3,
-			ReviewDeadline:      14 * 24 * time.Hour,
-			QualityThreshold:    7.0,
+			SuggestedReviewers:   3,
+			ReviewDeadline:       14 * 24 * time.Hour,
+			QualityThreshold:     7.0,
 		},
-		
+
 		ComplianceSettings: validation.ComplianceSettings{
-			EnableComplianceCheck:  true,
-			IRBApprovalRequired:    false,
-			DataPrivacyCompliance:  true,
-			PlagiarismCheck:        true,
-			DataIntegrityCheck:     true,
-			ReproducibilityCheck:   true,
+			EnableComplianceCheck: true,
+			IRBApprovalRequired:   false,
+			DataPrivacyCompliance: true,
+			PlagiarismCheck:       true,
+			DataIntegrityCheck:    true,
+			ReproducibilityCheck:  true,
 		},
-		
+
 		SubmissionSettings: validation.SubmissionTrackingSettings{
 			EnableTracking:      true,
 			TrackingInterval:    24 * time.Hour,
 			StatusNotifications: true,
 			AutoResponse:        false,
 		},
-		
+
 		AnalyticsEnabled:  true,
 		MetricsCollection: true,
 	}
@@ -633,13 +645,13 @@ func executeExpertValidations(ctx context.Context, orchestrator *validation.Expe
 
 		// Convert candidate to expert
 		expert := &validation.Expert{
-			ID:                 fmt.Sprintf("expert_%d", i+1),
-			Name:               expertCandidate.Name,
-			Institution:        expertCandidate.Institution,
-			ExpertiseLevel:     "senior",
+			ID:                  fmt.Sprintf("expert_%d", i+1),
+			Name:                expertCandidate.Name,
+			Institution:         expertCandidate.Institution,
+			ExpertiseLevel:      "senior",
 			SpecializationAreas: expertCandidate.ResearchAreas,
-			CalibrationScore:   0.85,
-			IsActive:           true,
+			CalibrationScore:    0.85,
+			IsActive:            true,
 		}
 
 		// Start validation session
@@ -651,14 +663,14 @@ func executeExpertValidations(ctx context.Context, orchestrator *validation.Expe
 
 		fmt.Printf("🔬 Started validation session for %s (ID: %s)\n", expert.Name, session.SessionID)
 
-		// Simulate expert responses (in production, this would be real expert interaction)
+		// Expert responses are simulated: no real expert takes part.
 		err = simulateExpertSession(ctx, orchestrator, session, config)
 		if err != nil {
 			fmt.Printf("Warning: session failed for %s: %v\n", expert.Name, err)
 			continue
 		}
 
-		// Add session result (placeholder)
+		// Session result with fixed case counts and a made-up accuracy.
 		result := &validation.SessionValidationReport{
 			SessionID:       session.SessionID,
 			ExpertID:        expert.ID,
@@ -676,7 +688,9 @@ func executeExpertValidations(ctx context.Context, orchestrator *validation.Expe
 	return results, nil
 }
 
-// simulateExpertSession simulates an expert validation session (for demonstration)
+// simulateExpertSession feeds the orchestrator fabricated feedback: each
+// case is labelled with its true class (synthetic/real alternating) at a
+// fixed confidence, so it measures nothing about the sequences.
 func simulateExpertSession(ctx context.Context, orchestrator *validation.ExpertValidationOrchestrator, session *validation.LiveValidationSession, config *ExpertValidationConfig) error {
 	// Advance session to the blind assessment phase to begin receiving feedback
 	session.CurrentPhase = validation.PhaseBlindAssessment
@@ -736,15 +750,15 @@ func generateOverallReport(sessionResults []*validation.SessionValidationReport,
 	}
 	avgAccuracy := totalAccuracy / float64(len(sessionResults))
 
-	// Generate authenticity score (inverse of accuracy for demonstration)
+	// Authenticity score is 100 * (1 - mean simulated accuracy).
 	authenticityScore := (1.0 - avgAccuracy) * 100.0
 	if authenticityScore < 0 {
 		authenticityScore = 0
 	}
 
 	overallReport := &validation.OverallValidationReport{
-		Timestamp:     time.Now(),
-		TotalExperts:  len(sessionResults),
+		Timestamp:         time.Now(),
+		TotalExperts:      len(sessionResults),
 		AuthenticityScore: authenticityScore,
 		FrameworkStats: map[string]interface{}{
 			"session_count":    len(sessionResults),
@@ -753,11 +767,11 @@ func generateOverallReport(sessionResults []*validation.SessionValidationReport,
 		},
 		ConsensusResults: []validation.ConsensusResult{
 			{
-				TestCaseID:      "overall_consensus",
-				ConsensusAnswer: "authentic",
-				Confidence:      avgAccuracy,
-				AgreementLevel:  config.ConsensusThreshold,
-				ParticipatingExperts: extractExpertIDs(sessionResults),
+				TestCaseID:              "overall_consensus",
+				ConsensusAnswer:         "authentic",
+				Confidence:              avgAccuracy,
+				AgreementLevel:          config.ConsensusThreshold,
+				ParticipatingExperts:    extractExpertIDs(sessionResults),
 				StatisticalSignificance: 0.05,
 			},
 		},
@@ -771,12 +785,12 @@ func generateOverallReport(sessionResults []*validation.SessionValidationReport,
 			StrengthAreas:        []string{"population specificity", "k-mer complexity"},
 			ImprovementAreas:     []string{"gc content variation"},
 			PublicationReadiness: authenticityScore >= config.AuthenticityTarget,
-			ClinicalUtility:     "moderate",
+			ClinicalUtility:      "not assessed",
 		},
 		Recommendations: []string{
 			"Continue validation with additional experts",
-			"Prepare manuscript for publication",
-			"Develop clinical application framework",
+			"Replace the simulated expert responses with real sessions",
+			"Re-run the analysis on real expert assessments",
 		},
 	}
 
@@ -803,7 +817,7 @@ func monitorPublicationWorkflow(ctx context.Context, manager *validation.Publica
 				return fmt.Errorf("failed to get workflow status: %w", err)
 			}
 
-			fmt.Printf("📊 Publication workflow progress: %.1f%% (Stage: %s)\n", 
+			fmt.Printf("📊 Publication workflow progress: %.1f%% (Stage: %s)\n",
 				status.Progress["overall"]*100, status.CurrentStage.String())
 
 			if status.Status == validation.StatusCompleted {
@@ -854,24 +868,24 @@ func createJournalAPIConfigs(journals []string) map[string]validation.JournalAPI
 	configs := make(map[string]validation.JournalAPIConfig)
 	for _, journal := range journals {
 		configs[journal] = validation.JournalAPIConfig{
-			Name:            journal,
-			APIEndpoint:     fmt.Sprintf("https://api.%s.com", strings.ToLower(strings.ReplaceAll(journal, " ", ""))),
-			PreferredFormat: "pdf",
-			MaxFileSize:     50 * 1024 * 1024, // 50MB
+			Name:             journal,
+			APIEndpoint:      fmt.Sprintf("https://api.%s.com", strings.ToLower(strings.ReplaceAll(journal, " ", ""))),
+			PreferredFormat:  "pdf",
+			MaxFileSize:      50 * 1024 * 1024, // 50MB
 			SupportedFormats: []string{"pdf", "docx", "tex"},
 			Requirements: validation.JournalRequirements{
 				AbstractWordLimit:      250,
 				MainTextWordLimit:      8000,
-				MaxFigures:            6,
-				MaxTables:             4,
-				MaxReferences:         100,
-				MaxSupplementary:      10,
+				MaxFigures:             6,
+				MaxTables:              4,
+				MaxReferences:          100,
+				MaxSupplementary:       10,
 				EthicsApprovalRequired: false,
 				ConflictDeclaration:    true,
 				DataAvailabilityStmt:   true,
-				BlindReview:           true,
+				BlindReview:            true,
 				CoverLetterRequired:    true,
-				KeywordsRequired:      5,
+				KeywordsRequired:       5,
 			},
 		}
 	}

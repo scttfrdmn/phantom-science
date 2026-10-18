@@ -194,8 +194,8 @@ func TestSaveResults_ComplexityBranches(t *testing.T) {
 		perfCores  int
 	}{
 		// complexity > 0.05: renders improvement line
-		{"production_ready", 2 * time.Hour, 0.09, 0.42, "PRODUCTION_READY", 8},
-		// complexity in (0.01, 0.05]: renders improvement but not "production"
+		{"thresholds_met", 2 * time.Hour, 0.09, 0.42, "THRESHOLDS_MET", 8},
+		// complexity in (0.01, 0.05]: renders improvement but not "thresholds met"
 		{"good_progress", 1 * time.Hour, 0.03, 0.42, "GOOD_PROGRESS", 6},
 		// complexity <= 0.01: no improvement branch
 		{"low_complexity", 30 * time.Minute, 0.005, 0.50, "SUCCESS", 4},
