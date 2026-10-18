@@ -95,6 +95,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `stream_vcf` printed "NOT ACHIEVED" in its summary regardless of the result (#7).
 - `go vet` lock-copy findings in `internal/gpu` (#8).
 - `HomopolymerErrorModel` chose error types in random map order, so results were not reproducible from the seed (#11).
+- `HomopolymerErrorModel.SimulateErrors` applied each edit at the original position in the already-edited sequence, so after an indel later edits landed in the wrong place and long reads panicked with an index out of range (#21).
 - `scripts/release.sh` built the nonexistent `./cmd/phantom-science`; `Makefile.memory`, `Makefile.reference` and `Makefile.streaming` passed `cmd/<name>` without `./`, which `go build` reads as a standard-library path (#19).
 - `.gitignore` entries matched directories as well as root binaries.
 - `read_length_consistency` counted a trailing CR in CRLF files (#10).
