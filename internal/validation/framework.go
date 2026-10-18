@@ -2,6 +2,8 @@ package validation
 
 import (
 	"fmt"
+	"math"
+	"slices"
 	"strings"
 	"time"
 
@@ -31,11 +33,62 @@ func NewValidationData(fastq string) *ValidationData {
 }
 
 type Framework struct {
-    config types.ValidationConfig
+    config      types.ValidationConfig
+    readLengths ReadLengthExpectation
 }
 
-func NewFramework(config types.ValidationConfig) *Framework {
-    return &Framework{config: config}
+// Option configures a Framework.
+type Option func(*Framework)
+
+// NewFramework returns a framework running the tests listed in config.
+// Without options, read_length_consistency requires every read to have the
+// same length (ReadLengthsUniform).
+func NewFramework(config types.ValidationConfig, opts ...Option) *Framework {
+    f := &Framework{config: config}
+    for _, opt := range opts {
+        opt(f)
+    }
+    return f
+}
+
+// ReadLengthMode selects how the read_length_consistency test judges read
+// lengths.
+type ReadLengthMode int
+
+const (
+	// ReadLengthsUniform (the default) requires every read to have the same
+	// length, and that length to be Length when Length is set. Use it for
+	// fixed-length (Illumina) data.
+	ReadLengthsUniform ReadLengthMode = iota
+	// ReadLengthsAny accepts any lengths and reports their summary
+	// (count, min, max, mean, N50) as an informational pass. Use it when the
+	// expected distribution is unknown.
+	ReadLengthsAny
+	// ReadLengthsDistributed accepts variable lengths within [Min, Max] and,
+	// when Mean and SD are set, requires the sample mean of n reads to lie
+	// within 4·SD/√n of Mean.
+	ReadLengthsDistributed
+)
+
+// ReadLengthExpectation describes the read lengths a FASTQ file should have.
+type ReadLengthExpectation struct {
+	Mode ReadLengthMode
+	// Length is the required read length for ReadLengthsUniform; 0 accepts
+	// any common length.
+	Length int
+	// Min and Max are inclusive bounds for ReadLengthsDistributed; 0 leaves
+	// that side unchecked.
+	Min, Max int
+	// Mean and SD are the expected mean and per-read standard deviation for
+	// ReadLengthsDistributed; the mean is checked only when both are > 0.
+	Mean, SD float64
+	// Name describes the distribution in messages (e.g. "lognormal").
+	Name string
+}
+
+// WithReadLengths sets the expectation used by read_length_consistency.
+func WithReadLengths(exp ReadLengthExpectation) Option {
+	return func(f *Framework) { f.readLengths = exp }
 }
 
 func (f *Framework) RunValidation(data interface{}) types.ValidationResults {
@@ -359,52 +412,116 @@ func (f *Framework) validateSequenceComplexity(data interface{}, timestamp time.
 }
 
 func (f *Framework) validateReadLengthConsistency(data interface{}, timestamp time.Time) types.ValidationResult {
-	fastq := extractFASTQString(data)
-	if fastq == "" {
+	result := func(passed bool, format string, args ...any) types.ValidationResult {
 		return types.ValidationResult{
 			TestName:     "read_length_consistency",
-			Passed:       true,
+			Passed:       passed,
 			Confidence:   0.9,
-			Message:      "Read length consistency validated",
+			Message:      fmt.Sprintf(format, args...),
 			Timestamp:    timestamp,
-			ComplianceOK: true,
+			ComplianceOK: passed,
 		}
+	}
+	fastq := extractFASTQString(data)
+	if fastq == "" {
+		return result(true, "Read length consistency validated")
 	}
 
 	lines := strings.Split(strings.TrimSpace(fastq), "\n")
-	expectedLen := -1
-	inconsistent := 0
-
+	var lengths []int
 	for i := 1; i < len(lines); i += 4 {
-		seqLen := len(lines[i])
-		if expectedLen == -1 {
-			expectedLen = seqLen
-			continue
-		}
-		if seqLen != expectedLen {
-			inconsistent++
-		}
+		lengths = append(lengths, len(strings.TrimSuffix(lines[i], "\r")))
 	}
+	if len(lengths) == 0 {
+		return result(true, "Read length consistency validated")
+	}
+	st := summarizeLengths(lengths)
+	exp := f.readLengths
 
-	if inconsistent > 0 {
-		return types.ValidationResult{
-			TestName:     "read_length_consistency",
-			Passed:       false,
-			Confidence:   0.9,
-			Message:      fmt.Sprintf("Read length inconsistency: %d reads differ from expected length %d", inconsistent, expectedLen),
-			Timestamp:    timestamp,
-			ComplianceOK: false,
+	switch exp.Mode {
+	case ReadLengthsAny:
+		if st.min == st.max {
+			return result(true, "All %d reads are %d bases", st.n, st.min)
+		}
+		return result(true, "Variable read lengths (informational; no expected distribution): %s", st)
+
+	case ReadLengthsDistributed:
+		name := exp.Name
+		if name == "" {
+			name = "expected"
+		}
+		var below, above int
+		for _, l := range lengths {
+			if exp.Min > 0 && l < exp.Min {
+				below++
+			}
+			if exp.Max > 0 && l > exp.Max {
+				above++
+			}
+		}
+		if below+above > 0 {
+			return result(false, "%d reads shorter than min %d and %d longer than max %d of the %s distribution: %s",
+				below, exp.Min, above, exp.Max, name, st)
+		}
+		if exp.Mean > 0 && exp.SD > 0 {
+			tol := 4 * exp.SD / math.Sqrt(float64(st.n))
+			if math.Abs(st.mean-exp.Mean) > tol {
+				return result(false, "Mean read length %.1f differs from the %s distribution mean %.1f by more than 4σ (%.1f): %s",
+					st.mean, name, exp.Mean, tol, st)
+			}
+			return result(true, "Read lengths match the %s distribution (mean %.1f, expected %.1f ± %.1f): %s",
+				name, st.mean, exp.Mean, tol, st)
+		}
+		return result(true, "Read lengths within the bounds of the %s distribution: %s", name, st)
+
+	default: // ReadLengthsUniform
+		expectedLen := lengths[0]
+		inconsistent := 0
+		for _, l := range lengths[1:] {
+			if l != expectedLen {
+				inconsistent++
+			}
+		}
+		if inconsistent > 0 {
+			return result(false, "Read length inconsistency: %d reads differ from expected length %d", inconsistent, expectedLen)
+		}
+		if exp.Length > 0 && expectedLen != exp.Length {
+			return result(false, "All %d reads are %d bases, expected %d", st.n, expectedLen, exp.Length)
+		}
+		return result(true, "Read length consistency validated")
+	}
+}
+
+// lengthStats summarizes read lengths.
+type lengthStats struct {
+	n, min, max, n50 int
+	mean             float64
+}
+
+func (s lengthStats) String() string {
+	return fmt.Sprintf("%d reads, min %d, max %d, mean %.1f, N50 %d", s.n, s.min, s.max, s.mean, s.n50)
+}
+
+// summarizeLengths returns count, bounds, mean and N50 (the length L such
+// that reads of at least L bases hold half of all bases) of lengths.
+func summarizeLengths(lengths []int) lengthStats {
+	sorted := slices.Clone(lengths)
+	slices.Sort(sorted)
+	st := lengthStats{n: len(sorted), min: sorted[0], max: sorted[len(sorted)-1]}
+	var total int64
+	for _, l := range sorted {
+		total += int64(l)
+	}
+	st.mean = float64(total) / float64(st.n)
+	var acc int64
+	for i := len(sorted) - 1; i >= 0; i-- {
+		acc += int64(sorted[i])
+		if 2*acc >= total {
+			st.n50 = sorted[i]
+			break
 		}
 	}
-
-	return types.ValidationResult{
-		TestName:     "read_length_consistency",
-		Passed:       true,
-		Confidence:   0.9,
-		Message:      "Read length consistency validated",
-		Timestamp:    timestamp,
-		ComplianceOK: true,
-	}
+	return st
 }
 
 func (f *Framework) validateHardyWeinberg(data interface{}, timestamp time.Time) types.ValidationResult {

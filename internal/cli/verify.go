@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/scttfrdmn/phantom-science/internal/fingerprinting"
+	"github.com/scttfrdmn/phantom-science/internal/genomics/readlen"
 	"github.com/scttfrdmn/phantom-science/internal/validation"
 	"github.com/scttfrdmn/phantom-science/pkg/types"
 )
@@ -132,11 +133,18 @@ func EffectiveValidation(cfg types.ValidationConfig) (effective types.Validation
 // ValidateFiles runs the validation framework configured by cfg on each FASTQ
 // file in paths and reports the results to w. It returns an error if any
 // file cannot be read or fails validation.
-func ValidateFiles(w io.Writer, paths []string, cfg types.ValidationConfig) error {
+//
+// Without options the read_length_consistency test accepts variable read
+// lengths and reports them informationally (validation.ReadLengthsAny), so
+// long-read files whose expected distribution is unknown do not fail just
+// because lengths vary. Pass ReadLengthValidation(config) after generating
+// with config to check lengths against the configured distribution instead.
+func ValidateFiles(w io.Writer, paths []string, cfg types.ValidationConfig, opts ...validation.Option) error {
 	if len(paths) == 0 {
 		return fmt.Errorf("no files to validate (usage: phantom-science validate FILE...)")
 	}
-	framework := validation.NewFramework(cfg)
+	opts = append([]validation.Option{validation.WithReadLengths(validation.ReadLengthExpectation{Mode: validation.ReadLengthsAny})}, opts...)
+	framework := validation.NewFramework(cfg, opts...)
 
 	failed := 0
 	for _, path := range paths {
@@ -165,4 +173,34 @@ func ValidateFiles(w io.Writer, paths []string, cfg types.ValidationConfig) erro
 		return fmt.Errorf("%d of %d files failed validation", failed, len(paths))
 	}
 	return nil
+}
+
+// ReadLengthValidation returns the read_length_consistency expectation for
+// files generated with config, for use as a ValidateFiles option:
+//
+//   - fixed distribution: every read exactly config.ReadLength bases;
+//   - lognormal, gamma or empirical: lengths within the distribution's
+//     [Min, Max] (Min defaults to 1) and a sample mean within 4·SD/√n of the
+//     distribution's mean (after truncation);
+//   - with a sequencing error model (ErrorModel.Tier set), whose indels change
+//     read lengths, lengths are only reported (validation.ReadLengthsAny).
+//
+// It returns an error if config's distribution is invalid.
+func ReadLengthValidation(config types.SequencerConfig) (validation.Option, error) {
+	d, err := readlen.New(config.ReadLengthDistribution, config.ReadLength)
+	if err != nil {
+		return nil, fmt.Errorf("read-length distribution: %w", err)
+	}
+	exp := validation.ReadLengthExpectation{Name: d.Dist()}
+	switch {
+	case config.ErrorModel.Tier != "":
+		exp.Mode = validation.ReadLengthsAny
+	case d.Fixed():
+		exp.Mode, exp.Length = validation.ReadLengthsUniform, config.ReadLength
+	default:
+		exp.Mode = validation.ReadLengthsDistributed
+		exp.Min, exp.Max = d.Bounds()
+		exp.Mean, exp.SD = d.Mean(), d.SD()
+	}
+	return validation.WithReadLengths(exp), nil
 }

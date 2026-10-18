@@ -17,13 +17,16 @@ package genomics
 //     false (long reads), the read is generated at the sampled length and an
 //     indel changes the read length by exactly the indel size.
 //
-// The default reproduces fixed-length output: every read is
-// SequencerConfig.ReadLength bases.
+// The default (Dist "" or "fixed") reproduces fixed-length output: every read
+// is SequencerConfig.ReadLength bases and the sampler never draws from r.
+// lognormal, gamma and empirical distributions are sampled by package
+// readlen; their reads keep the length an indel gives them.
 
 import (
 	"fmt"
 	"math/rand/v2"
 
+	"github.com/scttfrdmn/phantom-science/internal/genomics/readlen"
 	"github.com/scttfrdmn/phantom-science/pkg/types"
 )
 
@@ -33,17 +36,25 @@ func (e *Engine) lengthSampler() (func(r *rand.Rand) int, error) {
 	spec := e.config.ReadLengthDistribution
 	switch spec.Dist {
 	case "", types.ReadLengthFixed:
-		n := e.config.ReadLength
-		return func(*rand.Rand) int { return n }, nil
-	case types.ReadLengthLognormal, types.ReadLengthGamma, types.ReadLengthEmpirical:
-		return nil, fmt.Errorf("read-length distribution %q is %w (#10)", spec.Dist, ErrNotImplemented)
-	default:
-		return nil, fmt.Errorf("unknown read-length distribution %q: want fixed, lognormal, gamma or empirical", spec.Dist)
+		if spec == (types.ReadLengthSpec{Dist: spec.Dist}) {
+			n := e.config.ReadLength
+			return func(*rand.Rand) int { return n }, nil
+		}
 	}
+	d, err := readlen.New(spec, e.config.ReadLength)
+	if err != nil {
+		return nil, fmt.Errorf("read-length distribution: %w", err)
+	}
+	return d.Sample, nil
 }
 
 // fixedLengthReads reports whether every read is trimmed to exactly its
-// sampled length after variant injection.
+// sampled length after variant injection: true for the fixed distribution,
+// false for lognormal, gamma and empirical.
 func (e *Engine) fixedLengthReads() bool {
-	return true
+	switch e.config.ReadLengthDistribution.Dist {
+	case "", types.ReadLengthFixed:
+		return true
+	}
+	return false
 }

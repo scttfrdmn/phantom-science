@@ -1,0 +1,21 @@
+# Synthetic cDNA-like read-length histogram for tests.
+length	count
+200	40
+350	120
+500	300
+750	520
+1000	800
+1250	900
+1500	850
+1750	700
+2000	560
+2500	420
+3000	300
+4000	180
+5000	100
+7500	45
+10000	20
+15000	8
+20000	3
+# a zero-count bin must never be sampled
+25000	0
