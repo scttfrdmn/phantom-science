@@ -1,3 +1,5 @@
+//go:build !release
+
 package genomics
 
 import (
@@ -9,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/scttfrdmn/phantom-science/internal/genomics/authenticity"
+	"github.com/scttfrdmn/phantom-science/internal/genomics/authenticity/statistics"
 	"github.com/scttfrdmn/phantom-science/internal/genomics/population"
 	"github.com/scttfrdmn/phantom-science/internal/genomics/validation"
 	demography "github.com/scttfrdmn/phantom-science/internal/population"
@@ -182,12 +185,13 @@ func testPopulationPanelStatistics(t *testing.T) {
 			// Use lenient threshold due to stochastic generation
 			assert.Greater(t, rareVariantProportion, 0.15, "Most variants should be rare")
 
-			// No population-specific diversity assertions: NewPopulationPanel
-			// applies no per-population demography, and allele frequencies come
-			// from a genealogy that never sees the population name, so every
-			// population here is an independent draw from the same model. A
-			// fixed "YRI > 800 variants" threshold failed ~15% of runs without
-			// testing anything about YRI.
+			// Each panel is simulated under its own demographic preset. No
+			// fixed per-population variant-count threshold here: a single
+			// 1 Mb panel is too noisy for that (a fixed "YRI > 800 variants"
+			// threshold used to fail at random). The diversity ordering
+			// (YRI > CEU, CHB) is tested with paired joint simulations and
+			// 4σ tolerances in internal/genomics/population/presets_test.go.
+			assert.True(t, panel.HasPreset(), "%s should use a demographic preset", popName)
 			commonVariantProportion := float64(commonVariants) / float64(totalVariants)
 
 			heterozygosity := 0.0
@@ -201,109 +205,157 @@ func testPopulationPanelStatistics(t *testing.T) {
 	}
 }
 
-// testCrossPopulationFSTAnalysis tests F_ST analysis between populations
+// testCrossPopulationFSTAnalysis checks F_ST between preset populations that
+// are simulated jointly (one genealogy per locus spanning all populations, so
+// every panel is scored at the same sites) against the literature ranges in
+// internal/population/fst_analysis.py, the continental ordering, and a
+// same-population null.
+//
+// Regression guard for #6: the previous version compared independently
+// simulated panels whose site keys barely overlapped, and its estimator gave
+// ≈ 0.33 for any pair of panels, including two draws of the same population.
 func testCrossPopulationFSTAnalysis(t *testing.T) {
-	populations := []string{"YRI", "CEU", "CHB"}
-	alleleFreqMaps := make(map[string]map[string]float64)
-
-	// Generate population data
-	for _, popName := range populations {
-		panel := population.NewPopulationPanel(popName, 50) // Smaller for faster testing
-		err := panel.LoadFromSimulation(500000) // 500KB region
-		require.NoError(t, err)
-
-		alleleFreqMaps[popName] = panel.GetAlleleFrequencies()
+	const sampleSize = 50 // diploid individuals per population
+	nLoci := 2000
+	if testing.Short() {
+		nLoci = 600
 	}
+	populations := []string{"YRI", "CEU", "CHB"}
+	panels, _, err := population.NewJointPanels(populations, sampleSize, nLoci, 20261018)
+	require.NoError(t, err)
 
-	// Calculate pairwise F_ST values
-	fstValues := make(map[string]map[string]float64)
-	for _, pop1 := range populations {
-		fstValues[pop1] = make(map[string]float64)
-		for _, pop2 := range populations {
-			if pop1 == pop2 {
-				fstValues[pop1][pop2] = 0.0
-				continue
-			}
-
-			fst := calculateFST(alleleFreqMaps[pop1], alleleFreqMaps[pop2])
-			fstValues[pop1][pop2] = fst
+	freqs := make(map[string]map[string]float64)
+	for _, p := range populations {
+		freqs[p] = panels[p].GetAlleleFrequencies()
+	}
+	for _, p := range populations[1:] {
+		require.Len(t, freqs[p], len(freqs["YRI"]), "joint panels must share one site set")
+		for k := range freqs["YRI"] {
+			_, ok := freqs[p][k]
+			require.Truef(t, ok, "site %s missing from %s", k, p)
 		}
 	}
 
-	// Validate F_ST patterns
-	africanEuropeanFST := fstValues["YRI"]["CEU"]
-	africanAsianFST := fstValues["YRI"]["CHB"]
-	europeanAsianFST := fstValues["CEU"]["CHB"]
-
-	// Expected F_ST ranges based on population genetics literature
-	// Note: Small sample sizes in simulation can lead to higher F_ST values; theoretical range is [0, 1]
-	assert.GreaterOrEqual(t, africanEuropeanFST, 0.05, "African-European F_ST should reflect continental separation")
-	assert.LessOrEqual(t, africanEuropeanFST, 1.0, "African-European F_ST must be within theoretical range [0,1]")
-
-	assert.GreaterOrEqual(t, africanAsianFST, 0.05, "African-Asian F_ST should reflect continental separation")
-	assert.LessOrEqual(t, africanAsianFST, 1.0, "African-Asian F_ST must be within theoretical range [0,1]")
-
-	assert.GreaterOrEqual(t, europeanAsianFST, 0.02, "European-Asian F_ST should reflect some separation")
-	assert.LessOrEqual(t, europeanAsianFST, 1.0, "European-Asian F_ST must be within theoretical range [0,1]")
-
-	// African populations should generally be more differentiated from others
-	// Due to stochastic simulation, exact ordering may vary slightly
-	if !(africanEuropeanFST > europeanAsianFST*0.9) {
-		t.Logf("Note: African-European FST (%.4f) not significantly higher than European-Asian FST (%.4f)", africanEuropeanFST, europeanAsianFST)
+	n := 2 * sampleSize
+	wc := make(map[string]wcLoci)
+	pair := func(a, b string) wcLoci {
+		if c, ok := wc[a+b]; ok {
+			return c
+		}
+		wc[a+b] = newWCLoci(freqs[a], freqs[b], n, n, nLoci)
+		return wc[a+b]
 	}
-	if !(africanAsianFST > europeanAsianFST*0.9) {
-		t.Logf("Note: African-Asian FST (%.4f) not significantly higher than European-Asian FST (%.4f)", africanAsianFST, europeanAsianFST)
+	fst := func(a, b string) (float64, float64) {
+		c := pair(a, b)
+		return jackknifeFST(nLoci, c.fst)
 	}
 
-	t.Logf("F_ST values - YRI-CEU: %.4f, YRI-CHB: %.4f, CEU-CHB: %.4f", 
-		africanEuropeanFST, africanAsianFST, europeanAsianFST)
+	// Expected F_ST ranges from population genetics literature.
+	ranges := []struct {
+		a, b   string
+		lo, hi float64
+	}{
+		{"YRI", "CEU", 0.10, 0.16},
+		{"YRI", "CHB", 0.09, 0.15},
+		{"CEU", "CHB", 0.06, 0.12},
+	}
+	for _, r := range ranges {
+		f, se := fst(r.a, r.b)
+		t.Logf("F_ST %s–%s = %.4f ± %.4f (literature %.2f–%.2f)", r.a, r.b, f, se, r.lo, r.hi)
+		assert.GreaterOrEqualf(t, f, r.lo, "%s–%s F_ST below literature range", r.a, r.b)
+		assert.LessOrEqualf(t, f, r.hi, "%s–%s F_ST above literature range", r.a, r.b)
+	}
+
+	// African–non-African differentiation exceeds European–East Asian (4σ).
+	for _, p := range []string{"CEU", "CHB"} {
+		cont, ea := pair("YRI", p), pair("CEU", "CHB")
+		d, se := jackknifeFST(nLoci, func(keep func(int) bool) float64 {
+			return cont.fst(keep) - ea.fst(keep)
+		})
+		assert.Greaterf(t, d-4*se, 0.0,
+			"F_ST(YRI–%s) − F_ST(CEU–CHB) = %.4f ± %.4f, want > 0 at 4σ", p, d, se)
+	}
+
+	// Null: two samples of the same population. CEU2 merges into CEU at time
+	// 0, i.e. both samples are drawn from one panmictic CEU population.
+	d := population.PresetDemography()
+	ceu, ok := d.Pop("CEU")
+	require.True(t, ok)
+	d.Pops = append(d.Pops, population.PopSpec{Name: "CEU2", Ne: ceu.Ne, SplitFrom: "CEU", SplitTime: 0})
+	jp, err := population.SimulateJointPanel(d, map[string]int{"CEU": n, "CEU2": n}, nLoci, 7)
+	require.NoError(t, err)
+	null := newWCLoci(jp.Frequencies("CEU"), jp.Frequencies("CEU2"), n, n, nLoci).fst(func(int) bool { return true })
+	t.Logf("F_ST CEU–CEU (null) = %.4f", null)
+	assert.Less(t, null, 0.02, "two samples of the same population must have F_ST ≈ 0")
 }
 
-// calculateFST calculates F_ST between two populations
-func calculateFST(freq1, freq2 map[string]float64) float64 {
-	// Get all variants present in either population
-	allVariants := make(map[string]bool)
-	for variant := range freq1 {
-		allVariants[variant] = true
-	}
-	for variant := range freq2 {
-		allVariants[variant] = true
-	}
+// wcLoci holds per-locus sums of the Weir–Cockerham F_ST numerator and
+// denominator for two samples scored at the same sites.
+type wcLoci struct{ num, den []float64 }
 
-	var sumHT, sumHS float64
-	validVariants := 0
-
-	for variant := range allVariants {
-		p1 := freq1[variant] // 0 if not present
-		p2 := freq2[variant] // 0 if not present
-
-		// Skip monomorphic variants across both populations
-		if (p1 == 0.0 || p1 == 1.0) && (p2 == 0.0 || p2 == 1.0) {
+// newWCLoci computes Weir–Cockerham components (statistics.ComputeFST) for
+// every site shared by freq1 and freq2 (keys "site_<position>"; locus =
+// position / DefaultLocusLength, keys that do not parse go to locus 0), with
+// n1 and n2 sampled haplotypes.
+func newWCLoci(freq1, freq2 map[string]float64, n1, n2, nLoci int) wcLoci {
+	c := wcLoci{num: make([]float64, nLoci), den: make([]float64, nLoci)}
+	for key, p1 := range freq1 {
+		p2, ok := freq2[key]
+		if !ok || (p1 == 0 && p2 == 0) || (p1 == 1 && p2 == 1) {
 			continue
 		}
-
-		// Calculate average frequency
-		pBar := (p1 + p2) / 2.0
-
-		// Expected heterozygosity in total population (HT)
-		HT := 2 * pBar * (1 - pBar)
-
-		// Expected heterozygosity within subpopulations (HS)
-		H1 := 2 * p1 * (1 - p1)
-		H2 := 2 * p2 * (1 - p2)
-		HS := (H1 + H2) / 2.0
-
-		sumHT += HT
-		sumHS += HS
-		validVariants++
+		locus := 0
+		var pos int
+		if _, err := fmt.Sscanf(key, "site_%d", &pos); err == nil {
+			locus = pos / population.DefaultLocusLength
+		}
+		if locus >= nLoci {
+			continue
+		}
+		r := statistics.ComputeFST([]statistics.PopulationSample{
+			{AlleleFreq: p1, SampleSize: n1},
+			{AlleleFreq: p2, SampleSize: n2},
+		})
+		c.num[locus] += r.MSG - r.MSW
+		c.den[locus] += r.MSG + (r.Nc-1)*r.MSW
 	}
+	return c
+}
 
-	if validVariants == 0 || sumHT == 0 {
-		return 0.0
+// fst combines the kept loci as a ratio of averages (Σ numerator / Σ
+// denominator), the multi-locus Weir–Cockerham estimator.
+func (c wcLoci) fst(keep func(locus int) bool) float64 {
+	num, den := 0.0, 0.0
+	for l := range c.num {
+		if keep(l) {
+			num += c.num[l]
+			den += c.den[l]
+		}
 	}
+	if den == 0 {
+		return 0
+	}
+	return num / den
+}
 
-	fst := (sumHT - sumHS) / sumHT
-	return math.Max(0.0, fst) // F_ST cannot be negative
+// jackknifeFST returns a statistic over loci and its delete-one-block
+// jackknife standard error (50 blocks of contiguous loci).
+func jackknifeFST(nLoci int, stat func(keep func(locus int) bool) float64) (float64, float64) {
+	const blocks = 50
+	full := stat(func(int) bool { return true })
+	vals := make([]float64, blocks)
+	mean := 0.0
+	for b := 0; b < blocks; b++ {
+		bb := b
+		vals[b] = stat(func(l int) bool { return l*blocks/nLoci != bb })
+		mean += vals[b]
+	}
+	mean /= blocks
+	ss := 0.0
+	for _, v := range vals {
+		ss += (v - mean) * (v - mean)
+	}
+	return full, math.Sqrt((blocks - 1) / float64(blocks) * ss)
 }
 
 // testPopulationStructureInSyntheticData tests population structure preservation in synthetic data
@@ -525,10 +577,11 @@ func BenchmarkFSTCalculation(b *testing.B) {
 		freq2[variantID] = float64((i+50)%100) / 100.0
 	}
 
+	all := func(int) bool { return true }
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		fst := calculateFST(freq1, freq2)
-		if fst < 0 {
+		fst := newWCLoci(freq1, freq2, 100, 100, 1).fst(all)
+		if math.IsNaN(fst) {
 			b.Fatal("Invalid F_ST value")
 		}
 	}
