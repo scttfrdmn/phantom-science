@@ -1,42 +1,100 @@
-name: CI/CD Pipeline
+name: CI
 
 on:
-  workflow_dispatch:  # Manual trigger only
+  workflow_dispatch:
   push:
     branches: [ main ]
   pull_request:
     branches: [ main ]
 
-env:
-  GO_VERSION: '1.24'
-  RUST_VERSION: 'stable'
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  go-build-test:
-    name: Go Build & Test  
+  vet:
+    name: go vet
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      
-      - name: Set up Go
-        uses: actions/setup-go@v4
+      - uses: actions/setup-go@v5
         with:
-          go-version: ${{ env.GO_VERSION }}
-          
-      - name: Install dependencies
-        run: go mod download
-        
-      - name: Build main packages
+          go-version-file: go.mod
+      - name: go vet
+        run: CGO_ENABLED=0 go vet -tags '!release' ./...
+
+  govulncheck:
+    name: govulncheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # govulncheck@latest itself needs a current Go, and it reports standard
+      # library findings against the Go it runs with. Scan with the latest
+      # stable Go; findings in dependencies are independent of this choice.
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+      - name: govulncheck
+        run: govulncheck ./...
+
+  test-nocgo:
+    name: Test (CGO_ENABLED=0)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: go test
+        run: CGO_ENABLED=0 go test -tags '!release' ./... -timeout 15m
+
+  release-build:
+    name: Release build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: go build -tags release
+        run: CGO_ENABLED=0 go build -tags release ./...
+
+  test-cgo:
+    name: Test (CGO, stegano)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo and stegano build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            .stegano
+          key: stegano-${{ runner.os }}-${{ hashFiles('go.sum') }}
+      - name: Build stegano
+        run: scripts/build-stegano.sh
+      - name: go test
         run: |
-          echo "Building core command-line tools..."
-          CGO_ENABLED=0 go build ./cmd/validate_models
-          CGO_ENABLED=0 go build ./cmd/create_parallel_expert_package
-          CGO_ENABLED=0 go build ./cmd/test_2025_research_integration
-          
-      - name: Run core Go tests
-        run: |
-          echo "Running core package tests..."
-          CGO_ENABLED=0 go test ./internal/genomics/authenticity/... -v -short
-          CGO_ENABLED=0 go test ./internal/genomics/reference/... -v -short  
-          CGO_ENABLED=0 go test ./internal/population/... -v -short
-          echo "✅ Core tests passed"
+          LIB="$PWD/.stegano/target/release"
+          CGO_ENABLED=1 CGO_LDFLAGS="-L$LIB -Wl,-rpath,$LIB" \
+            go test -tags '!release' ./... -timeout 20m
+
+  docker:
+    name: Docker build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: docker build
+        run: docker build -f deploy/production/docker/Dockerfile -t phantom-science:ci .
+      - name: Smoke test
+        run: docker run --rm phantom-science:ci --version
