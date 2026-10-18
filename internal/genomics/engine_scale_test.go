@@ -471,7 +471,7 @@ func TestScale_Validation(t *testing.T) {
 func TestManifest_MatchesFilesAndOmitsKeys(t *testing.T) {
 	dir := t.TempDir()
 	keyPath := filepath.Join(t.TempDir(), "secret.key")
-	const key = "correct-horse-battery-staple-0123456789"
+	const key = "correct-horse-battery-staple-0123456789" // gitleaks:allow -- test fixture, not a real key
 	if err := os.WriteFile(keyPath, []byte(key+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
