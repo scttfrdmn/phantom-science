@@ -5,8 +5,13 @@ package testing
 
 import (
 	"bytes"
+	"errors"
 	"math"
+	"os"
+	"os/exec"
 	"runtime"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -610,8 +615,113 @@ func TestWriteBAM(t *testing.T) {
 		t.Fatalf("GenerateSyntheticData error: %v", err)
 	}
 	fname := t.TempDir() + "/test.bam"
-	if err := f.WriteBAM(data, fname); err != nil {
-		t.Errorf("WriteBAM error: %v", err)
+	err = f.WriteBAM(data, fname)
+	if _, lookErr := exec.LookPath("samtools"); lookErr != nil {
+		if !errors.Is(err, ErrBAMUnsupported) {
+			t.Fatalf("WriteBAM without samtools: err = %v, want ErrBAMUnsupported", err)
+		}
+		t.Skip("samtools not installed; BAM conversion not exercised")
+	}
+	if err != nil {
+		t.Fatalf("WriteBAM error: %v", err)
+	}
+
+	// The BAM must hold one record per read; the old header stub held none.
+	out, err := exec.Command("samtools", "view", "-c", fname).Output()
+	if err != nil {
+		t.Fatalf("samtools view -c: %v", err)
+	}
+	if got := strings.TrimSpace(string(out)); got != strconv.Itoa(len(data.Sequences)) {
+		t.Errorf("BAM record count = %s, want %d", got, len(data.Sequences))
+	}
+	if err := exec.Command("samtools", "quickcheck", fname).Run(); err != nil {
+		t.Errorf("samtools quickcheck failed: %v", err)
+	}
+}
+
+// TestWriteBAM_NoSamtools checks that WriteBAM refuses rather than writing a
+// fake file when samtools is missing.
+func TestWriteBAM_NoSamtools(t *testing.T) {
+	orig := lookPath
+	t.Cleanup(func() { lookPath = orig })
+	lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
+
+	f := NewE2EFramework()
+	data, err := f.GenerateSyntheticData(f.CreatePlatformConfig(IlluminaNovaSeq6000, "CEU"))
+	if err != nil {
+		t.Fatalf("GenerateSyntheticData error: %v", err)
+	}
+	fname := t.TempDir() + "/test.bam"
+	if err := f.WriteBAM(data, fname); !errors.Is(err, ErrBAMUnsupported) {
+		t.Fatalf("WriteBAM err = %v, want ErrBAMUnsupported", err)
+	}
+	if _, err := os.Stat(fname); !os.IsNotExist(err) {
+		t.Errorf("WriteBAM wrote %s despite missing samtools", fname)
+	}
+}
+
+// TestWriteSAM checks the header and that every read appears as an unmapped
+// record with its sequence and qualities.
+func TestWriteSAM(t *testing.T) {
+	f := NewE2EFramework()
+	data, err := f.GenerateSyntheticData(f.CreatePlatformConfig(IlluminaNovaSeq6000, "CEU"))
+	if err != nil {
+		t.Fatalf("GenerateSyntheticData error: %v", err)
+	}
+	fname := t.TempDir() + "/test.sam"
+	if err := f.WriteSAM(data, fname); err != nil {
+		t.Fatalf("WriteSAM error: %v", err)
+	}
+	content, err := os.ReadFile(fname)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	refLen := 0
+	for _, s := range data.Sequences {
+		refLen += len(s)
+	}
+	var header, records []string
+	for _, line := range strings.Split(strings.TrimRight(string(content), "\n"), "\n") {
+		if strings.HasPrefix(line, "@") {
+			header = append(header, line)
+		} else {
+			records = append(records, line)
+		}
+	}
+	if len(header) < 2 || !strings.HasPrefix(header[0], "@HD\tVN:") {
+		t.Fatalf("missing @HD header: %q", header)
+	}
+	if want := "@SQ\tSN:chr1\tLN:" + strconv.Itoa(refLen); header[1] != want {
+		t.Errorf("@SQ line = %q, want %q", header[1], want)
+	}
+	if want := "@RG\tID:" + samReadGroupID + "\tSM:CEU\tPL:ILLUMINA"; len(header) < 3 || header[2] != want {
+		t.Errorf("@RG line = %q, want %q", header[2:], want)
+	}
+	if len(records) != len(data.Sequences) {
+		t.Fatalf("records = %d, want one per read (%d)", len(records), len(data.Sequences))
+	}
+	for i, rec := range records {
+		fields := strings.Split(rec, "\t")
+		if len(fields) != 12 {
+			t.Fatalf("record %d has %d fields, want 11 mandatory plus RG: %q", i, len(fields), rec)
+		}
+		if fields[11] != "RG:Z:"+samReadGroupID {
+			t.Errorf("record %d tag = %q, want RG:Z:%s", i, fields[11], samReadGroupID)
+		}
+		if fields[0] != strings.TrimPrefix(data.Headers[i], "@") {
+			t.Errorf("record %d QNAME = %q, want %q", i, fields[0], data.Headers[i])
+		}
+		if got := strings.Join(fields[1:9], " "); got != "4 * 0 0 * * 0 0" {
+			t.Errorf("record %d fields 2-9 = %q, want unmapped \"4 * 0 0 * * 0 0\"", i, got)
+		}
+		if fields[9] != string(data.Sequences[i]) || fields[10] != string(data.QualityScores[i]) {
+			t.Errorf("record %d SEQ/QUAL do not match read %d", i, i)
+		}
+	}
+
+	if err := f.WriteSAM(&SyntheticData{}, fname); err == nil {
+		t.Error("WriteSAM with no reads should fail")
 	}
 }
 

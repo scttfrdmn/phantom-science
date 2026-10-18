@@ -4,7 +4,11 @@
 package main
 
 import (
+	"errors"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -12,9 +16,91 @@ import (
 	phantomtesting "github.com/scttfrdmn/phantom-science/internal/testing"
 )
 
-func TestIsWorkflowEngineAvailable(t *testing.T) {
-	if !isWorkflowEngineAvailable("cromwell") {
-		t.Error("isWorkflowEngineAvailable(cromwell) = false, want true")
+// withLookPath replaces the executable lookup for the duration of the test.
+// found lists the program names that resolve; everything else is missing.
+func withLookPath(t *testing.T, found ...string) {
+	t.Helper()
+	orig := lookPath
+	t.Cleanup(func() { lookPath = orig })
+	lookPath = func(name string) (string, error) {
+		for _, f := range found {
+			if f == name {
+				return "/fake/bin/" + name, nil
+			}
+		}
+		return "", exec.ErrNotFound
+	}
+	t.Setenv("CROMWELL_JAR", "")
+}
+
+// withNoEngines makes every workflow engine unavailable for the test.
+func withNoEngines(t *testing.T) { withLookPath(t) }
+
+// requireRealEngine skips unless engine is genuinely installed.
+func requireRealEngine(t *testing.T, engine string) {
+	t.Helper()
+	if testing.Short() {
+		t.Skipf("skipping real %s run in -short mode", engine)
+	}
+	if !isWorkflowEngineAvailable(engine) {
+		t.Skipf("%s not installed", engine)
+	}
+}
+
+func TestIsWorkflowEngineAvailable_NotOnPath(t *testing.T) {
+	withNoEngines(t)
+	for _, engine := range []string{"cromwell", "nextflow", "snakemake"} {
+		if isWorkflowEngineAvailable(engine) {
+			t.Errorf("isWorkflowEngineAvailable(%s) = true with nothing on PATH", engine)
+		}
+		_, _, err := engineCommand(engine)
+		if !errors.Is(err, errEngineUnavailable) {
+			t.Errorf("engineCommand(%s) error = %v, want errEngineUnavailable", engine, err)
+		}
+	}
+}
+
+func TestIsWorkflowEngineAvailable_OnPath(t *testing.T) {
+	withLookPath(t, "cromwell", "nextflow", "snakemake")
+	for _, engine := range []string{"cromwell", "nextflow", "snakemake"} {
+		if !isWorkflowEngineAvailable(engine) {
+			t.Errorf("isWorkflowEngineAvailable(%s) = false with %s on PATH", engine, engine)
+		}
+	}
+}
+
+func TestIsWorkflowEngineAvailable_Unknown(t *testing.T) {
+	withLookPath(t, "unknown")
+	if isWorkflowEngineAvailable("unknown") {
+		t.Error("unknown engines must not be reported available")
+	}
+}
+
+func TestEngineCommand_CromwellJar(t *testing.T) {
+	jar := filepath.Join(t.TempDir(), "cromwell.jar")
+	if err := os.WriteFile(jar, []byte("jar"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	withLookPath(t, "java")
+	t.Setenv("CROMWELL_JAR", jar)
+	program, lead, err := engineCommand("cromwell")
+	if err != nil {
+		t.Fatalf("engineCommand(cromwell) with CROMWELL_JAR: %v", err)
+	}
+	if program != "/fake/bin/java" || len(lead) != 2 || lead[0] != "-jar" || lead[1] != jar {
+		t.Errorf("engineCommand(cromwell) = %q %q, want java -jar %s", program, lead, jar)
+	}
+
+	t.Setenv("CROMWELL_JAR", filepath.Join(t.TempDir(), "missing.jar"))
+	if isWorkflowEngineAvailable("cromwell") {
+		t.Error("CROMWELL_JAR pointing at a missing file must not count as available")
+	}
+
+	withLookPath(t) // no java either
+	t.Setenv("CROMWELL_JAR", jar)
+	if isWorkflowEngineAvailable("cromwell") {
+		t.Error("CROMWELL_JAR without java on PATH must not count as available")
 	}
 }
 
@@ -127,9 +213,24 @@ func TestCreateBasicWDL_NotEmpty(t *testing.T) {
 }
 
 func TestCreateWDLInputs_NotEmpty(t *testing.T) {
-	inputs := createWDLInputs("gatk", "illumina")
-	if inputs == "" {
-		t.Error("createWDLInputs returned empty string")
+	inputs := createWDLInputs("gatk", "illumina", "/data/reads.fastq")
+	if !strings.Contains(inputs, `"Gatk.fastq": "/data/reads.fastq"`) {
+		t.Errorf("createWDLInputs should bind the FASTQ path, got:\n%s", inputs)
+	}
+}
+
+func TestWDLIdentifier(t *testing.T) {
+	for in, want := range map[string]string{
+		"gatk":            "Gatk",
+		"gatk_germline":   "Gatk_germline",
+		"variant-calling": "Variant_calling",
+		"1kg":             "W1kg",
+		"-x":              "W_x",
+		"":                "Workflow",
+	} {
+		if got := wdlIdentifier(in); got != want {
+			t.Errorf("wdlIdentifier(%q) = %q, want %q", in, got, want)
+		}
 	}
 }
 
@@ -225,13 +326,11 @@ func TestCalculateOverallScore_NoEngines(t *testing.T) {
 	}
 }
 
-func TestCalculateDataIntegrity_InRange(t *testing.T) {
+func TestCalculateDataIntegrity_NoOutputs(t *testing.T) {
 	f := phantomtesting.NewE2EFramework()
-	config := f.CreatePlatformConfig(phantomtesting.IlluminaNovaSeq6000, "CEU")
-	data, _ := f.GenerateSyntheticData(config)
-	got := calculateDataIntegrity(data, []string{})
-	if got < 0.0 || got > 1.0 {
-		t.Errorf("calculateDataIntegrity = %f, want in [0,1]", got)
+	data, _ := f.GenerateSyntheticData(f.CreatePlatformConfig(phantomtesting.IlluminaNovaSeq6000, "CEU"))
+	if got := calculateDataIntegrity(data, []string{}); got != 0.0 {
+		t.Errorf("calculateDataIntegrity(no outputs) = %f, want 0", got)
 	}
 }
 
@@ -646,48 +745,44 @@ func TestValidateArgs_InvalidWorkflows(t *testing.T) {
 	}
 }
 
-// ---------- calculateDataIntegrity additional branches ----------
+// ---------- calculateDataIntegrity: compares engine output with the input ----------
 
-func TestCalculateDataIntegrity_HighErrorRate(t *testing.T) {
+// TestCalculateDataIntegrity_ChecksReadCount verifies integrity reflects
+// whether the engine's read count matches the reads written. The previous
+// implementation scored any existing file (even "mock") at 0.95.
+func TestCalculateDataIntegrity_ChecksReadCount(t *testing.T) {
 	f := phantomtesting.NewE2EFramework()
-	config := f.CreatePlatformConfig(phantomtesting.IlluminaNovaSeq6000, "CEU")
-	data, _ := f.GenerateSyntheticData(config)
-	// Force high error rate (> 0.05)
-	data.ErrorRate = 0.10
-	got := calculateDataIntegrity(data, []string{})
-	if got < 0.0 || got > 1.0 {
-		t.Errorf("calculateDataIntegrity(high error rate) = %f, want in [0,1]", got)
+	data, _ := f.GenerateSyntheticData(f.CreatePlatformConfig(phantomtesting.IlluminaNovaSeq6000, "CEU"))
+	n := len(data.Sequences)
+
+	dir := t.TempDir()
+	write := func(name, content string) string {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+			t.Fatal(err)
+		}
+		return path
 	}
-}
+	good := write("good.txt", strconv.Itoa(n)+"\n")
+	wrong := write("wrong.txt", strconv.Itoa(n-1)+"\n")
+	mock := write("mock.txt", "mock output")
+	missing := filepath.Join(dir, "missing.txt")
 
-func TestCalculateDataIntegrity_MissingOutputFiles(t *testing.T) {
-	f := phantomtesting.NewE2EFramework()
-	config := f.CreatePlatformConfig(phantomtesting.IlluminaNovaSeq6000, "CEU")
-	data, _ := f.GenerateSyntheticData(config)
-	data.ErrorRate = 0.005 // Low error rate
-	// Pass nonexistent files to trigger the deduction path
-	got := calculateDataIntegrity(data, []string{"/nonexistent/file1.bam", "/nonexistent/file2.vcf"})
-	if got < 0.0 || got > 1.0 {
-		t.Errorf("calculateDataIntegrity(missing files) = %f, want in [0,1]", got)
+	cases := []struct {
+		name  string
+		files []string
+		want  float64
+	}{
+		{"matching count", []string{good}, 1.0},
+		{"wrong count", []string{wrong}, 0.0},
+		{"mock content", []string{mock}, 0.0},
+		{"missing file", []string{missing}, 0.0},
+		{"one of two", []string{good, wrong}, 0.5},
 	}
-}
-
-func TestCalculateDataIntegrity_ExistingFiles(t *testing.T) {
-	f := phantomtesting.NewE2EFramework()
-	config := f.CreatePlatformConfig(phantomtesting.IlluminaNovaSeq6000, "CEU")
-	data, _ := f.GenerateSyntheticData(config)
-	data.ErrorRate = 0.005
-
-	// Create temp files
-	tmpDir := t.TempDir()
-	file1 := tmpDir + "/output.bam"
-	file2 := tmpDir + "/variants.vcf"
-	_ = os.WriteFile(file1, []byte("mock"), 0600)
-	_ = os.WriteFile(file2, []byte("mock"), 0600)
-
-	got := calculateDataIntegrity(data, []string{file1, file2})
-	if got < 0.0 || got > 1.0 {
-		t.Errorf("calculateDataIntegrity(existing files) = %f, want in [0,1]", got)
+	for _, c := range cases {
+		if got := calculateDataIntegrity(data, c.files); got != c.want {
+			t.Errorf("%s: calculateDataIntegrity = %f, want %f", c.name, got, c.want)
+		}
 	}
 }
 
@@ -723,100 +818,110 @@ func TestCalculateWorkflowScore_VeryLongExecution(t *testing.T) {
 
 // ---------- executeCromwellWorkflow, executeNextflowWorkflow, executeSnakemakeWorkflow ----------
 
-func TestExecuteCromwellWorkflow_BasicExecution(t *testing.T) {
-	tmpDir := t.TempDir()
+type executeFunc func(string, *phantomtesting.SyntheticData, phantomtesting.SequencingPlatform, string, *CommandLineArgs) ([]string, error)
+
+var executors = map[string]executeFunc{
+	"cromwell":  executeCromwellWorkflow,
+	"nextflow":  executeNextflowWorkflow,
+	"snakemake": executeSnakemakeWorkflow,
+}
+
+func novaSeqData(t *testing.T) *phantomtesting.SyntheticData {
+	t.Helper()
 	f := phantomtesting.NewE2EFramework()
-	config := f.CreatePlatformConfig(phantomtesting.IlluminaNovaSeq6000, "CEU")
-	data, err := f.GenerateSyntheticData(config)
+	data, err := f.GenerateSyntheticData(f.CreatePlatformConfig(phantomtesting.IlluminaNovaSeq6000, "CEU"))
 	if err != nil {
 		t.Fatalf("GenerateSyntheticData error: %v", err)
 	}
-	args := &CommandLineArgs{outputDir: tmpDir}
-	success, files := executeCromwellWorkflow(tmpDir, data, phantomtesting.IlluminaNovaSeq6000, "basic", args)
-	if !success {
-		t.Error("executeCromwellWorkflow should succeed")
-	}
-	if len(files) == 0 {
-		t.Error("executeCromwellWorkflow should return output files")
+	return data
+}
+
+// TestExecuteWorkflow_EngineUnavailable checks that an unavailable engine is
+// an error and that no placeholder output is written. The previous
+// implementation returned success with "mock output" files.
+func TestExecuteWorkflow_EngineUnavailable(t *testing.T) {
+	withNoEngines(t)
+	data := novaSeqData(t)
+	for engine, execute := range executors {
+		t.Run(engine, func(t *testing.T) {
+			dir := t.TempDir()
+			files, err := execute(dir, data, phantomtesting.IlluminaNovaSeq6000, "basic", &CommandLineArgs{outputDir: dir})
+			if !errors.Is(err, errEngineUnavailable) {
+				t.Errorf("error = %v, want errEngineUnavailable", err)
+			}
+			if len(files) != 0 {
+				t.Errorf("returned output files %v for an engine that did not run", files)
+			}
+			_ = filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+				if err == nil && !info.IsDir() {
+					if b, _ := os.ReadFile(path); strings.Contains(string(b), "mock") {
+						t.Errorf("placeholder output written to %s", path)
+					}
+				}
+				return nil
+			})
+		})
 	}
 }
 
-func TestExecuteNextflowWorkflow_BasicExecution(t *testing.T) {
-	tmpDir := t.TempDir()
-	f := phantomtesting.NewE2EFramework()
-	config := f.CreatePlatformConfig(phantomtesting.IlluminaNovaSeq6000, "CEU")
-	data, err := f.GenerateSyntheticData(config)
-	if err != nil {
-		t.Fatalf("GenerateSyntheticData error: %v", err)
-	}
-	args := &CommandLineArgs{outputDir: tmpDir}
-	success, files := executeNextflowWorkflow(tmpDir, data, phantomtesting.IlluminaNovaSeq6000, "basic", args)
-	if !success {
-		t.Error("executeNextflowWorkflow should succeed")
-	}
-	if len(files) == 0 {
-		t.Error("executeNextflowWorkflow should return output files")
-	}
-}
-
-func TestExecuteSnakemakeWorkflow_BasicExecution(t *testing.T) {
-	tmpDir := t.TempDir()
-	f := phantomtesting.NewE2EFramework()
-	config := f.CreatePlatformConfig(phantomtesting.IlluminaNovaSeq6000, "CEU")
-	data, err := f.GenerateSyntheticData(config)
-	if err != nil {
-		t.Fatalf("GenerateSyntheticData error: %v", err)
-	}
-	args := &CommandLineArgs{outputDir: tmpDir}
-	success, files := executeSnakemakeWorkflow(tmpDir, data, phantomtesting.IlluminaNovaSeq6000, "basic", args)
-	if !success {
-		t.Error("executeSnakemakeWorkflow should succeed")
-	}
-	if len(files) == 0 {
-		t.Error("executeSnakemakeWorkflow should return output files")
+// TestExecuteWorkflow_RealEngine runs each installed engine on the synthetic
+// reads and checks the reported read count matches what was written.
+func TestExecuteWorkflow_RealEngine(t *testing.T) {
+	data := novaSeqData(t)
+	for _, engine := range []string{"snakemake", "nextflow", "cromwell"} {
+		execute := executors[engine]
+		t.Run(engine, func(t *testing.T) {
+			requireRealEngine(t, engine)
+			dir := t.TempDir()
+			files, err := execute(dir, data, phantomtesting.IlluminaNovaSeq6000, "basic", &CommandLineArgs{outputDir: dir, timeout: 600})
+			if err != nil {
+				t.Fatalf("%s run failed: %v", engine, err)
+			}
+			if got := calculateDataIntegrity(data, files); got != 1.0 {
+				t.Errorf("integrity = %f, want 1.0 (files %v)", got, files)
+			}
+		})
 	}
 }
 
 // ---------- runWorkflowTest ----------
 
-func TestRunWorkflowTest_CromwellEngine(t *testing.T) {
-	tmpDir := t.TempDir()
+func TestRunWorkflowTest_UnavailableSkipped(t *testing.T) {
+	withNoEngines(t)
 	f := phantomtesting.NewE2EFramework()
-	args := &CommandLineArgs{
-		outputDir:       tmpDir,
-		skipUnavailable: true,
-		verbose:         false,
-		dryRun:          false,
-	}
-	result := runWorkflowTest(f, "cromwell", phantomtesting.IlluminaNovaSeq6000, "basic", args)
-	if result == nil {
-		t.Fatal("runWorkflowTest returned nil")
+	for _, engine := range []string{"cromwell", "nextflow", "snakemake"} {
+		result := runWorkflowTest(f, engine, phantomtesting.IlluminaNovaSeq6000, "basic",
+			&CommandLineArgs{outputDir: t.TempDir(), skipUnavailable: true})
+		if !result.Skipped || result.Success {
+			t.Errorf("%s unavailable with skip-unavailable: Skipped=%v Success=%v, want skipped and not passed",
+				engine, result.Skipped, result.Success)
+		}
 	}
 }
 
-func TestRunWorkflowTest_NextflowEngine(t *testing.T) {
-	tmpDir := t.TempDir()
+func TestRunWorkflowTest_UnavailableFailsWithoutSkip(t *testing.T) {
+	withNoEngines(t)
 	f := phantomtesting.NewE2EFramework()
-	args := &CommandLineArgs{
-		outputDir:       tmpDir,
-		skipUnavailable: true,
+	result := runWorkflowTest(f, "nextflow", phantomtesting.PacBioRevio, "assembly",
+		&CommandLineArgs{outputDir: t.TempDir(), skipUnavailable: false})
+	if result.Skipped || result.Success {
+		t.Errorf("Skipped=%v Success=%v, want a failure", result.Skipped, result.Success)
 	}
-	result := runWorkflowTest(f, "nextflow", phantomtesting.PacBioRevio, "assembly", args)
-	if result == nil {
-		t.Fatal("runWorkflowTest returned nil")
+	if len(result.ErrorMessages) == 0 {
+		t.Error("a failed run must carry an error message")
 	}
 }
 
-func TestRunWorkflowTest_SnakemakeEngine(t *testing.T) {
-	tmpDir := t.TempDir()
+func TestRunWorkflowTest_RealSnakemake(t *testing.T) {
+	requireRealEngine(t, "snakemake")
 	f := phantomtesting.NewE2EFramework()
-	args := &CommandLineArgs{
-		outputDir:       tmpDir,
-		skipUnavailable: true,
+	result := runWorkflowTest(f, "snakemake", phantomtesting.ONTPromethION24, "basic",
+		&CommandLineArgs{outputDir: t.TempDir(), skipUnavailable: true, timeout: 600})
+	if !result.Success {
+		t.Fatalf("snakemake run failed: %v", result.ErrorMessages)
 	}
-	result := runWorkflowTest(f, "snakemake", phantomtesting.ONTPromethION24, "basic", args)
-	if result == nil {
-		t.Fatal("runWorkflowTest returned nil")
+	if result.DataIntegrity != 1.0 {
+		t.Errorf("DataIntegrity = %f, want 1.0", result.DataIntegrity)
 	}
 }
 
@@ -824,7 +929,8 @@ func TestRunWorkflowTest_UnsupportedEngine(t *testing.T) {
 	tmpDir := t.TempDir()
 	f := phantomtesting.NewE2EFramework()
 	args := &CommandLineArgs{
-		outputDir: tmpDir,
+		outputDir:       tmpDir,
+		skipUnavailable: true,
 	}
 	result := runWorkflowTest(f, "unsupported_engine", phantomtesting.IlluminaNovaSeq6000, "basic", args)
 	if result == nil {
@@ -833,11 +939,15 @@ func TestRunWorkflowTest_UnsupportedEngine(t *testing.T) {
 	if len(result.ErrorMessages) == 0 {
 		t.Error("runWorkflowTest(unsupported engine) should have error messages")
 	}
+	if result.Skipped || result.Success {
+		t.Error("an unsupported engine is a failure, not a skip")
+	}
 }
 
 // ---------- testWorkflowEngine ----------
 
 func TestTestWorkflowEngine_DryRun(t *testing.T) {
+	withLookPath(t, "cromwell")
 	tmpDir := t.TempDir()
 	f := phantomtesting.NewE2EFramework()
 	args := &CommandLineArgs{
@@ -855,45 +965,41 @@ func TestTestWorkflowEngine_DryRun(t *testing.T) {
 	if result.Engine != "cromwell" {
 		t.Errorf("engine = %q, want \"cromwell\"", result.Engine)
 	}
+	if len(result.WorkflowResults) != 0 {
+		t.Errorf("dry run executed %d workflows", len(result.WorkflowResults))
+	}
 }
 
 func TestTestWorkflowEngine_SkipUnavailable(t *testing.T) {
-	// Monkey-patch: isWorkflowEngineAvailable always returns true in this code,
-	// but we can test the skip-unavailable path by verifying dryRun path won't count tests.
-	tmpDir := t.TempDir()
+	withNoEngines(t)
 	f := phantomtesting.NewE2EFramework()
-	args := &CommandLineArgs{
-		outputDir:       tmpDir,
-		skipUnavailable: false, // Don't skip
-		dryRun:          false,
-		verbose:         true, // cover verbose logging
-	}
 	platforms := []phantomtesting.SequencingPlatform{phantomtesting.IlluminaNovaSeq6000}
 	workflows := []string{"basic"}
-	result := testWorkflowEngine(f, "nextflow", platforms, workflows, args)
-	if result == nil {
-		t.Fatal("testWorkflowEngine returned nil")
-	}
-}
 
-func TestTestWorkflowEngine_WithVerbose(t *testing.T) {
-	tmpDir := t.TempDir()
-	f := phantomtesting.NewE2EFramework()
-	args := &CommandLineArgs{
-		outputDir: tmpDir,
-		verbose:   true,
+	skipped := testWorkflowEngine(f, "nextflow", platforms, workflows,
+		&CommandLineArgs{outputDir: t.TempDir(), skipUnavailable: true, verbose: true})
+	if skipped.Available || len(skipped.WorkflowResults) != 0 || skipped.SuccessRate != 0 {
+		t.Errorf("skipped engine: Available=%v results=%d SuccessRate=%f, want unavailable with no results",
+			skipped.Available, len(skipped.WorkflowResults), skipped.SuccessRate)
 	}
-	platforms := []phantomtesting.SequencingPlatform{phantomtesting.IlluminaNovaSeq6000}
-	workflows := []string{"basic"}
-	result := testWorkflowEngine(f, "snakemake", platforms, workflows, args)
-	if result == nil {
-		t.Fatal("testWorkflowEngine returned nil")
+
+	failed := testWorkflowEngine(f, "nextflow", platforms, workflows,
+		&CommandLineArgs{outputDir: t.TempDir(), skipUnavailable: false, verbose: true})
+	if len(failed.WorkflowResults) != 1 || failed.SuccessRate != 0 {
+		t.Fatalf("unskipped unavailable engine: results=%d SuccessRate=%f, want 1 failed result",
+			len(failed.WorkflowResults), failed.SuccessRate)
+	}
+	for _, r := range failed.WorkflowResults {
+		if r.Success || r.Skipped {
+			t.Errorf("Success=%v Skipped=%v, want failed", r.Success, r.Skipped)
+		}
 	}
 }
 
 // ---------- testPlatformCompatibility ----------
 
 func TestTestPlatformCompatibility_DryRun(t *testing.T) {
+	withLookPath(t, "cromwell")
 	tmpDir := t.TempDir()
 	f := phantomtesting.NewE2EFramework()
 	args := &CommandLineArgs{
@@ -909,58 +1015,24 @@ func TestTestPlatformCompatibility_DryRun(t *testing.T) {
 	}
 }
 
-func TestTestPlatformCompatibility_WithExecution(t *testing.T) {
-	tmpDir := t.TempDir()
+func TestTestPlatformCompatibility_SkipsUnavailable(t *testing.T) {
+	withNoEngines(t)
 	f := phantomtesting.NewE2EFramework()
-	args := &CommandLineArgs{
-		outputDir:       tmpDir,
-		skipUnavailable: true,
-		dryRun:          false,
-		verbose:         true,
-	}
-	engines := []string{"cromwell"}
-	workflows := []string{"basic"}
-	result := testPlatformCompatibility(f, phantomtesting.IlluminaNovaSeq6000, engines, workflows, args)
-	if result == nil {
-		t.Fatal("testPlatformCompatibility returned nil")
-	}
-}
-
-func TestTestPlatformCompatibility_PacBioAssembly(t *testing.T) {
-	tmpDir := t.TempDir()
-	f := phantomtesting.NewE2EFramework()
-	args := &CommandLineArgs{
-		outputDir:       tmpDir,
-		skipUnavailable: true,
-		dryRun:          false,
-	}
-	engines := []string{"cromwell"}
-	workflows := []string{"pacbio_assembly", "basic"}
-	result := testPlatformCompatibility(f, phantomtesting.PacBioRevio, engines, workflows, args)
-	if result == nil {
-		t.Fatal("testPlatformCompatibility returned nil")
-	}
-}
-
-func TestTestPlatformCompatibility_ONT(t *testing.T) {
-	tmpDir := t.TempDir()
-	f := phantomtesting.NewE2EFramework()
-	args := &CommandLineArgs{
-		outputDir:       tmpDir,
-		skipUnavailable: true,
-		dryRun:          false,
-	}
-	engines := []string{"nextflow"}
-	workflows := []string{"ont_assembly", "basic"}
-	result := testPlatformCompatibility(f, phantomtesting.ONTPromethION24, engines, workflows, args)
-	if result == nil {
-		t.Fatal("testPlatformCompatibility returned nil")
+	args := &CommandLineArgs{outputDir: t.TempDir(), skipUnavailable: true}
+	for _, platform := range []phantomtesting.SequencingPlatform{
+		phantomtesting.IlluminaNovaSeq6000, phantomtesting.PacBioRevio, phantomtesting.ONTPromethION24,
+	} {
+		result := testPlatformCompatibility(f, platform, []string{"cromwell", "nextflow"}, []string{"pacbio_assembly", "ont_assembly", "basic"}, args)
+		if len(result.EngineResults) != 0 || result.SuccessRate != 0 {
+			t.Errorf("%s: results=%d SuccessRate=%f, want nothing run", platform, len(result.EngineResults), result.SuccessRate)
+		}
 	}
 }
 
 // ---------- runWorkflowTests ----------
 
 func TestRunWorkflowTests_DryRun(t *testing.T) {
+	withLookPath(t, "cromwell")
 	tmpDir := t.TempDir()
 	f := phantomtesting.NewE2EFramework()
 	args := &CommandLineArgs{
@@ -982,22 +1054,45 @@ func TestRunWorkflowTests_DryRun(t *testing.T) {
 	}
 }
 
-func TestRunWorkflowTests_WithExecution(t *testing.T) {
-	tmpDir := t.TempDir()
+// TestRunWorkflowTests_NoEnginesReportsSkipped checks that with nothing
+// installed every engine is reported as skipped and nothing as passed.
+func TestRunWorkflowTests_NoEnginesReportsSkipped(t *testing.T) {
+	withNoEngines(t)
 	f := phantomtesting.NewE2EFramework()
-	args := &CommandLineArgs{
-		outputDir:       tmpDir,
-		skipUnavailable: true,
-		dryRun:          false,
-		verbose:         true,
-		generateReport:  false,
-	}
-	engines := []string{"cromwell"}
+	args := &CommandLineArgs{outputDir: t.TempDir(), skipUnavailable: true}
+	engines := []string{"cromwell", "nextflow", "snakemake"}
 	platforms := []phantomtesting.SequencingPlatform{phantomtesting.IlluminaNovaSeq6000}
-	workflows := []string{"basic"}
-	results := runWorkflowTests(f, engines, platforms, workflows, args)
-	if results == nil {
-		t.Fatal("runWorkflowTests returned nil")
+	results := runWorkflowTests(f, engines, platforms, []string{"basic"}, args)
+
+	ran, failed, skipped := countWorkflowOutcomes(results)
+	if ran != 0 || failed != 0 || skipped != 3 {
+		t.Errorf("ran=%d failed=%d skipped=%d, want 0/0/3", ran, failed, skipped)
+	}
+	if results.OverallScore != 0 {
+		t.Errorf("OverallScore = %f, want 0 when nothing ran", results.OverallScore)
+	}
+	printTestSummary(results, args)
+}
+
+func TestCountWorkflowOutcomes(t *testing.T) {
+	results := &WorkflowTestResults{
+		EngineResults: map[string]*EngineTestResult{
+			"cromwell": {Available: false},
+			"nextflow": {Available: true, WorkflowResults: map[string]*WorkflowTestResult{
+				"a": {Success: true},
+				"b": {Success: false},
+			}},
+		},
+		PlatformResults: map[phantomtesting.SequencingPlatform]*PlatformTestResult{
+			phantomtesting.IlluminaNovaSeq6000: {EngineResults: map[string]*WorkflowTestResult{
+				"nextflow":  {Success: true},
+				"snakemake": {Skipped: true},
+			}},
+		},
+	}
+	ran, failed, skipped := countWorkflowOutcomes(results)
+	if ran != 3 || failed != 1 || skipped != 2 {
+		t.Errorf("ran=%d failed=%d skipped=%d, want 3/1/2", ran, failed, skipped)
 	}
 }
 

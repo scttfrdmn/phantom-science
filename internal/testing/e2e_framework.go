@@ -1,10 +1,13 @@
 package testing
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"math/rand"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -1169,10 +1172,103 @@ func (f *E2EFramework) WriteVCF(data *SyntheticData, filename string) error {
 	return os.WriteFile(filename, []byte(content.String()), 0600)
 }
 
-// WriteBAM writes a minimal BAM-like file (actually a SAM header stub for testing)
+// ErrBAMUnsupported is returned by WriteBAM when samtools, which performs the
+// SAM-to-BAM conversion, is not on PATH. No file is written in that case.
+var ErrBAMUnsupported = errors.New("writing BAM requires samtools on PATH")
+
+// lookPath locates external tools; tests replace it to simulate missing tools.
+var lookPath = exec.LookPath
+
+// samReadGroupID is the read group assigned to every record by WriteSAM.
+const samReadGroupID = "synthetic"
+
+// samPlatform maps a sequencing platform to its SAM @RG PL value.
+func samPlatform(p SequencingPlatform) string {
+	switch p {
+	case IlluminaNovaSeq6000, IlluminaNextSeq2000, IlluminaMiSeq:
+		return "ILLUMINA"
+	case PacBioRevio:
+		return "PACBIO"
+	case ONTPromethION24:
+		return "ONT"
+	case MGI_DNBSEQ_T20x2:
+		return "DNBSEQ"
+	case ElementAVITI:
+		return "ELEMENT"
+	default:
+		return "OTHER"
+	}
+}
+
+// WriteSAM writes data as an unaligned SAM file: an @HD/@SQ/@RG/@PG header
+// and one unmapped record per read (FLAG 4, RNAME *, POS 0, MAPQ 0, CIGAR *)
+// tagged with the read group. The @SQ line describes chr1 as the
+// concatenation of all reads, matching the reference written by
+// WriteReferenceFromData.
+func (f *E2EFramework) WriteSAM(data *SyntheticData, filename string) error {
+	if data == nil || len(data.Sequences) == 0 {
+		return fmt.Errorf("no sequences in synthetic data")
+	}
+	refLen := 0
+	for _, seq := range data.Sequences {
+		refLen += len(seq)
+	}
+
+	var b strings.Builder
+	b.WriteString("@HD\tVN:1.6\tSO:unsorted\n")
+	fmt.Fprintf(&b, "@SQ\tSN:chr1\tLN:%d\n", refLen)
+	sample := data.Population
+	if sample == "" {
+		sample = "synthetic"
+	}
+	fmt.Fprintf(&b, "@RG\tID:%s\tSM:%s\tPL:%s\n", samReadGroupID, sample, samPlatform(data.Platform))
+	b.WriteString("@PG\tID:phantom-science\tPN:phantom-science\n")
+	for i, seq := range data.Sequences {
+		name := fmt.Sprintf("read_%d", i)
+		if i < len(data.Headers) {
+			if fields := strings.Fields(strings.TrimPrefix(data.Headers[i], "@")); len(fields) > 0 {
+				name = fields[0]
+			}
+		}
+		qual := "*"
+		if i < len(data.QualityScores) && len(data.QualityScores[i]) == len(seq) {
+			qual = string(data.QualityScores[i]) // already Phred+33 encoded
+		}
+		seqStr := string(seq)
+		if seqStr == "" {
+			seqStr = "*"
+		}
+		fmt.Fprintf(&b, "%s\t4\t*\t0\t0\t*\t*\t0\t0\t%s\t%s\tRG:Z:%s\n", name, seqStr, qual, samReadGroupID)
+	}
+	return os.WriteFile(filename, []byte(b.String()), 0600)
+}
+
+// WriteBAM writes data as an unaligned BAM file. It writes the SAM produced
+// by WriteSAM to a temporary file and converts it with
+// "samtools view -b -o filename". If samtools is not on PATH it returns
+// ErrBAMUnsupported without writing anything.
 func (f *E2EFramework) WriteBAM(data *SyntheticData, filename string) error {
-	content := "@HD\tVN:1.6\tSO:coordinate\n@SQ\tSN:chr1\tLN:1000000\n"
-	return os.WriteFile(filename, []byte(content), 0600)
+	samtools, err := lookPath("samtools")
+	if err != nil {
+		return ErrBAMUnsupported
+	}
+
+	tmp, err := os.CreateTemp(filepath.Dir(filename), filepath.Base(filename)+".*.sam")
+	if err != nil {
+		return fmt.Errorf("create temporary SAM: %w", err)
+	}
+	samFile := tmp.Name()
+	tmp.Close()
+	defer os.Remove(samFile)
+
+	if err := f.WriteSAM(data, samFile); err != nil {
+		return err
+	}
+	out, err := exec.Command(samtools, "view", "-b", "-o", filename, samFile).CombinedOutput() // #nosec G204 -- samtools resolved via LookPath, paths are caller-supplied files
+	if err != nil {
+		return fmt.Errorf("samtools view -b: %v: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 func (f *E2EFramework) GeneratePerformanceReport(benchmarks map[SequencingPlatform]*PlatformBenchmark) {

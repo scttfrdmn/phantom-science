@@ -2,6 +2,7 @@ package integration
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -546,13 +547,21 @@ func testSamtoolsBAMProcessing(t *testing.T, framework *pt.E2EFramework) {
 	require.NoError(t, err)
 	defer os.RemoveAll(workDir)
 
-	// Create mock BAM file for testing
 	bamFile := filepath.Join(workDir, "test.bam")
-	err = framework.WriteBAM(syntheticData, bamFile)
-	require.NoError(t, err)
+	writeBAMOrSkip(t, framework, syntheticData, bamFile)
 
-	// Test samtools operations
-	testSamtoolsOperations(t, workDir, bamFile)
+	testSamtoolsOperations(t, workDir, bamFile, len(syntheticData.Sequences))
+}
+
+// writeBAMOrSkip writes syntheticData as BAM, skipping the test when samtools
+// (needed for the conversion) is not installed and failing on real errors.
+func writeBAMOrSkip(t *testing.T, framework *pt.E2EFramework, syntheticData *pt.SyntheticData, bamFile string) {
+	t.Helper()
+	err := framework.WriteBAM(syntheticData, bamFile)
+	if errors.Is(err, pt.ErrBAMUnsupported) {
+		t.Skip("samtools not available - cannot write BAM")
+	}
+	require.NoError(t, err)
 }
 
 // Validation functions
@@ -773,20 +782,27 @@ func createMockBCFtoolsResults(workDir string) *BCFtoolsResults {
 	}
 }
 
-func testSamtoolsOperations(t *testing.T, workDir, bamFile string) {
-	// Test basic samtools operations
-	operations := []string{"view", "sort", "index", "flagstat"}
-	
-	for _, op := range operations {
-		cmd := exec.Command("samtools", op, bamFile)
+func testSamtoolsOperations(t *testing.T, workDir, bamFile string, wantReads int) {
+	run := func(args ...string) string {
+		t.Helper()
+		cmd := exec.Command("samtools", args...)
 		cmd.Dir = workDir
-		err := cmd.Run()
-		if err != nil {
-			t.Logf("Samtools %s operation skipped: %v", op, err)
-		} else {
-			t.Logf("✅ Samtools %s operation successful", op)
-		}
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, "samtools %s: %s", strings.Join(args, " "), out)
+		return string(out)
 	}
+
+	count := strings.TrimSpace(run("view", "-c", bamFile))
+	assert.Equal(t, strconv.Itoa(wantReads), count, "BAM should hold one record per read")
+
+	sorted := filepath.Join(workDir, "sorted.bam")
+	run("sort", "-o", sorted, bamFile)
+	run("index", sorted)
+	_, err := os.Stat(sorted + ".bai")
+	require.NoError(t, err, "samtools index should write a .bai")
+
+	flagstat := run("flagstat", bamFile)
+	assert.Contains(t, flagstat, fmt.Sprintf("%d + 0 in total", wantReads))
 }
 
 func testPicardQualityMetrics(t *testing.T, framework *pt.E2EFramework) {
@@ -800,13 +816,10 @@ func testPicardQualityMetrics(t *testing.T, framework *pt.E2EFramework) {
 	require.NoError(t, err)
 	defer os.RemoveAll(workDir)
 
-	// Create mock BAM for testing
 	bamFile := filepath.Join(workDir, "test.bam")
-	err = framework.WriteBAM(syntheticData, bamFile)
-	require.NoError(t, err)
+	writeBAMOrSkip(t, framework, syntheticData, bamFile)
 
-	// Test Picard operations (mock if not available)
-	testPicardOperations(t, workDir, bamFile)
+	testPicardOperations(t, workDir, bamFile, len(syntheticData.Sequences))
 }
 
 func testPicardDuplicateMarking(t *testing.T, framework *pt.E2EFramework) {
@@ -821,20 +834,49 @@ func testPicardDuplicateMarking(t *testing.T, framework *pt.E2EFramework) {
 	assert.Greater(t, len(syntheticData.Sequences), 100, "Should have sufficient reads for duplicate analysis")
 }
 
-func testPicardOperations(t *testing.T, workDir, bamFile string) {
-	// Test Picard operations
-	operations := []string{"CollectAlignmentSummaryMetrics", "CollectInsertSizeMetrics"}
-
-	for _, op := range operations {
-		cmd := exec.Command("picard", op, fmt.Sprintf("I=%s", bamFile), fmt.Sprintf("O=%s.txt", op))
+func testPicardOperations(t *testing.T, workDir, bamFile string, wantReads int) {
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("picard", args...)
 		cmd.Dir = workDir
-		err := cmd.Run()
-		if err != nil {
-			t.Logf("Picard %s operation skipped: %v", op, err)
-		} else {
-			t.Logf("✅ Picard %s operation successful", op)
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, "picard %s: %s", strings.Join(args, " "), tailLines(string(out), 20))
+	}
+
+	run("ValidateSamFile", "I="+bamFile, "MODE=SUMMARY")
+
+	// The reads are unaligned, so the summary is a single UNPAIRED row whose
+	// TOTAL_READS must equal the reads written.
+	metrics := filepath.Join(workDir, "alignment_summary.txt")
+	run("CollectAlignmentSummaryMetrics", "I="+bamFile, "O="+metrics)
+	content, err := os.ReadFile(metrics)
+	require.NoError(t, err)
+	totalReads := -1
+	var columns []string
+	for _, line := range strings.Split(string(content), "\n") {
+		fields := strings.Split(line, "\t")
+		if len(fields) > 1 && fields[0] == "CATEGORY" {
+			columns = fields
+			continue
+		}
+		if columns != nil && len(fields) == len(columns) && (fields[0] == "UNPAIRED" || fields[0] == "PAIR") {
+			for i, c := range columns {
+				if c == "TOTAL_READS" {
+					totalReads, _ = strconv.Atoi(fields[i])
+				}
+			}
+			break
 		}
 	}
+	assert.Equal(t, wantReads, totalReads, "Picard TOTAL_READS should match the reads written")
+}
+
+func tailLines(s string, n int) string {
+	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	return strings.Join(lines, "\n")
 }
 
 // testBCFtoolsPopulationAnalysis tests BCFtools population genetics analysis
@@ -895,15 +937,12 @@ func testSamtoolsStatistics(t *testing.T, framework *pt.E2EFramework) {
 	defer os.RemoveAll(workDir)
 
 	bamFile := filepath.Join(workDir, "test.bam")
-	err = framework.WriteBAM(syntheticData, bamFile)
-	require.NoError(t, err)
+	writeBAMOrSkip(t, framework, syntheticData, bamFile)
 
-	cmd := exec.Command("samtools", "flagstat", bamFile)
+	cmd := exec.Command("samtools", "stats", bamFile)
 	cmd.Dir = workDir
-	err = cmd.Run()
-	if err != nil {
-		t.Logf("Samtools statistics skipped (tool not available): %v", err)
-	} else {
-		t.Log("✅ Samtools statistics generated")
-	}
+	out, err := cmd.Output()
+	require.NoError(t, err, "samtools stats")
+	assert.Contains(t, string(out), fmt.Sprintf("SN\traw total sequences:\t%d", len(syntheticData.Sequences)),
+		"samtools stats should count every read")
 }

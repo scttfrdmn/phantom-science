@@ -1,13 +1,19 @@
 package main
 
 import (
+	"bufio"
+	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/scttfrdmn/phantom-science/internal/testing"
 )
@@ -77,8 +83,16 @@ func main() {
 	
 	// Print summary
 	printTestSummary(results, args)
-	
-	log.Println("✅ Workflow integration testing completed successfully!")
+
+	ran, failed, skipped := countWorkflowOutcomes(results)
+	if failed > 0 {
+		log.Fatalf("❌ %d of %d workflow runs failed (%d skipped)", failed, ran, skipped)
+	}
+	if ran == 0 {
+		log.Printf("⚠️  No workflows were executed (%d skipped); install cromwell, nextflow or snakemake to test them", skipped)
+		return
+	}
+	log.Printf("✅ %d workflow runs passed (%d skipped)", ran, skipped)
 }
 
 // parseCommandLineArgs parses command line arguments
@@ -168,21 +182,17 @@ EXAMPLES:
   # Test with custom timeout and parallel execution
   ./run_workflow_tests -engines=all -platforms=major -timeout=7200 -parallel
 
-INTEGRATION TESTING:
-  🎯 Validates synthetic data compatibility with real-world workflows
-  📊 Tests GATK, BWA, BCFtools, Samtools, Picard integration
-  ⚡ Performance benchmarking across workflow engines
-  🧬 Population genetics workflow validation
-  📈 Comprehensive compatibility matrix reporting
+WHAT IS EXECUTED:
+  Each engine found on PATH (cromwell, or java with CROMWELL_JAR set;
+  nextflow; snakemake) really runs a minimal pipeline that reads the
+  synthetic FASTQ and counts its records. A run passes only when the engine
+  exits successfully and the reported read count matches the reads written.
+  Every workflow type currently uses this same read-count pipeline; the type
+  only selects names and grouping.
 
-SUPPORTED WORKFLOWS:
-  • GATK Best Practices (Germline & Somatic variants)
-  • nf-core/sarek (Comprehensive variant analysis)
-  • nf-core/nanoseq (Nanopore analysis)
-  • PacBio HiFi genome assembly
-  • Population genomics analysis
-  • Multi-platform quality control
-  • Structural variant detection
+  Engines that are not installed are reported as SKIPPED, never as passed
+  (with -skip-unavailable=false they are reported as FAILED). The command
+  exits non-zero if any executed workflow fails.
 `)
 }
 
@@ -193,8 +203,7 @@ func printBanner() {
 ║               🧬 PHANTOM SCIENCE WORKFLOW INTEGRATION SUITE 🧬               ║
 ║                                                                              ║
 ║              Real-World Genomics Pipeline Compatibility Testing             ║
-║                      GATK • BWA • BCFtools • Cromwell • Nextflow            ║
-║                           Statistical Indistinguishability                  ║
+║                     Cromwell (WDL) • Nextflow • Snakemake                    ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 `)
 }
@@ -415,6 +424,9 @@ type WorkflowTestResult struct {
 	OutputAccuracy    float64
 	ErrorMessages     []string
 	OutputFiles       []string
+	// Skipped is set when the engine is not installed and -skip-unavailable
+	// is on; a skipped workflow is neither passed nor failed.
+	Skipped bool
 }
 
 // runWorkflowTests runs the comprehensive workflow test suite
@@ -589,7 +601,16 @@ func runWorkflowTest(framework *testing.E2EFramework, engine string, platform te
 		Platform: platform,
 		Workflow: workflow,
 	}
-	
+
+	if _, _, err := engineCommand(engine); err != nil {
+		if errors.Is(err, errEngineUnavailable) && args.skipUnavailable {
+			result.Skipped = true
+		}
+		result.ErrorMessages = append(result.ErrorMessages, err.Error())
+		result.ExecutionTime = time.Since(start)
+		return result
+	}
+
 	// Generate synthetic data for the platform
 	config := framework.CreatePlatformConfig(platform, "CEU")
 	syntheticData, err := framework.GenerateSyntheticData(config)
@@ -609,133 +630,260 @@ func runWorkflowTest(framework *testing.E2EFramework, engine string, platform te
 	defer os.RemoveAll(workDir)
 	
 	// Execute workflow based on engine type
-	var workflowSuccess bool
 	var outputFiles []string
-	
 	switch engine {
 	case "cromwell":
-		workflowSuccess, outputFiles = executeCromwellWorkflow(workDir, syntheticData, platform, workflow, args)
+		outputFiles, err = executeCromwellWorkflow(workDir, syntheticData, platform, workflow, args)
 	case "nextflow":
-		workflowSuccess, outputFiles = executeNextflowWorkflow(workDir, syntheticData, platform, workflow, args)
+		outputFiles, err = executeNextflowWorkflow(workDir, syntheticData, platform, workflow, args)
 	case "snakemake":
-		workflowSuccess, outputFiles = executeSnakemakeWorkflow(workDir, syntheticData, platform, workflow, args)
-	default:
-		result.ErrorMessages = append(result.ErrorMessages, fmt.Sprintf("Unsupported engine: %s", engine))
-		result.ExecutionTime = time.Since(start)
-		return result
+		outputFiles, err = executeSnakemakeWorkflow(workDir, syntheticData, platform, workflow, args)
 	}
-	
-	result.Success = workflowSuccess
 	result.OutputFiles = outputFiles
 	result.ExecutionTime = time.Since(start)
-	
-	// Calculate metrics
-	if workflowSuccess {
-		result.DataIntegrity = calculateDataIntegrity(syntheticData, outputFiles)
-		result.OutputAccuracy = calculateOutputAccuracy(platform, workflow, outputFiles)
-		result.MemoryUsageMB = estimateMemoryUsage(platform, workflow)
-		result.CPUUsagePercent = estimateCPUUsage(platform, workflow)
+	if err != nil {
+		result.ErrorMessages = append(result.ErrorMessages, err.Error())
+		return result
 	}
-	
+
+	// The workflow passes only if the engine's output matches the input.
+	result.DataIntegrity = calculateDataIntegrity(syntheticData, outputFiles)
+	if result.DataIntegrity < 1.0 {
+		result.ErrorMessages = append(result.ErrorMessages, fmt.Sprintf(
+			"read count in engine output does not match the %d reads written (integrity %.2f)",
+			len(syntheticData.Sequences), result.DataIntegrity))
+		return result
+	}
+	result.Success = true
+	result.OutputAccuracy = calculateOutputAccuracy(platform, workflow, outputFiles)
+	result.MemoryUsageMB = estimateMemoryUsage(platform, workflow)
+	result.CPUUsagePercent = estimateCPUUsage(platform, workflow)
+
 	return result
 }
 
 // Workflow execution functions
+//
+// Each execute function writes the synthetic reads as FASTQ, writes a minimal
+// read-counting pipeline for the engine, runs the engine, and returns the
+// pipeline's output files. An error is returned if the engine is unavailable,
+// exits non-zero, or produces no output.
 
-func executeCromwellWorkflow(workDir string, syntheticData *testing.SyntheticData, platform testing.SequencingPlatform, workflow string, args *CommandLineArgs) (bool, []string) {
-	// Create basic WDL workflow for testing
-	wdlFile := filepath.Join(workDir, "test.wdl")
-	wdlContent := createBasicWDL(workflow, string(platform))
+// errEngineUnavailable reports that a workflow engine is not installed.
+var errEngineUnavailable = errors.New("workflow engine not available")
 
-	if err := os.WriteFile(wdlFile, []byte(wdlContent), 0600); err != nil {
-		return false, nil
-	}
+// lookPath locates executables; tests replace it to simulate missing engines.
+var lookPath = exec.LookPath
 
-	// Create inputs JSON
-	inputsFile := filepath.Join(workDir, "inputs.json")
-	inputsContent := createWDLInputs(workflow, string(platform))
-	
-	if err := os.WriteFile(inputsFile, []byte(inputsContent), 0600); err != nil {
-		return false, nil
+// inputFASTQ is the file name of the reads handed to each workflow.
+const inputFASTQ = "reads.fastq"
+
+// readCountFile is the output each workflow writes: the number of FASTQ records.
+const readCountFile = "read_count.txt"
+
+// engineCommand returns the executable and leading arguments that invoke
+// engine. Cromwell is found as a "cromwell" executable on PATH, or as
+// "java -jar $CROMWELL_JAR" when CROMWELL_JAR names an existing file.
+func engineCommand(engine string) (string, []string, error) {
+	switch engine {
+	case "cromwell":
+		if path, err := lookPath("cromwell"); err == nil {
+			return path, nil, nil
+		}
+		if jar := os.Getenv("CROMWELL_JAR"); jar != "" {
+			if _, err := os.Stat(jar); err != nil {
+				return "", nil, fmt.Errorf("%w: cromwell not on PATH and CROMWELL_JAR=%s: %v", errEngineUnavailable, jar, err)
+			}
+			java, err := lookPath("java")
+			if err != nil {
+				return "", nil, fmt.Errorf("%w: CROMWELL_JAR is set but java is not on PATH", errEngineUnavailable)
+			}
+			return java, []string{"-jar", jar}, nil
+		}
+		return "", nil, fmt.Errorf("%w: cromwell not on PATH and CROMWELL_JAR not set", errEngineUnavailable)
+	case "nextflow", "snakemake":
+		path, err := lookPath(engine)
+		if err != nil {
+			return "", nil, fmt.Errorf("%w: %s not on PATH", errEngineUnavailable, engine)
+		}
+		return path, nil, nil
+	default:
+		return "", nil, fmt.Errorf("unsupported engine: %s", engine)
 	}
-	
-	// Mock successful execution for testing environment
-	// In real environment, would execute: cromwell run test.wdl -i inputs.json
-	outputFiles := []string{
-		filepath.Join(workDir, "output.bam"),
-		filepath.Join(workDir, "variants.vcf"),
-	}
-	
-	// Create mock output files
-	for _, file := range outputFiles {
-		os.WriteFile(file, []byte("mock output"), 0600)
-	}
-	
-	return true, outputFiles
 }
 
-func executeNextflowWorkflow(workDir string, syntheticData *testing.SyntheticData, platform testing.SequencingPlatform, workflow string, args *CommandLineArgs) (bool, []string) {
-	// Create basic Nextflow workflow
-	nfFile := filepath.Join(workDir, "main.nf")
-	nfContent := createBasicNextflow(workflow, string(platform))
-	
-	if err := os.WriteFile(nfFile, []byte(nfContent), 0600); err != nil {
-		return false, nil
-	}
-	
-	// Create nextflow config
-	configFile := filepath.Join(workDir, "nextflow.config")
-	configContent := `process.executor = 'local'
-params.outdir = 'output'`
-	
-	if err := os.WriteFile(configFile, []byte(configContent), 0600); err != nil {
-		return false, nil
-	}
-	
-	// Mock successful execution
-	outputFiles := []string{
-		filepath.Join(workDir, "output", "results.txt"),
-		filepath.Join(workDir, "output", "metrics.json"),
-	}
-	
-	// Create output directory and mock files
-	os.MkdirAll(filepath.Join(workDir, "output"), 0750)
-	for _, file := range outputFiles {
-		os.WriteFile(file, []byte("mock nextflow output"), 0600)
-	}
-	
-	return true, outputFiles
-}
-
-func executeSnakemakeWorkflow(workDir string, syntheticData *testing.SyntheticData, platform testing.SequencingPlatform, workflow string, args *CommandLineArgs) (bool, []string) {
-	// Create basic Snakemake workflow
-	snakeFile := filepath.Join(workDir, "Snakefile")
-	snakeContent := createBasicSnakemake(workflow, string(platform))
-	
-	if err := os.WriteFile(snakeFile, []byte(snakeContent), 0600); err != nil {
-		return false, nil
-	}
-	
-	// Mock successful execution
-	outputFiles := []string{
-		filepath.Join(workDir, "output.txt"),
-		filepath.Join(workDir, "stats.json"),
-	}
-	
-	// Create mock output files
-	for _, file := range outputFiles {
-		os.WriteFile(file, []byte("mock snakemake output"), 0600)
-	}
-	
-	return true, outputFiles
-}
-
-// Helper functions
-
+// isWorkflowEngineAvailable reports whether engine can be invoked.
 func isWorkflowEngineAvailable(engine string) bool {
-	// This would check if the workflow engine is actually installed
-	// For testing purposes, we'll assume they're available
-	return true
+	_, _, err := engineCommand(engine)
+	return err == nil
+}
+
+// runEngine runs engine with extra arguments in workDir, honouring the
+// -timeout flag, and returns an error carrying the tail of its output on failure.
+func runEngine(engine, workDir string, args *CommandLineArgs, env []string, extra ...string) error {
+	program, lead, err := engineCommand(engine)
+	if err != nil {
+		return err
+	}
+	ctx := context.Background()
+	if args != nil && args.timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(args.timeout)*time.Second)
+		defer cancel()
+	}
+	cmd := exec.CommandContext(ctx, program, append(lead, extra...)...) // #nosec G204 -- program resolved via LookPath, arguments built internally
+	cmd.Dir = workDir
+	cmd.Env = append(os.Environ(), env...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		if ctx.Err() != nil {
+			err = ctx.Err()
+		}
+		return fmt.Errorf("%s run failed: %v\n%s", engine, err, tail(string(out), 40))
+	}
+	if args != nil && args.verbose {
+		log.Printf("     %s output:\n%s", engine, tail(string(out), 20))
+	}
+	return nil
+}
+
+// tail returns the last n lines of s.
+func tail(s string, n int) string {
+	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	return strings.Join(lines, "\n")
+}
+
+// writeInputFASTQ writes the synthetic reads to workDir and returns the absolute path.
+func writeInputFASTQ(workDir string, data *testing.SyntheticData) (string, error) {
+	path, err := filepath.Abs(filepath.Join(workDir, inputFASTQ))
+	if err != nil {
+		return "", err
+	}
+	f, err := os.Create(path) // #nosec G304 -- path inside the test workspace
+	if err != nil {
+		return "", err
+	}
+	w := bufio.NewWriter(f)
+	for i, seq := range data.Sequences {
+		qual := []byte(strings.Repeat("I", len(seq)))
+		if i < len(data.QualityScores) && len(data.QualityScores[i]) == len(seq) {
+			qual = data.QualityScores[i]
+		}
+		fmt.Fprintf(w, "@read_%d\n%s\n+\n%s\n", i, seq, qual)
+	}
+	if err := w.Flush(); err != nil {
+		f.Close()
+		return "", err
+	}
+	return path, f.Close()
+}
+
+// requireOutputs returns paths unchanged if every path exists, or an error naming the first missing one.
+func requireOutputs(engine string, paths []string) ([]string, error) {
+	if len(paths) == 0 {
+		return nil, fmt.Errorf("%s produced no %s", engine, readCountFile)
+	}
+	for _, p := range paths {
+		if _, err := os.Stat(p); err != nil {
+			return nil, fmt.Errorf("%s did not produce %s: %v", engine, p, err)
+		}
+	}
+	return paths, nil
+}
+
+func executeCromwellWorkflow(workDir string, syntheticData *testing.SyntheticData, platform testing.SequencingPlatform, workflow string, args *CommandLineArgs) ([]string, error) {
+	fastq, err := writeInputFASTQ(workDir, syntheticData)
+	if err != nil {
+		return nil, fmt.Errorf("write input FASTQ: %w", err)
+	}
+	wdlFile := filepath.Join(workDir, "test.wdl")
+	if err := os.WriteFile(wdlFile, []byte(createBasicWDL(workflow, string(platform))), 0600); err != nil {
+		return nil, fmt.Errorf("write WDL: %w", err)
+	}
+	inputsFile := filepath.Join(workDir, "inputs.json")
+	if err := os.WriteFile(inputsFile, []byte(createWDLInputs(workflow, string(platform), fastq)), 0600); err != nil {
+		return nil, fmt.Errorf("write WDL inputs: %w", err)
+	}
+
+	if err := runEngine("cromwell", workDir, args, nil, "run", wdlFile, "-i", inputsFile); err != nil {
+		return nil, err
+	}
+
+	// Cromwell's local backend writes task outputs under
+	// cromwell-executions/<workflow>/<run id>/call-<task>/execution/.
+	matches, _ := filepath.Glob(filepath.Join(workDir, "cromwell-executions", "*", "*", "call-CountReads", "execution", readCountFile))
+	return requireOutputs("cromwell", matches)
+}
+
+func executeNextflowWorkflow(workDir string, syntheticData *testing.SyntheticData, platform testing.SequencingPlatform, workflow string, args *CommandLineArgs) ([]string, error) {
+	fastq, err := writeInputFASTQ(workDir, syntheticData)
+	if err != nil {
+		return nil, fmt.Errorf("write input FASTQ: %w", err)
+	}
+	nfFile := filepath.Join(workDir, "main.nf")
+	if err := os.WriteFile(nfFile, []byte(createBasicNextflow(workflow, string(platform))), 0600); err != nil {
+		return nil, fmt.Errorf("write Nextflow script: %w", err)
+	}
+	configFile := filepath.Join(workDir, "nextflow.config")
+	if err := os.WriteFile(configFile, []byte("process.executor = 'local'\n"), 0600); err != nil {
+		return nil, fmt.Errorf("write Nextflow config: %w", err)
+	}
+
+	outDir := filepath.Join(workDir, "output")
+	if err := runEngine("nextflow", workDir, args, []string{"NXF_OFFLINE=true", "NXF_ANSI_LOG=false"},
+		"run", nfFile, "-c", configFile, "--fastq", fastq, "--outdir", outDir); err != nil {
+		return nil, err
+	}
+	return requireOutputs("nextflow", []string{filepath.Join(outDir, readCountFile)})
+}
+
+func executeSnakemakeWorkflow(workDir string, syntheticData *testing.SyntheticData, platform testing.SequencingPlatform, workflow string, args *CommandLineArgs) ([]string, error) {
+	if _, err := writeInputFASTQ(workDir, syntheticData); err != nil {
+		return nil, fmt.Errorf("write input FASTQ: %w", err)
+	}
+	snakeFile := filepath.Join(workDir, "Snakefile")
+	if err := os.WriteFile(snakeFile, []byte(createBasicSnakemake(workflow, string(platform))), 0600); err != nil {
+		return nil, fmt.Errorf("write Snakefile: %w", err)
+	}
+
+	if err := runEngine("snakemake", workDir, args, nil, "--cores", "1", "--snakefile", snakeFile, "--directory", workDir); err != nil {
+		return nil, err
+	}
+	return requireOutputs("snakemake", []string{filepath.Join(workDir, readCountFile)})
+}
+
+// countWorkflowOutcomes counts executed, failed and skipped workflow runs
+// across the engine and platform results.
+func countWorkflowOutcomes(results *WorkflowTestResults) (ran, failed, skipped int) {
+	tally := func(r *WorkflowTestResult) {
+		switch {
+		case r.Skipped:
+			skipped++
+		case r.Success:
+			ran++
+		default:
+			ran++
+			failed++
+		}
+	}
+	for _, e := range results.EngineResults {
+		if !e.Available && len(e.WorkflowResults) == 0 {
+			skipped++
+			continue
+		}
+		for _, r := range e.WorkflowResults {
+			tally(r)
+		}
+	}
+	for _, p := range results.PlatformResults {
+		for _, r := range p.EngineResults {
+			tally(r)
+		}
+	}
+	return ran, failed, skipped
 }
 
 func selectRepresentativeWorkflow(engine string, platform testing.SequencingPlatform, workflows []string) string {
@@ -769,110 +917,146 @@ func selectRepresentativeWorkflow(engine string, platform testing.SequencingPlat
 	return workflows[0]
 }
 
+// wdlIdentifier turns a workflow name into a valid WDL identifier.
+func wdlIdentifier(workflow string) string {
+	var b strings.Builder
+	for i, r := range workflow {
+		switch {
+		case unicode.IsLetter(r) && r < unicode.MaxASCII:
+			if i == 0 {
+				r = unicode.ToUpper(r)
+			}
+			b.WriteRune(r)
+		case unicode.IsDigit(r) && r < unicode.MaxASCII:
+			if i == 0 {
+				b.WriteString("W")
+			}
+			b.WriteRune(r)
+		default:
+			b.WriteRune('_')
+		}
+	}
+	if b.Len() == 0 {
+		return "Workflow"
+	}
+	if s := b.String(); s[0] == '_' {
+		return "W" + s
+	}
+	return b.String()
+}
+
+// createBasicWDL returns a WDL workflow that counts the records in a FASTQ.
 func createBasicWDL(workflow, platform string) string {
 	return fmt.Sprintf(`version 1.0
 
+# %s workflow on %s platform: counts FASTQ records.
 workflow %s {
     input {
+        File fastq
         String sample_name = "synthetic_%s"
     }
-    
-    call ProcessData {
-        input: sample_name = sample_name
+
+    call CountReads {
+        input: fastq = fastq
     }
-    
+
     output {
-        File result = ProcessData.output_file
+        File read_count = CountReads.read_count
     }
 }
 
-task ProcessData {
+task CountReads {
     input {
-        String sample_name
+        File fastq
     }
-    
-    command {
-        echo "Processing ${sample_name}" > output.txt
-    }
-    
+
+    command <<<
+        awk 'END { print NR / 4 }' ~{fastq} > %s
+    >>>
+
     output {
-        File output_file = "output.txt"
+        File read_count = "%s"
     }
-}`, strings.Title(workflow), platform)
+}
+`, workflow, platform, wdlIdentifier(workflow), platform, readCountFile, readCountFile)
 }
 
-func createWDLInputs(workflow, platform string) string {
+// createWDLInputs returns the Cromwell inputs JSON for createBasicWDL.
+func createWDLInputs(workflow, platform, fastqPath string) string {
+	name := wdlIdentifier(workflow)
 	return fmt.Sprintf(`{
+    "%s.fastq": %s,
     "%s.sample_name": "synthetic_%s"
-}`, strings.Title(workflow), platform)
+}`, name, strconv.Quote(fastqPath), name, platform)
 }
 
+// createBasicNextflow returns a Nextflow DSL2 script that counts the records
+// in params.fastq and publishes the count to params.outdir.
 func createBasicNextflow(workflow, platform string) string {
 	return fmt.Sprintf(`#!/usr/bin/env nextflow
+// %s workflow on %s platform: counts FASTQ records.
 
-process processData {
+params.fastq = null
+params.outdir = 'output'
+
+process countReads {
     publishDir params.outdir, mode: 'copy'
-    
+
+    input:
+    path fastq
+
     output:
-    path "results.txt"
-    
+    path "%s"
+
     script:
     """
-    echo "Processing %s data from %s platform" > results.txt
+    awk 'END { print NR / 4 }' ${fastq} > %s
     """
 }
 
 workflow {
-    processData()
-}`, workflow, platform)
+    countReads(Channel.fromPath(params.fastq, checkIfExists: true))
+}
+`, workflow, platform, readCountFile, readCountFile)
 }
 
+// createBasicSnakemake returns a Snakefile that counts the records in reads.fastq.
 func createBasicSnakemake(workflow, platform string) string {
-	return fmt.Sprintf(`rule all:
+	return fmt.Sprintf(`# %s workflow on %s platform: counts FASTQ records.
+rule all:
     input:
-        "output.txt"
+        "%s"
 
-rule process:
+rule count_reads:
+    input:
+        "%s"
     output:
-        "output.txt"
+        "%s"
     shell:
-        "echo 'Processing %s data from %s platform' > {output}"
-`, workflow, platform)
+        "awk 'END {{ print NR / 4 }}' {input} > {output}"
+`, workflow, platform, readCountFile, inputFASTQ, readCountFile)
 }
 
+// calculateDataIntegrity returns the fraction of read-count output files whose
+// count equals the number of reads written. Missing, unreadable or
+// unparseable files count as mismatches; no files gives 0.
 func calculateDataIntegrity(syntheticData *testing.SyntheticData, outputFiles []string) float64 {
-	// Calculate data integrity score based on synthetic data characteristics
-	// and output file presence/validity
-	
-	baseScore := 0.9 // Base integrity score
-	
-	// Adjust based on error rate
-	if syntheticData.ErrorRate < 0.01 {
-		baseScore += 0.05
-	} else if syntheticData.ErrorRate > 0.05 {
-		baseScore -= 0.1
+	if syntheticData == nil || len(outputFiles) == 0 {
+		return 0.0
 	}
-	
-	// Adjust based on output files
-	if len(outputFiles) == 0 {
-		baseScore -= 0.3
-	}
-	
-	// Check if output files exist
+	want := len(syntheticData.Sequences)
+	matched := 0
 	for _, file := range outputFiles {
-		if _, err := os.Stat(file); os.IsNotExist(err) {
-			baseScore -= 0.1
+		content, err := os.ReadFile(file) // #nosec G304 -- engine output inside the test workspace
+		if err != nil {
+			continue
+		}
+		got, err := strconv.ParseFloat(strings.TrimSpace(string(content)), 64)
+		if err == nil && got == float64(want) {
+			matched++
 		}
 	}
-	
-	if baseScore < 0.0 {
-		baseScore = 0.0
-	}
-	if baseScore > 1.0 {
-		baseScore = 1.0
-	}
-	
-	return baseScore
+	return float64(matched) / float64(len(outputFiles))
 }
 
 func calculateOutputAccuracy(platform testing.SequencingPlatform, workflow string, outputFiles []string) float64 {
@@ -954,7 +1138,9 @@ func buildCompatibilityMatrix(results *WorkflowTestResults) {
 
 func findBestWorkflowResult(engineResult *EngineTestResult, platform testing.SequencingPlatform) *WorkflowTestResult {
 	var bestResult *WorkflowTestResult
-	bestScore := 0.0
+	// Start below zero so a failed run (score 0) is still reported in the
+	// matrix as a failure rather than as "not tested".
+	bestScore := -1.0
 	
 	for _, result := range engineResult.WorkflowResults {
 		if result.Platform == platform {
@@ -1063,6 +1249,10 @@ func printTestSummary(results *WorkflowTestResults, args *CommandLineArgs) {
 	
 	for _, engine := range results.Engines {
 		if result, exists := results.EngineResults[engine]; exists {
+			if !result.Available && len(result.WorkflowResults) == 0 {
+				fmt.Printf("%-15s %-10s %s\n", engine, "SKIPPED", "not installed")
+				continue
+			}
 			available := "❌"
 			if result.Available {
 				available = "✅"
@@ -1110,7 +1300,9 @@ func printTestSummary(results *WorkflowTestResults, args *CommandLineArgs) {
 		for _, engine := range results.Engines {
 			if engineMatrix, exists := results.CompatibilityMatrix[engine]; exists {
 				if result, exists := engineMatrix[platform]; exists {
-					if result.Success {
+					if result.Skipped {
+						fmt.Printf(" %-12s", "skipped")
+					} else if result.Success {
 						fmt.Printf(" %-12s", "✅")
 					} else {
 						fmt.Printf(" %-12s", "❌")
@@ -1128,7 +1320,9 @@ func printTestSummary(results *WorkflowTestResults, args *CommandLineArgs) {
 	fmt.Println("\n" + strings.Repeat("=", 80))
 	
 	// Final assessment
-	if results.OverallScore >= 90.0 {
+	if ran, _, _ := countWorkflowOutcomes(results); ran == 0 {
+		fmt.Println("➖ NOT TESTED: no workflow engine was available, so nothing was executed")
+	} else if results.OverallScore >= 90.0 {
 		fmt.Println("🎉 EXCELLENT: All workflow engines show outstanding compatibility!")
 	} else if results.OverallScore >= 75.0 {
 		fmt.Println("✅ GOOD: Most workflow engines are compatible with minor issues")

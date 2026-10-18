@@ -1,10 +1,13 @@
 package integration
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -14,6 +17,14 @@ import (
 
 	pt "github.com/scttfrdmn/phantom-science/internal/testing"
 )
+
+// These tests run real workflow engines on synthetic reads. Each test skips
+// when its engine, or a tool its workflow calls, is not installed; once a
+// workflow runs, any failure fails the test. nf-core pipelines download
+// pipelines and containers, so they only run when PHANTOM_NFCORE_TESTS=1.
+
+// workflowTimeout bounds a single engine run.
+const workflowTimeout = 30 * time.Minute
 
 // TestCromwellWDLIntegration tests integration with Cromwell workflow engine
 func TestCromwellWDLIntegration(t *testing.T) {
@@ -31,22 +42,25 @@ func TestCromwellWDLIntegration(t *testing.T) {
 	// Test different genomics workflows
 	workflows := []WDLWorkflow{
 		{
-			Name:        "GATK_Germline_Variants",
-			Description: "GATK best practices germline variant calling",
-			WDLFile:     "gatk_germline.wdl",
-			Platforms:   []pt.SequencingPlatform{pt.IlluminaNovaSeq6000, pt.IlluminaNextSeq2000},
+			Name:          "GATK_Germline_Variants",
+			Description:   "GATK best practices germline variant calling",
+			WDLFile:       "gatk_germline.wdl",
+			Platforms:     []pt.SequencingPlatform{pt.IlluminaNovaSeq6000, pt.IlluminaNextSeq2000},
+			RequiredTools: []string{"bwa", "samtools", "picard", "gatk"},
 		},
 		{
-			Name:        "PacBio_HiFi_Assembly",
-			Description: "PacBio HiFi genome assembly workflow",
-			WDLFile:     "pacbio_hifi_assembly.wdl",
-			Platforms:   []pt.SequencingPlatform{pt.PacBioRevio},
+			Name:          "PacBio_HiFi_Assembly",
+			Description:   "PacBio HiFi genome assembly workflow",
+			WDLFile:       "pacbio_hifi_assembly.wdl",
+			Platforms:     []pt.SequencingPlatform{pt.PacBioRevio},
+			RequiredTools: []string{"hifiasm", "quast"},
 		},
 		{
-			Name:        "ONT_Long_Read_Variants",
-			Description: "Oxford Nanopore long-read variant calling",
-			WDLFile:     "ont_longread_variants.wdl",
-			Platforms:   []pt.SequencingPlatform{pt.ONTPromethION24},
+			Name:          "ONT_Long_Read_Variants",
+			Description:   "Oxford Nanopore long-read alignment (first stage of variant calling)",
+			WDLFile:       "ont_longread_variants.wdl",
+			Platforms:     []pt.SequencingPlatform{pt.ONTPromethION24},
+			RequiredTools: []string{"minimap2", "samtools"},
 		},
 	}
 
@@ -70,8 +84,12 @@ func TestNextflowIntegration(t *testing.T) {
 	framework := pt.NewE2EFramework()
 	require.NotNil(t, framework)
 
-	// Test nf-core pipelines with synthetic data
-	nfCoreWorkflows := []NextflowWorkflow{
+	workflows := []NextflowWorkflow{
+		{
+			Name:        "local/read_count",
+			Description: "Local pipeline that counts FASTQ records",
+			Platforms:   []pt.SequencingPlatform{pt.IlluminaNovaSeq6000, pt.PacBioRevio, pt.ONTPromethION24},
+		},
 		{
 			Name:        "nf-core/sarek",
 			Description: "Comprehensive variant calling and annotation pipeline",
@@ -95,7 +113,7 @@ func TestNextflowIntegration(t *testing.T) {
 		},
 	}
 
-	for _, workflow := range nfCoreWorkflows {
+	for _, workflow := range workflows {
 		t.Run(workflow.Name, func(t *testing.T) {
 			testNextflowWorkflow(t, framework, workflow)
 		})
@@ -115,25 +133,27 @@ func TestSnakemakeIntegration(t *testing.T) {
 	framework := pt.NewE2EFramework()
 	require.NotNil(t, framework)
 
-	// Test custom Snakemake workflows
 	snakemakeWorkflows := []SnakemakeWorkflow{
 		{
-			Name:        "Multi_Platform_QC",
-			Description: "Quality control across multiple sequencing platforms",
-			Snakefile:   "multi_platform_qc.smk",
-			Platforms:   []pt.SequencingPlatform{pt.IlluminaNovaSeq6000, pt.PacBioRevio, pt.ONTPromethION24},
+			Name:          "Multi_Platform_QC",
+			Description:   "Quality control across multiple sequencing platforms",
+			Snakefile:     "multi_platform_qc.smk",
+			Platforms:     []pt.SequencingPlatform{pt.IlluminaNovaSeq6000, pt.PacBioRevio, pt.ONTPromethION24},
+			RequiredTools: []string{"fastqc", "multiqc"},
 		},
 		{
-			Name:        "Population_Genomics",
-			Description: "Population genomics analysis workflow",
-			Snakefile:   "population_genomics.smk",
-			Platforms:   []pt.SequencingPlatform{pt.IlluminaNovaSeq6000},
+			Name:          "Population_Genomics",
+			Description:   "VCF quality filtering and summary statistics",
+			Snakefile:     "population_genomics.smk",
+			Platforms:     []pt.SequencingPlatform{pt.IlluminaNovaSeq6000},
+			RequiredTools: []string{"bcftools"},
 		},
 		{
-			Name:        "Structural_Variants",
-			Description: "Structural variant detection workflow",
-			Snakefile:   "structural_variants.smk",
-			Platforms:   []pt.SequencingPlatform{pt.PacBioRevio, pt.ONTPromethION24},
+			Name:          "Structural_Variants",
+			Description:   "Long-read alignment (first stage of structural variant detection)",
+			Snakefile:     "structural_variants.smk",
+			Platforms:     []pt.SequencingPlatform{pt.PacBioRevio, pt.ONTPromethION24},
+			RequiredTools: []string{"minimap2", "samtools"},
 		},
 	}
 
@@ -144,7 +164,8 @@ func TestSnakemakeIntegration(t *testing.T) {
 	}
 }
 
-// TestWorkflowCompatibilityMatrix tests compatibility across workflow engines
+// TestWorkflowCompatibilityMatrix runs a read-count workflow on every
+// installed engine for each platform and checks the count matches.
 func TestWorkflowCompatibilityMatrix(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping workflow compatibility matrix tests in short mode")
@@ -153,7 +174,6 @@ func TestWorkflowCompatibilityMatrix(t *testing.T) {
 	framework := pt.NewE2EFramework()
 	require.NotNil(t, framework)
 
-	// Test matrix of platforms vs workflow engines
 	platforms := []pt.SequencingPlatform{
 		pt.IlluminaNovaSeq6000,
 		pt.PacBioRevio,
@@ -178,36 +198,45 @@ func TestWorkflowCompatibilityMatrix(t *testing.T) {
 			t.Run(fmt.Sprintf("%s_%s", engine, platform), func(t *testing.T) {
 				result := testWorkflowCompatibility(t, framework, engine, platform)
 				compatibilityMatrix[engine][platform] = result
+				require.True(t, result.Success, "%s on %s failed: %s",
+					engine, platform, strings.Join(result.ErrorMessages, "; "))
+				assert.Equal(t, 1.0, result.QualityMetrics.DataIntegrity,
+					"%s should report the number of reads written", engine)
 			})
 		}
 	}
 
-	// Generate compatibility report
+	if len(compatibilityMatrix) == 0 {
+		t.Skip("no workflow engine installed")
+	}
 	generateCompatibilityReport(t, compatibilityMatrix)
 }
 
 // Data structures for workflow testing
 
 type WDLWorkflow struct {
-	Name        string
-	Description string
-	WDLFile     string
-	Platforms   []pt.SequencingPlatform
+	Name          string
+	Description   string
+	WDLFile       string
+	Platforms     []pt.SequencingPlatform
+	RequiredTools []string
 }
 
 type NextflowWorkflow struct {
 	Name        string
 	Description string
-	Pipeline    string
-	Version     string
-	Platforms   []pt.SequencingPlatform
+	// Pipeline is a remote nf-core pipeline; empty means the local read-count script.
+	Pipeline  string
+	Version   string
+	Platforms []pt.SequencingPlatform
 }
 
 type SnakemakeWorkflow struct {
-	Name        string
-	Description string
-	Snakefile   string
-	Platforms   []pt.SequencingPlatform
+	Name          string
+	Description   string
+	Snakefile     string
+	Platforms     []pt.SequencingPlatform
+	RequiredTools []string
 }
 
 type WorkflowCompatibilityResult struct {
@@ -215,18 +244,19 @@ type WorkflowCompatibilityResult struct {
 	Engine         string
 	Success        bool
 	ExecutionTime  time.Duration
-	MemoryUsageMB  int64
-	CPUUsagePercent float64
 	OutputFiles    []string
 	ErrorMessages  []string
 	QualityMetrics WorkflowQualityMetrics
 }
 
+// WorkflowQualityMetrics holds values measured from a workflow run.
 type WorkflowQualityMetrics struct {
-	DataIntegrity     float64 // 0-1 score for data integrity
-	ProcessingSpeed   float64 // MB/s throughput
-	ResourceEfficiency float64 // 0-1 score for resource usage
-	OutputAccuracy    float64 // 0-1 score comparing to expected outputs
+	// DataIntegrity is the fraction of expected outputs that were produced
+	// and are valid (non-empty, or matching the input read count).
+	DataIntegrity float64
+	// ProcessingSpeed is input megabytes divided by wall-clock seconds,
+	// including engine start-up.
+	ProcessingSpeed float64
 }
 
 type WorkflowResults struct {
@@ -236,35 +266,119 @@ type WorkflowResults struct {
 	Success         bool
 	ExecutionTime   time.Duration
 	OutputDirectory string
-	LogFile         string
-	Metrics         WorkflowQualityMetrics
-	ValidationResults map[string]float64
+	OutputFiles     []string
+	// EngineOutput is the tail of the engine's combined stdout/stderr.
+	EngineOutput string
+	Metrics      WorkflowQualityMetrics
+}
+
+// workflowInputs are the synthetic input files written for a workflow.
+type workflowInputs struct {
+	R1, R2, Reference, VCF string
+	Reads                  int
+	Bytes                  int64
 }
 
 // Implementation functions
 
+// cromwellCommand returns the program and leading arguments that invoke
+// Cromwell: a "cromwell" executable, or "java -jar $CROMWELL_JAR".
+func cromwellCommand() (string, []string, bool) {
+	if path, err := exec.LookPath("cromwell"); err == nil {
+		return path, nil, true
+	}
+	if jar := os.Getenv("CROMWELL_JAR"); jar != "" {
+		if _, err := os.Stat(jar); err == nil {
+			if java, err := exec.LookPath("java"); err == nil {
+				return java, []string{"-jar", jar}, true
+			}
+		}
+	}
+	return "", nil, false
+}
+
 func isWorkflowEngineAvailable(engine string) bool {
 	switch engine {
 	case "cromwell":
-		// Check for Cromwell JAR or cromwell command
-		if _, err := exec.LookPath("cromwell"); err == nil {
-			return true
-		}
-		// Check for java and cromwell.jar
-		if _, err := exec.LookPath("java"); err == nil {
-			// Would check for cromwell.jar in common locations
-			return false // Simplified for now
-		}
-		return false
-	case "nextflow":
-		_, err := exec.LookPath("nextflow")
-		return err == nil
-	case "snakemake":
-		_, err := exec.LookPath("snakemake")
-		return err == nil
+		_, _, ok := cromwellCommand()
+		return ok
+	case "nextflow", "snakemake":
+		return isToolAvailable(engine)
 	default:
 		return false
 	}
+}
+
+// skipIfMissingTools skips the test when any tool is not on PATH.
+func skipIfMissingTools(t *testing.T, tools []string) {
+	t.Helper()
+	for _, tool := range tools {
+		if !isToolAvailable(tool) {
+			t.Skipf("%s not installed - required by this workflow", tool)
+		}
+	}
+}
+
+// writeWorkflowInputs writes FASTQ, reference and VCF files for data into dir.
+func writeWorkflowInputs(t *testing.T, framework *pt.E2EFramework, data *pt.SyntheticData, dir string) workflowInputs {
+	t.Helper()
+	require.NoError(t, os.MkdirAll(dir, 0750))
+	in := workflowInputs{
+		R1:        filepath.Join(dir, "synthetic_R1.fastq"),
+		R2:        filepath.Join(dir, "synthetic_R2.fastq"),
+		Reference: filepath.Join(dir, "reference.fasta"),
+		VCF:       filepath.Join(dir, "variants.vcf"),
+		Reads:     len(data.Sequences),
+	}
+	require.NoError(t, framework.WriteFASTQ(data, in.R1, in.R2))
+	require.NoError(t, framework.WriteReferenceFromData(data, in.Reference))
+	require.NoError(t, framework.WriteVCF(data, in.VCF))
+	if info, err := os.Stat(in.R1); err == nil {
+		in.Bytes = info.Size()
+	}
+	return in
+}
+
+// runEngine runs a command in dir and returns the tail of its output.
+func runEngine(dir string, env []string, program string, args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), workflowTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, program, args...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), env...)
+	out, err := cmd.CombinedOutput()
+	return tailLines(string(out), 40), err
+}
+
+// outputIntegrity returns the fraction of files that exist and are non-empty.
+func outputIntegrity(files []string) float64 {
+	if len(files) == 0 {
+		return 0
+	}
+	ok := 0
+	for _, f := range files {
+		if info, err := os.Stat(f); err == nil && info.Size() > 0 {
+			ok++
+		}
+	}
+	return float64(ok) / float64(len(files))
+}
+
+// readCountMatches reports whether file holds the number want.
+func readCountMatches(file string, want int) bool {
+	content, err := os.ReadFile(file) // #nosec G304 -- workflow output in a test temp dir
+	if err != nil {
+		return false
+	}
+	got, err := strconv.ParseFloat(strings.TrimSpace(string(content)), 64)
+	return err == nil && got == float64(want)
+}
+
+func processingSpeed(bytes int64, elapsed time.Duration) float64 {
+	if elapsed <= 0 {
+		return 0
+	}
+	return float64(bytes) / (1024 * 1024) / elapsed.Seconds()
 }
 
 func testCromwellWorkflow(t *testing.T, framework *pt.E2EFramework, workflow WDLWorkflow) {
@@ -272,34 +386,27 @@ func testCromwellWorkflow(t *testing.T, framework *pt.E2EFramework, workflow WDL
 
 	for _, platform := range workflow.Platforms {
 		t.Run(string(platform), func(t *testing.T) {
-			// Generate synthetic data for the platform
+			skipIfMissingTools(t, workflow.RequiredTools)
+
 			config := framework.CreatePlatformConfig(platform, "CEU")
 			syntheticData, err := framework.GenerateSyntheticData(config)
 			require.NoError(t, err)
 
-			// Create workflow directory
-			workDir, err := os.MkdirTemp("", fmt.Sprintf("cromwell_%s_%s", workflow.Name, platform))
-			require.NoError(t, err)
-			defer os.RemoveAll(workDir)
+			workDir := t.TempDir()
+			inputs := writeWorkflowInputs(t, framework, syntheticData, filepath.Join(workDir, "data"))
 
-			// Create WDL workflow file
 			wdlFile := filepath.Join(workDir, workflow.WDLFile)
-			err = createWDLWorkflow(wdlFile, workflow.Name, platform)
-			require.NoError(t, err)
+			require.NoError(t, createWDLWorkflow(wdlFile, workflow.Name, platform))
 
-			// Create inputs JSON
 			inputsFile := filepath.Join(workDir, "inputs.json")
-			err = createWDLInputs(inputsFile, syntheticData, platform)
-			require.NoError(t, err)
+			require.NoError(t, createWDLInputs(inputsFile, workflow.Name, inputs, platform))
 
-			// Run Cromwell workflow
-			result := runCromwellWorkflow(t, workDir, wdlFile, inputsFile)
+			result := runCromwellWorkflow(t, workDir, wdlFile, inputsFile, workflow.Name, platform, inputs.Bytes)
 
-			// Validate workflow results
 			validateWorkflowResults(t, result, workflow.Name, platform)
 
-			t.Logf("✅ Cromwell workflow %s completed for %s: Success=%v, Time=%v", 
-				workflow.Name, platform, result.Success, result.ExecutionTime)
+			t.Logf("✅ Cromwell workflow %s completed for %s in %v",
+				workflow.Name, platform, result.ExecutionTime)
 		})
 	}
 }
@@ -309,29 +416,28 @@ func testNextflowWorkflow(t *testing.T, framework *pt.E2EFramework, workflow Nex
 
 	for _, platform := range workflow.Platforms {
 		t.Run(string(platform), func(t *testing.T) {
-			// Generate synthetic data
+			if workflow.Pipeline != "" {
+				if os.Getenv("PHANTOM_NFCORE_TESTS") != "1" {
+					t.Skip("nf-core pipelines need network access and a container runtime; set PHANTOM_NFCORE_TESTS=1 to run")
+				}
+				skipIfMissingTools(t, []string{"docker"})
+			}
+
 			config := framework.CreatePlatformConfig(platform, "CEU")
 			syntheticData, err := framework.GenerateSyntheticData(config)
 			require.NoError(t, err)
 
-			// Create workflow directory
-			workDir, err := os.MkdirTemp("", fmt.Sprintf("nextflow_%s_%s", 
-				strings.ReplaceAll(workflow.Name, "/", "_"), platform))
-			require.NoError(t, err)
-			defer os.RemoveAll(workDir)
+			workDir := t.TempDir()
+			inputs := writeWorkflowInputs(t, framework, syntheticData, filepath.Join(workDir, "data"))
 
-			// Prepare input files
-			err = prepareNextflowInputs(workDir, syntheticData, platform)
-			require.NoError(t, err)
+			require.NoError(t, prepareNextflowInputs(workDir, inputs, workflow, platform))
 
-			// Run Nextflow workflow
-			result := runNextflowWorkflow(t, workDir, workflow, platform)
+			result := runNextflowWorkflow(t, workDir, workflow, platform, inputs)
 
-			// Validate results
 			validateWorkflowResults(t, result, workflow.Name, platform)
 
-			t.Logf("✅ Nextflow workflow %s completed for %s: Success=%v, Time=%v", 
-				workflow.Name, platform, result.Success, result.ExecutionTime)
+			t.Logf("✅ Nextflow workflow %s completed for %s in %v",
+				workflow.Name, platform, result.ExecutionTime)
 		})
 	}
 }
@@ -341,33 +447,25 @@ func testSnakemakeWorkflow(t *testing.T, framework *pt.E2EFramework, workflow Sn
 
 	for _, platform := range workflow.Platforms {
 		t.Run(string(platform), func(t *testing.T) {
-			// Generate synthetic data
+			skipIfMissingTools(t, workflow.RequiredTools)
+
 			config := framework.CreatePlatformConfig(platform, "CEU")
 			syntheticData, err := framework.GenerateSyntheticData(config)
 			require.NoError(t, err)
 
-			// Create workflow directory
-			workDir, err := os.MkdirTemp("", fmt.Sprintf("snakemake_%s_%s", workflow.Name, platform))
-			require.NoError(t, err)
-			defer os.RemoveAll(workDir)
+			workDir := t.TempDir()
+			inputs := writeWorkflowInputs(t, framework, syntheticData, filepath.Join(workDir, "data"))
 
-			// Create Snakefile
 			snakeFile := filepath.Join(workDir, workflow.Snakefile)
-			err = createSnakemakeWorkflow(snakeFile, workflow.Name, platform)
+			expected, err := createSnakemakeWorkflow(snakeFile, workflow.Name, platform)
 			require.NoError(t, err)
 
-			// Prepare input data
-			err = prepareSnakemakeInputs(workDir, syntheticData, platform)
-			require.NoError(t, err)
+			result := runSnakemakeWorkflow(t, workDir, snakeFile, workflow.Name, platform, expected, inputs.Bytes)
 
-			// Run Snakemake workflow
-			result := runSnakemakeWorkflow(t, workDir, snakeFile, platform)
-
-			// Validate results
 			validateWorkflowResults(t, result, workflow.Name, platform)
 
-			t.Logf("✅ Snakemake workflow %s completed for %s: Success=%v, Time=%v", 
-				workflow.Name, platform, result.Success, result.ExecutionTime)
+			t.Logf("✅ Snakemake workflow %s completed for %s in %v",
+				workflow.Name, platform, result.ExecutionTime)
 		})
 	}
 }
@@ -376,42 +474,213 @@ func testWorkflowCompatibility(t *testing.T, framework *pt.E2EFramework, engine 
 	t.Logf("🧪 Testing %s compatibility with %s", engine, platform)
 
 	start := time.Now()
-	
-	// Generate synthetic data
+	result := WorkflowCompatibilityResult{Platform: platform, Engine: engine}
+
 	config := framework.CreatePlatformConfig(platform, "CEU")
 	syntheticData, err := framework.GenerateSyntheticData(config)
-	
-	result := WorkflowCompatibilityResult{
-		Platform: platform,
-		Engine:   engine,
-		Success:  err == nil,
-	}
-
 	if err != nil {
 		result.ErrorMessages = append(result.ErrorMessages, err.Error())
 		return result
 	}
 
-	// Create test workflow based on engine
-	workDir, err := os.MkdirTemp("", fmt.Sprintf("compat_%s_%s", engine, platform))
-	if err != nil {
-		result.ErrorMessages = append(result.ErrorMessages, err.Error())
-		return result
-	}
-	defer os.RemoveAll(workDir)
+	workDir := t.TempDir()
+	inputs := writeWorkflowInputs(t, framework, syntheticData, filepath.Join(workDir, "data"))
 
-	// Run basic compatibility test
-	success := runCompatibilityTest(t, workDir, engine, platform, syntheticData)
-	
-	result.Success = success
+	outputs, err := runReadCountWorkflow(workDir, engine, inputs)
 	result.ExecutionTime = time.Since(start)
-	result.QualityMetrics = calculateQualityMetrics(syntheticData, platform)
-
-	if success {
-		result.OutputFiles = []string{"output.bam", "variants.vcf", "metrics.txt"}
+	if err != nil {
+		result.ErrorMessages = append(result.ErrorMessages, err.Error())
+		return result
 	}
 
+	result.OutputFiles = outputs
+	matched := 0
+	for _, f := range outputs {
+		if readCountMatches(f, inputs.Reads) {
+			matched++
+		}
+	}
+	if len(outputs) > 0 {
+		result.QualityMetrics.DataIntegrity = float64(matched) / float64(len(outputs))
+	}
+	result.QualityMetrics.ProcessingSpeed = processingSpeed(inputs.Bytes, result.ExecutionTime)
+	result.Success = result.QualityMetrics.DataIntegrity == 1.0
+	if !result.Success {
+		result.ErrorMessages = append(result.ErrorMessages,
+			fmt.Sprintf("read count output %v does not match %d reads", outputs, inputs.Reads))
+	}
 	return result
+}
+
+// runReadCountWorkflow runs a minimal read-count workflow on engine and
+// returns the read-count output files.
+func runReadCountWorkflow(workDir, engine string, inputs workflowInputs) ([]string, error) {
+	switch engine {
+	case "cromwell":
+		wdl := filepath.Join(workDir, "read_count.wdl")
+		if err := os.WriteFile(wdl, []byte(readCountWDL), 0600); err != nil {
+			return nil, err
+		}
+		inputsFile := filepath.Join(workDir, "read_count_inputs.json")
+		if err := writeJSON(inputsFile, map[string]interface{}{"ReadCount.fastq": inputs.R1}); err != nil {
+			return nil, err
+		}
+		outputs, out, err := cromwellRun(workDir, wdl, inputsFile)
+		if err != nil {
+			return nil, fmt.Errorf("cromwell run: %v\n%s", err, out)
+		}
+		return outputs, nil
+	case "nextflow":
+		script := filepath.Join(workDir, "read_count.nf")
+		if err := os.WriteFile(script, []byte(readCountNextflow), 0600); err != nil {
+			return nil, err
+		}
+		outDir := filepath.Join(workDir, "results")
+		out, err := runEngine(workDir, nextflowEnv, "nextflow", "run", script, "--fastq", inputs.R1, "--outdir", outDir)
+		if err != nil {
+			return nil, fmt.Errorf("nextflow run: %v\n%s", err, out)
+		}
+		return []string{filepath.Join(outDir, "read_count.txt")}, nil
+	case "snakemake":
+		snakefile := filepath.Join(workDir, "Snakefile")
+		content := fmt.Sprintf(readCountSnakemake, inputs.R1)
+		if err := os.WriteFile(snakefile, []byte(content), 0600); err != nil {
+			return nil, err
+		}
+		out, err := runEngine(workDir, nil, "snakemake", "-s", snakefile, "--cores", "1", "--directory", workDir)
+		if err != nil {
+			return nil, fmt.Errorf("snakemake: %v\n%s", err, out)
+		}
+		return []string{filepath.Join(workDir, "read_count.txt")}, nil
+	default:
+		return nil, fmt.Errorf("unsupported engine %s", engine)
+	}
+}
+
+var nextflowEnv = []string{"NXF_ANSI_LOG=false"}
+
+const readCountWDL = `version 1.0
+
+workflow ReadCount {
+    input {
+        File fastq
+    }
+
+    call CountReads {
+        input: fastq = fastq
+    }
+
+    output {
+        File read_count = CountReads.read_count
+    }
+}
+
+task CountReads {
+    input {
+        File fastq
+    }
+
+    command <<<
+        awk 'END { print NR / 4 }' ~{fastq} > read_count.txt
+    >>>
+
+    output {
+        File read_count = "read_count.txt"
+    }
+}
+`
+
+const readCountNextflow = `#!/usr/bin/env nextflow
+
+params.fastq = null
+params.outdir = 'results'
+
+process countReads {
+    publishDir params.outdir, mode: 'copy'
+
+    input:
+    path fastq
+
+    output:
+    path "read_count.txt"
+
+    script:
+    """
+    awk 'END { print NR / 4 }' ${fastq} > read_count.txt
+    """
+}
+
+workflow {
+    countReads(Channel.fromPath(params.fastq, checkIfExists: true))
+}
+`
+
+// readCountSnakemake takes the FASTQ path via fmt.Sprintf.
+const readCountSnakemake = `rule all:
+    input:
+        "read_count.txt"
+
+rule count_reads:
+    input:
+        %q
+    output:
+        "read_count.txt"
+    shell:
+        "awk 'END {{ print NR / 4 }}' {input} > {output}"
+`
+
+func writeJSON(path string, v interface{}) error {
+	b, err := json.MarshalIndent(v, "", "    ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, b, 0600)
+}
+
+// cromwellRun runs a WDL with Cromwell and returns the output file paths
+// listed in its metadata.
+func cromwellRun(workDir, wdlFile, inputsFile string) ([]string, string, error) {
+	program, lead, ok := cromwellCommand()
+	if !ok {
+		return nil, "", fmt.Errorf("cromwell not available")
+	}
+	metadata := filepath.Join(workDir, "metadata.json")
+	args := append(lead, "run", wdlFile, "-i", inputsFile, "-m", metadata)
+	out, err := runEngine(workDir, nil, program, args...)
+	if err != nil {
+		return nil, out, err
+	}
+
+	raw, err := os.ReadFile(metadata) // #nosec G304 -- cromwell metadata in a test temp dir
+	if err != nil {
+		return nil, out, fmt.Errorf("read cromwell metadata: %w", err)
+	}
+	var meta struct {
+		Status  string                 `json:"status"`
+		Outputs map[string]interface{} `json:"outputs"`
+	}
+	if err := json.Unmarshal(raw, &meta); err != nil {
+		return nil, out, fmt.Errorf("parse cromwell metadata: %w", err)
+	}
+	if meta.Status != "Succeeded" {
+		return nil, out, fmt.Errorf("cromwell workflow status %q", meta.Status)
+	}
+	var files []string
+	var collect func(v interface{})
+	collect = func(v interface{}) {
+		switch x := v.(type) {
+		case string:
+			files = append(files, x)
+		case []interface{}:
+			for _, e := range x {
+				collect(e)
+			}
+		}
+	}
+	for _, v := range meta.Outputs {
+		collect(v)
+	}
+	return files, out, nil
 }
 
 // Workflow creation functions
@@ -465,17 +734,20 @@ task AlignReads {
         File reference
         String sample_name
     }
-    
-    command {
-        bwa mem -R "@RG\tID:${sample_name}\tSM:${sample_name}" \
-            ${reference} ${fastq_r1} ${fastq_r2} | \
-            samtools sort -o ${sample_name}.bam
-        samtools index ${sample_name}.bam
-    }
-    
+
+    command <<<
+        set -euo pipefail
+        cp ~{reference} ref.fasta
+        bwa index ref.fasta
+        bwa mem -R '@RG\tID:~{sample_name}\tSM:~{sample_name}\tPL:ILLUMINA' \
+            ref.fasta ~{fastq_r1} ~{fastq_r2} | \
+            samtools sort -o ~{sample_name}.bam
+        samtools index ~{sample_name}.bam
+    >>>
+
     output {
-        File aligned_bam = "${sample_name}.bam"
-        File aligned_bai = "${sample_name}.bam.bai"
+        File aligned_bam = "~{sample_name}.bam"
+        File aligned_bai = "~{sample_name}.bam.bai"
     }
 }
 
@@ -484,17 +756,18 @@ task MarkDuplicates {
         File input_bam
         String sample_name
     }
-    
-    command {
+
+    command <<<
+        set -euo pipefail
         picard MarkDuplicates \
-            I=${input_bam} \
-            O=${sample_name}_dedup.bam \
-            M=${sample_name}_metrics.txt
-    }
-    
+            I=~{input_bam} \
+            O=~{sample_name}_dedup.bam \
+            M=~{sample_name}_metrics.txt
+    >>>
+
     output {
-        File dedup_bam = "${sample_name}_dedup.bam"
-        File metrics = "${sample_name}_metrics.txt"
+        File dedup_bam = "~{sample_name}_dedup.bam"
+        File metrics = "~{sample_name}_metrics.txt"
     }
 }
 
@@ -504,16 +777,22 @@ task HaplotypeCaller {
         File reference
         String sample_name
     }
-    
-    command {
+
+    command <<<
+        set -euo pipefail
+        cp ~{reference} ref.fasta
+        samtools faidx ref.fasta
+        picard CreateSequenceDictionary R=ref.fasta O=ref.dict
+        cp ~{input_bam} in.bam
+        samtools index in.bam
         gatk HaplotypeCaller \
-            -R ${reference} \
-            -I ${input_bam} \
-            -O ${sample_name}.vcf
-    }
-    
+            -R ref.fasta \
+            -I in.bam \
+            -O ~{sample_name}.vcf
+    >>>
+
     output {
-        File output_vcf = "${sample_name}.vcf"
+        File output_vcf = "~{sample_name}.vcf"
     }
 }`
 
@@ -549,13 +828,15 @@ task HifiAsmAssembly {
         Array[File] reads
         String sample_name
     }
-    
-    command {
-        hifiasm -o ${sample_name} ${sep=' ' reads}
-    }
-    
+
+    command <<<
+        set -euo pipefail
+        hifiasm -o ~{sample_name} ~{sep=' ' reads}
+        awk '/^S/{print ">"$2; print $3}' ~{sample_name}.bp.p_ctg.gfa > ~{sample_name}.bp.p_ctg.fa
+    >>>
+
     output {
-        File primary_assembly = "${sample_name}.bp.p_ctg.fa"
+        File primary_assembly = "~{sample_name}.bp.p_ctg.fa"
     }
 }
 
@@ -564,69 +845,99 @@ task AssemblyQC {
         File assembly
         String sample_name
     }
-    
-    command {
-        quast ${assembly} -o ${sample_name}_qc
-    }
-    
+
+    command <<<
+        quast ~{assembly} -o ~{sample_name}_qc
+    >>>
+
     output {
-        File stats = "${sample_name}_qc/report.txt"
+        File stats = "~{sample_name}_qc/report.txt"
     }
 }`
 
-	default:
+	case "ONT_Long_Read_Variants":
 		wdlContent = `version 1.0
 
-workflow BasicWorkflow {
+workflow ONTLongReadVariants {
     input {
-        File input_file
+        File reads
+        File reference
         String sample_name
     }
 
-    call ProcessFile {
+    call AlignLongReads {
         input:
-            input_file = input_file,
+            reads = reads,
+            reference = reference,
             sample_name = sample_name
     }
 
     output {
-        File output_file = ProcessFile.output
+        File aligned_bam = AlignLongReads.bam
+        File flagstat = AlignLongReads.flagstat
     }
 }
 
-task ProcessFile {
+task AlignLongReads {
     input {
-        File input_file
+        File reads
+        File reference
         String sample_name
     }
-    
-    command {
-        cp ${input_file} ${sample_name}_processed.txt
-    }
-    
+
+    command <<<
+        set -euo pipefail
+        minimap2 -ax map-ont ~{reference} ~{reads} | samtools sort -o ~{sample_name}.bam
+        samtools flagstat ~{sample_name}.bam > ~{sample_name}.flagstat.txt
+    >>>
+
     output {
-        File output = "${sample_name}_processed.txt"
+        File bam = "~{sample_name}.bam"
+        File flagstat = "~{sample_name}.flagstat.txt"
     }
 }`
+
+	default:
+		return fmt.Errorf("no WDL defined for workflow %s", workflowName)
 	}
 
-	return os.WriteFile(wdlFile, []byte(wdlContent), 0644)
+	return os.WriteFile(wdlFile, []byte(wdlContent), 0600)
 }
 
-func createWDLInputs(inputsFile string, syntheticData *pt.SyntheticData, platform pt.SequencingPlatform) error {
-	// Create JSON inputs file for WDL workflow
-	inputs := fmt.Sprintf(`{
-    "GATKGermlineVariants.fastq_r1": "synthetic_R1.fastq",
-    "GATKGermlineVariants.fastq_r2": "synthetic_R2.fastq",
-    "GATKGermlineVariants.reference_genome": "reference.fasta",
-    "GATKGermlineVariants.sample_name": "synthetic_%s"
-}`, platform)
-
-	return os.WriteFile(inputsFile, []byte(inputs), 0644)
+// createWDLInputs writes the Cromwell inputs JSON for workflowName.
+func createWDLInputs(inputsFile, workflowName string, in workflowInputs, platform pt.SequencingPlatform) error {
+	sample := fmt.Sprintf("synthetic_%s", platform)
+	var inputs map[string]interface{}
+	switch workflowName {
+	case "GATK_Germline_Variants":
+		inputs = map[string]interface{}{
+			"GATKGermlineVariants.fastq_r1":         in.R1,
+			"GATKGermlineVariants.fastq_r2":         in.R2,
+			"GATKGermlineVariants.reference_genome": in.Reference,
+			"GATKGermlineVariants.sample_name":      sample,
+		}
+	case "PacBio_HiFi_Assembly":
+		inputs = map[string]interface{}{
+			"PacBioHiFiAssembly.hifi_reads":  []string{in.R1},
+			"PacBioHiFiAssembly.sample_name": sample,
+		}
+	case "ONT_Long_Read_Variants":
+		inputs = map[string]interface{}{
+			"ONTLongReadVariants.reads":       in.R1,
+			"ONTLongReadVariants.reference":   in.Reference,
+			"ONTLongReadVariants.sample_name": sample,
+		}
+	default:
+		return fmt.Errorf("no inputs defined for workflow %s", workflowName)
+	}
+	return writeJSON(inputsFile, inputs)
 }
 
-func createSnakemakeWorkflow(snakeFile, workflowName string, platform pt.SequencingPlatform) error {
+// createSnakemakeWorkflow writes the Snakefile for workflowName and returns
+// the output files (relative to the working directory) it must produce.
+func createSnakemakeWorkflow(snakeFile, workflowName string, platform pt.SequencingPlatform) ([]string, error) {
 	var snakemakeContent string
+	var expected []string
 
 	switch workflowName {
 	case "Multi_Platform_QC":
@@ -642,7 +953,7 @@ rule fastqc:
         "qc/{sample}_R1_fastqc.html",
         "qc/{sample}_R2_fastqc.html"
     shell:
-        "fastqc {input} -o qc/"
+        "mkdir -p qc && fastqc {input} -o qc/"
 
 rule multiqc:
     input:
@@ -650,13 +961,14 @@ rule multiqc:
     output:
         "results/qc_report.html"
     shell:
-        "multiqc qc/ -o results/"
+        "multiqc qc/ -o results/ -n qc_report.html"
 `
+		expected = []string{"results/qc_report.html"}
 
 	case "Population_Genomics":
 		snakemakeContent = `rule all:
     input:
-        "results/population_structure.txt"
+        "results/variant_stats.txt"
 
 rule vcf_filter:
     input:
@@ -666,331 +978,192 @@ rule vcf_filter:
     shell:
         "bcftools filter -i 'QUAL>20' {input} > {output}"
 
-rule population_analysis:
+rule variant_stats:
     input:
         "filtered/variants_filtered.vcf"
     output:
-        "results/population_structure.txt"
+        "results/variant_stats.txt"
     shell:
-        "plink --vcf {input} --pca --out results/population_structure"
+        "bcftools stats {input} > {output}"
 `
+		expected = []string{"filtered/variants_filtered.vcf", "results/variant_stats.txt"}
+
+	case "Structural_Variants":
+		preset := "map-hifi"
+		if platform == pt.ONTPromethION24 {
+			preset = "map-ont"
+		}
+		snakemakeContent = fmt.Sprintf(`rule all:
+    input:
+        "results/aligned.flagstat.txt"
+
+rule align:
+    input:
+        reads="data/synthetic_R1.fastq",
+        ref="data/reference.fasta"
+    output:
+        "aligned/aligned.bam"
+    shell:
+        "minimap2 -ax %s {input.ref} {input.reads} | samtools sort -o {output}"
+
+rule flagstat:
+    input:
+        "aligned/aligned.bam"
+    output:
+        "results/aligned.flagstat.txt"
+    shell:
+        "samtools flagstat {input} > {output}"
+`, preset)
+		expected = []string{"aligned/aligned.bam", "results/aligned.flagstat.txt"}
 
 	default:
-		snakemakeContent = `rule all:
-    input:
-        "output/processed.txt"
-
-rule process:
-    input:
-        "input/data.txt"
-    output:
-        "output/processed.txt"
-    shell:
-        "cp {input} {output}"
-`
+		return nil, fmt.Errorf("no Snakefile defined for workflow %s", workflowName)
 	}
 
-	return os.WriteFile(snakeFile, []byte(snakemakeContent), 0644)
+	return expected, os.WriteFile(snakeFile, []byte(snakemakeContent), 0600)
 }
 
 // Workflow execution functions
 
-func runCromwellWorkflow(t *testing.T, workDir, wdlFile, inputsFile string) *WorkflowResults {
+func runCromwellWorkflow(t *testing.T, workDir, wdlFile, inputsFile, workflowName string, platform pt.SequencingPlatform, inputBytes int64) *WorkflowResults {
 	start := time.Now()
-	
-	// Create cromwell configuration
-	configFile := filepath.Join(workDir, "cromwell.conf")
-	config := `include required(classpath("application"))
 
-backend {
-  default = "Local"
-  providers {
-    Local {
-      actor-factory = "cromwell.backend.impl.sfs.config.ConfigBackendLifecycleActorFactory"
-      config {
-        concurrent-job-limit = 1
-      }
-    }
-  }
-}
-`
-	os.WriteFile(configFile, []byte(config), 0644)
-
-	// Run cromwell (mock execution for testing)
-	cmd := exec.Command("cromwell", "run", wdlFile, "-i", inputsFile, "-c", configFile)
-	cmd.Dir = workDir
-	
-	err := cmd.Run()
-	success := err == nil
-
-	if !success {
-		t.Logf("Cromwell execution failed (expected in test environment): %v", err)
-		// Create mock success for testing purposes
-		success = true
+	outputs, out, err := cromwellRun(workDir, wdlFile, inputsFile)
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Logf("Cromwell execution failed: %v", err)
 	}
 
 	return &WorkflowResults{
-		WorkflowName:    "GATK_Germline_Variants",
-		Platform:        pt.IlluminaNovaSeq6000,
+		WorkflowName:    workflowName,
+		Platform:        platform,
 		Engine:          "cromwell",
-		Success:         success,
-		ExecutionTime:   time.Since(start),
+		Success:         err == nil,
+		ExecutionTime:   elapsed,
 		OutputDirectory: workDir,
-		LogFile:         filepath.Join(workDir, "cromwell.log"),
+		OutputFiles:     outputs,
+		EngineOutput:    out,
 		Metrics: WorkflowQualityMetrics{
-			DataIntegrity:      0.97,  // PacBio HiFi accuracy; must exceed 0.95 threshold
-			ProcessingSpeed:    110.0, // Illumina high-throughput; must exceed 100.0 threshold
-			ResourceEfficiency: 0.80,
-			OutputAccuracy:     0.92,
+			DataIntegrity:   outputIntegrity(outputs),
+			ProcessingSpeed: processingSpeed(inputBytes, elapsed),
 		},
 	}
 }
 
-func runNextflowWorkflow(t *testing.T, workDir string, workflow NextflowWorkflow, platform pt.SequencingPlatform) *WorkflowResults {
+func runNextflowWorkflow(t *testing.T, workDir string, workflow NextflowWorkflow, platform pt.SequencingPlatform, inputs workflowInputs) *WorkflowResults {
 	start := time.Now()
+	outDir := filepath.Join(workDir, "results")
 
-	// Create nextflow config
-	configFile := filepath.Join(workDir, "nextflow.config")
-	config := `process {
-    executor = 'local'
-    cpus = 2
-    memory = '4 GB'
-}
+	var out string
+	var err error
+	var outputs []string
+	var integrity float64
 
-params {
-    outdir = 'results'
-    max_cpus = 2
-    max_memory = '4.GB'
-}
-`
-	os.WriteFile(configFile, []byte(config), 0644)
-
-	// Run nextflow (mock execution)
-	var cmd *exec.Cmd
-	
-	if strings.Contains(workflow.Pipeline, "nf-core") {
-		// nf-core pipeline
-		cmd = exec.Command("nextflow", "run", workflow.Pipeline, 
-			"-r", workflow.Version,
-			"-c", configFile,
-			"--outdir", "results")
+	if workflow.Pipeline == "" {
+		outputs, err = runReadCountWorkflow(workDir, "nextflow", inputs)
+		if err == nil && len(outputs) > 0 && readCountMatches(outputs[0], inputs.Reads) {
+			integrity = 1.0
+		}
 	} else {
-		// Custom pipeline
-		cmd = exec.Command("nextflow", "run", workflow.Pipeline, "-c", configFile)
+		args := []string{"run", workflow.Pipeline, "-r", workflow.Version, "-profile", "docker",
+			"--input", filepath.Join(workDir, "samplesheet.csv"), "--outdir", outDir}
+		if workflow.Pipeline == "nf-core/sarek" {
+			args = append(args, "--igenomes_ignore", "--fasta", inputs.Reference)
+		}
+		out, err = runEngine(workDir, nextflowEnv, "nextflow", args...)
+		// nf-core pipelines always write pipeline_info; require it plus at
+		// least one other published result.
+		entries, _ := os.ReadDir(outDir)
+		for _, e := range entries {
+			outputs = append(outputs, filepath.Join(outDir, e.Name()))
+		}
+		if len(entries) >= 2 {
+			integrity = 1.0
+		}
 	}
-	
-	cmd.Dir = workDir
-	err := cmd.Run()
-	success := err == nil
-
-	if !success {
-		t.Logf("Nextflow execution failed (expected in test environment): %v", err)
-		success = true // Mock success for testing
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Logf("Nextflow execution failed: %v", err)
 	}
 
 	return &WorkflowResults{
 		WorkflowName:    workflow.Name,
 		Platform:        platform,
 		Engine:          "nextflow",
-		Success:         success,
-		ExecutionTime:   time.Since(start),
-		OutputDirectory: filepath.Join(workDir, "results"),
-		LogFile:         filepath.Join(workDir, ".nextflow.log"),
+		Success:         err == nil,
+		ExecutionTime:   elapsed,
+		OutputDirectory: outDir,
+		OutputFiles:     outputs,
+		EngineOutput:    out,
 		Metrics: WorkflowQualityMetrics{
-			DataIntegrity:      0.93,
-			ProcessingSpeed:    120.0,
-			ResourceEfficiency: 0.85,
-			OutputAccuracy:     0.90,
+			DataIntegrity:   integrity,
+			ProcessingSpeed: processingSpeed(inputs.Bytes, elapsed),
 		},
 	}
 }
 
-func runSnakemakeWorkflow(t *testing.T, workDir, snakeFile string, platform pt.SequencingPlatform) *WorkflowResults {
+func runSnakemakeWorkflow(t *testing.T, workDir, snakeFile, workflowName string, platform pt.SequencingPlatform, expected []string, inputBytes int64) *WorkflowResults {
 	start := time.Now()
 
-	// Run snakemake (mock execution)
-	cmd := exec.Command("snakemake", "-s", snakeFile, "--cores", "2", "--directory", workDir)
-	cmd.Dir = workDir
-	
-	err := cmd.Run()
-	success := err == nil
+	out, err := runEngine(workDir, nil, "snakemake", "-s", snakeFile, "--cores", "2", "--directory", workDir)
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Logf("Snakemake execution failed: %v", err)
+	}
 
-	if !success {
-		t.Logf("Snakemake execution failed (expected in test environment): %v", err)
-		success = true // Mock success for testing
+	outputs := make([]string, len(expected))
+	for i, rel := range expected {
+		outputs[i] = filepath.Join(workDir, rel)
 	}
 
 	return &WorkflowResults{
-		WorkflowName:    "Snakemake_Workflow",
+		WorkflowName:    workflowName,
 		Platform:        platform,
 		Engine:          "snakemake",
-		Success:         success,
-		ExecutionTime:   time.Since(start),
+		Success:         err == nil,
+		ExecutionTime:   elapsed,
 		OutputDirectory: workDir,
-		LogFile:         filepath.Join(workDir, ".snakemake", "log"),
+		OutputFiles:     outputs,
+		EngineOutput:    out,
 		Metrics: WorkflowQualityMetrics{
-			DataIntegrity:      0.97,  // PacBio HiFi accuracy; must exceed 0.95 threshold
-			ProcessingSpeed:    110.0,
-			ResourceEfficiency: 0.88,
-			OutputAccuracy:     0.89,
+			DataIntegrity:   outputIntegrity(outputs),
+			ProcessingSpeed: processingSpeed(inputBytes, elapsed),
 		},
 	}
 }
 
 // Helper functions
 
-func prepareNextflowInputs(workDir string, syntheticData *pt.SyntheticData, platform pt.SequencingPlatform) error {
-	// Create sample sheet for nf-core pipelines
-	sampleSheet := filepath.Join(workDir, "samplesheet.csv")
-	content := `sample,fastq_1,fastq_2
-synthetic,synthetic_R1.fastq,synthetic_R2.fastq
-`
-	return os.WriteFile(sampleSheet, []byte(content), 0644)
-}
-
-func prepareSnakemakeInputs(workDir string, syntheticData *pt.SyntheticData, platform pt.SequencingPlatform) error {
-	// Create input directory structure
-	inputDir := filepath.Join(workDir, "data")
-	os.MkdirAll(inputDir, 0755)
-
-	// Create mock input files
-	inputFile := filepath.Join(inputDir, "variants.vcf")
-	mockVCF := `##fileformat=VCFv4.2
-#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO
-chr1	100	.	A	G	40.0	PASS	.
-`
-	return os.WriteFile(inputFile, []byte(mockVCF), 0644)
-}
-
-func runCompatibilityTest(t *testing.T, workDir, engine string, platform pt.SequencingPlatform, syntheticData *pt.SyntheticData) bool {
-	// Run basic compatibility test for each engine
-	switch engine {
-	case "cromwell":
-		return testCromwellCompatibility(t, workDir, platform, syntheticData)
-	case "nextflow":
-		return testNextflowCompatibility(t, workDir, platform, syntheticData)
-	case "snakemake":
-		return testSnakemakeCompatibility(t, workDir, platform, syntheticData)
+// prepareNextflowInputs writes the samplesheet an nf-core pipeline expects,
+// pointing at the synthetic FASTQ files. The local pipeline needs none.
+func prepareNextflowInputs(workDir string, in workflowInputs, workflow NextflowWorkflow, platform pt.SequencingPlatform) error {
+	var content string
+	switch workflow.Pipeline {
+	case "":
+		return nil
+	case "nf-core/sarek":
+		content = fmt.Sprintf("patient,sample,lane,fastq_1,fastq_2\nsynthetic,synthetic,L001,%s,%s\n", in.R1, in.R2)
+	case "nf-core/nanoseq":
+		content = fmt.Sprintf("group,replicate,barcode,input_file,fasta,gtf\nsynthetic,1,,%s,%s,\n", in.R1, in.Reference)
+	case "nf-core/hlatyping":
+		content = fmt.Sprintf("sample,fastq_1,fastq_2,seq_type\nsynthetic,%s,%s,dna\n", in.R1, in.R2)
 	default:
-		return false
+		content = fmt.Sprintf("sample,fastq_1,fastq_2\nsynthetic,%s,%s\n", in.R1, in.R2)
 	}
-}
-
-func testCromwellCompatibility(t *testing.T, workDir string, platform pt.SequencingPlatform, syntheticData *pt.SyntheticData) bool {
-	// Test basic Cromwell functionality
-	wdlFile := filepath.Join(workDir, "test.wdl")
-	basicWDL := `version 1.0
-workflow Test {
-    call Echo
-}
-task Echo {
-    command { echo "Hello from Cromwell" }
-    output { String result = stdout() }
-}`
-	
-	os.WriteFile(wdlFile, []byte(basicWDL), 0644)
-	
-	// Try to validate WDL
-	cmd := exec.Command("cromwell", "validate", wdlFile)
-	err := cmd.Run()
-	return err == nil
-}
-
-func testNextflowCompatibility(t *testing.T, workDir string, platform pt.SequencingPlatform, syntheticData *pt.SyntheticData) bool {
-	// Test basic Nextflow functionality
-	nfFile := filepath.Join(workDir, "test.nf")
-	basicNF := `#!/usr/bin/env nextflow
-
-process sayHello {
-    output:
-    stdout
-
-    script:
-    """
-    echo "Hello from Nextflow"
-    """
-}
-
-workflow {
-    sayHello()
-}`
-	
-	os.WriteFile(nfFile, []byte(basicNF), 0644)
-	
-	// Try to run basic workflow
-	cmd := exec.Command("nextflow", "run", nfFile)
-	cmd.Dir = workDir
-	err := cmd.Run()
-	return err == nil
-}
-
-func testSnakemakeCompatibility(t *testing.T, workDir string, platform pt.SequencingPlatform, syntheticData *pt.SyntheticData) bool {
-	// Test basic Snakemake functionality
-	snakeFile := filepath.Join(workDir, "Snakefile")
-	basicSnake := `rule hello:
-    output:
-        "hello.txt"
-    shell:
-        "echo 'Hello from Snakemake' > {output}"
-`
-	
-	os.WriteFile(snakeFile, []byte(basicSnake), 0644)
-	
-	// Try to run workflow
-	cmd := exec.Command("snakemake", "--dry-run")
-	cmd.Dir = workDir
-	err := cmd.Run()
-	return err == nil
-}
-
-func calculateQualityMetrics(syntheticData *pt.SyntheticData, platform pt.SequencingPlatform) WorkflowQualityMetrics {
-	// Calculate quality metrics based on synthetic data characteristics
-	dataIntegrity := 1.0
-	if syntheticData.ErrorRate > 0.01 {
-		dataIntegrity = 0.9
-	}
-
-	processingSpeed := 100.0 // Base speed
-	switch platform {
-	case pt.IlluminaNovaSeq6000:
-		processingSpeed = 150.0
-	case pt.PacBioRevio:
-		processingSpeed = 80.0
-	case pt.ONTPromethION24:
-		processingSpeed = 90.0
-	}
-
-	return WorkflowQualityMetrics{
-		DataIntegrity:      dataIntegrity,
-		ProcessingSpeed:    processingSpeed,
-		ResourceEfficiency: 0.85,
-		OutputAccuracy:     0.90,
-	}
+	return os.WriteFile(filepath.Join(workDir, "samplesheet.csv"), []byte(content), 0600)
 }
 
 // Validation functions
 
 func validateWorkflowResults(t *testing.T, result *WorkflowResults, workflowName string, platform pt.SequencingPlatform) {
-	assert.True(t, result.Success, "Workflow %s should complete successfully for %s", workflowName, platform)
+	require.True(t, result.Success, "Workflow %s should complete successfully for %s; engine output:\n%s",
+		workflowName, platform, result.EngineOutput)
 	assert.Less(t, result.ExecutionTime, 2*time.Hour, "Workflow should complete within 2 hours")
-	assert.Greater(t, result.Metrics.DataIntegrity, 0.8, "Data integrity should be >80%")
-	assert.Greater(t, result.Metrics.ProcessingSpeed, 50.0, "Processing speed should be >50 MB/s")
-	assert.Greater(t, result.Metrics.ResourceEfficiency, 0.7, "Resource efficiency should be >70%")
-	assert.Greater(t, result.Metrics.OutputAccuracy, 0.8, "Output accuracy should be >80%")
+	assert.Equal(t, 1.0, result.Metrics.DataIntegrity,
+		"Workflow %s should produce all expected outputs %v", workflowName, result.OutputFiles)
 
-	// Platform-specific validations
-	switch platform {
-	case pt.IlluminaNovaSeq6000, pt.IlluminaNextSeq2000:
-		assert.Greater(t, result.Metrics.ProcessingSpeed, 100.0, "Illumina platforms should have high processing speed")
-	case pt.PacBioRevio:
-		assert.Greater(t, result.Metrics.DataIntegrity, 0.95, "PacBio should have very high data integrity")
-	case pt.ONTPromethION24:
-		assert.Greater(t, result.Metrics.OutputAccuracy, 0.85, "ONT should maintain good output accuracy")
-	}
-
-	t.Logf("Workflow validation passed - Integrity: %.2f, Speed: %.1f MB/s, Efficiency: %.2f, Accuracy: %.2f",
-		result.Metrics.DataIntegrity, result.Metrics.ProcessingSpeed, 
-		result.Metrics.ResourceEfficiency, result.Metrics.OutputAccuracy)
+	t.Logf("Workflow validation passed - Integrity: %.2f, Throughput: %.2f MB/s (including engine start-up)",
+		result.Metrics.DataIntegrity, result.Metrics.ProcessingSpeed)
 }
 
 func generateCompatibilityReport(t *testing.T, matrix map[string]map[pt.SequencingPlatform]WorkflowCompatibilityResult) {
@@ -998,6 +1171,9 @@ func generateCompatibilityReport(t *testing.T, matrix map[string]map[pt.Sequenci
 	t.Log(strings.Repeat("=", 80))
 
 	for engine, platformResults := range matrix {
+		if len(platformResults) == 0 {
+			continue
+		}
 		t.Logf("\n🔧 Engine: %s", strings.ToUpper(engine))
 		t.Log(strings.Repeat("-", 60))
 
@@ -1010,18 +1186,18 @@ func generateCompatibilityReport(t *testing.T, matrix map[string]map[pt.Sequenci
 				status = "✅ PASS"
 				successCount++
 			}
-			
+
 			totalTime += result.ExecutionTime
-			
-			t.Logf("  %-20s %s (%.1fs, %.1f%% integrity)", 
-				platform, status, result.ExecutionTime.Seconds(), 
+
+			t.Logf("  %-20s %s (%.1fs, %.1f%% integrity)",
+				platform, status, result.ExecutionTime.Seconds(),
 				result.QualityMetrics.DataIntegrity*100)
 		}
 
 		compatibilityRate := float64(successCount) / float64(len(platformResults)) * 100
 		avgTime := totalTime / time.Duration(len(platformResults))
 
-		t.Logf("\n  📈 Summary: %.1f%% compatibility, avg time: %.1fs", 
+		t.Logf("\n  📈 Summary: %.1f%% compatibility, avg time: %.1fs",
 			compatibilityRate, avgTime.Seconds())
 	}
 
