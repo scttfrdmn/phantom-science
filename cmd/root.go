@@ -10,8 +10,8 @@ import (
 )
 
 const (
-	Version   = "0.8.0"
-	BuildDate = "2026-10-18"
+	Version   = "0.9.0"
+	BuildDate = "2026-10-19"
 )
 
 // rootCmd represents the base command when called without any subcommands

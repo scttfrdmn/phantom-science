@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-10-19
+
 ### Added
 - `signal --profile-set NAME=VALUE` overrides signal-profile parameters (dwell, stall, skip, noise, adapter, offset and model scaling) for calibration runs. Overrides are validated before anything is written and recorded in the manifest as `signal.profile_overrides` (#14).
 - `dorado_identity.sh --squigulator [PATH]` simulates the same truth with squigulator and uses its median identity, minus `--tolerance` points (default 1.0), as the pass threshold. Without it, `--min-identity` applies (default 90.5%) (#14).
@@ -357,6 +359,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Basic FASTQ file generation with a flag-based command-line interface and sequencer configuration files.
 
-[Unreleased]: https://github.com/scttfrdmn/phantom-science/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/scttfrdmn/phantom-science/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/scttfrdmn/phantom-science/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/scttfrdmn/phantom-science/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/scttfrdmn/phantom-science/releases/tag/v0.7.0
