@@ -539,9 +539,31 @@ func testPhredScoreAccuracy(t *testing.T, data *pt.SyntheticData, platform pt.Se
 	}
 }
 
+// calculateVariance must return the variance, not the standard deviation:
+// its callers compare it with variance thresholds.
+func TestCalculateVariance(t *testing.T) {
+	values := []float64{2, 4, 4, 4, 5, 5, 7, 9} // sum of squared deviations 32
+	if got, want := calculateVariance(values), 32.0/7.0; math.Abs(got-want) > 1e-12 {
+		t.Errorf("calculateVariance = %v, want sample variance %v", got, want)
+	}
+	if got := calculateVariance([]float64{3}); got != 0 {
+		t.Errorf("calculateVariance of one value = %v, want 0", got)
+	}
+}
+
+// calculateVariance returns the sample variance (n-1 denominator) of values,
+// or 0 for fewer than two values.
 func calculateVariance(values []float64) float64 {
+	if len(values) < 2 {
+		return 0
+	}
 	mean := calculateMean(values)
-	return calculateStdDev(values, mean)
+	sumSquares := 0.0
+	for _, v := range values {
+		d := v - mean
+		sumSquares += d * d
+	}
+	return sumSquares / float64(len(values)-1)
 }
 
 func estimatePhasingRate(data *pt.SyntheticData) float64 {
