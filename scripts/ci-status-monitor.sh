@@ -45,7 +45,7 @@ check_workflow_status() {
         return
     fi
     
-    echo "$response" | jq -r '.workflow_runs[] | "\(.conclusion // "running")|\(.status)|\(.created_at)|\(.head_commit.message)"' | head -5 | while IFS='|' read -r conclusion status created message; do
+    echo "$response" | jq -r '.workflow_runs[] | "\(.conclusion // "running")|\(.status)|\(.created_at)|\(.head_commit.message // "" | split("\n")[0])"' | head -5 | while IFS='|' read -r conclusion status created message; do
         case "$conclusion" in
             "success")
                 status_icon="${GREEN}✅"
@@ -117,7 +117,7 @@ check_overall_status() {
     
     # Show recent runs
     echo "Recent runs:"
-    echo "$response" | jq -r '.workflow_runs[] | "\(.conclusion // "running")|\(.workflow_name)|\(.created_at)|\(.head_commit.message)"' | head -5 | while IFS='|' read -r conclusion workflow created message; do
+    echo "$response" | jq -r '.workflow_runs[] | "\(.conclusion // "running")|\(.name)|\(.created_at)|\(.head_commit.message // "" | split("\n")[0])"' | head -5 | while IFS='|' read -r conclusion workflow created message; do
         case "$conclusion" in
             "success") icon="${GREEN}✅" ;;
             "failure") icon="${RED}❌" ;;
