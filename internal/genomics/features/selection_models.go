@@ -496,9 +496,14 @@ func (spm *SelectionPressureModel) calculateSelectionConsistency(chromosome stri
 	return consistency
 }
 
+// dndsGeneClasses lists the synthetic gene classes in a fixed (sorted) order.
+var dndsGeneClasses = []string{"development", "housekeeping", "immune", "metabolic", "reproductive", "sensory", "transcription"}
+
 // getDnDsInformation returns a synthetic gene's dN/dS ratio when the region
-// midpoint falls in a synthetic exon. The gene class is picked by iterating
-// a Go map, so which class (and ratio) is returned varies between calls.
+// midpoint falls in a synthetic exon. Every class has genes 0–999, so the
+// class is assigned deterministically from the 100-kb unit containing the
+// midpoint (one synthetic exon per unit, see determineGenomicContext) and
+// the gene index from the 10-kb bin, as in initializeDnDsRatios.
 func (spm *SelectionPressureModel) getDnDsInformation(chromosome string, start, end int64) *DnDsInfo {
 	midpoint := (start + end) / 2
 	context := spm.determineGenomicContext(chromosome, midpoint)
@@ -507,18 +512,14 @@ func (spm *SelectionPressureModel) getDnDsInformation(chromosome string, start, 
 		return nil // No dN/dS for non-coding regions
 	}
 
-	// Check if we have dN/dS data for this gene
 	var dnds float64
 	var geneClass string
 
-	// Try to find matching gene class
-	for class, _ := range map[string]bool{"housekeeping": true, "metabolic": true, "immune": true, "sensory": true, "reproductive": true, "transcription": true, "development": true} {
-		testGeneID := fmt.Sprintf("%s_gene_%d", class, int(midpoint/10000)%1000)
-		if ratio, exists := spm.dNdSRatios[testGeneID]; exists {
-			dnds = ratio
-			geneClass = class
-			break
-		}
+	class := dndsGeneClasses[int(midpoint/100000)%len(dndsGeneClasses)]
+	geneID := fmt.Sprintf("%s_gene_%d", class, int(midpoint/10000)%1000)
+	if ratio, exists := spm.dNdSRatios[geneID]; exists {
+		dnds = ratio
+		geneClass = class
 	}
 
 	if geneClass == "" {

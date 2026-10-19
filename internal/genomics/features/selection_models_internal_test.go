@@ -17,10 +17,11 @@ import (
 // will draw exactly the given set of values.
 //
 // For start=0, end=15000 and chromosome="chr1":
-//   numSamples = 15000/5000 = 3, step = 5000
-//   i=0: pos=0    → key "chr1:0-10000"
-//   i=1: pos=5000  → key "chr1:0-10000"
-//   i=2: pos=10000 → key "chr1:10000-20000"
+//
+//	numSamples = 15000/5000 = 3, step = 5000
+//	i=0: pos=0    → key "chr1:0-10000"
+//	i=1: pos=5000  → key "chr1:0-10000"
+//	i=2: pos=10000 → key "chr1:10000-20000"
 //
 // So setting purifyingSelection["chr1:0-10000"]=v1 and
 // purifyingSelection["chr1:10000-20000"]=v2 gives values [v1, v1, v2].
@@ -41,10 +42,11 @@ func buildSPMWithValues(v1, v2 float64) *SelectionPressureModel {
 // coefficient of variation is computed with Bessel's correction (÷N-1, not ÷N).
 //
 // Values: [0.8, 0.8, 0.2]  mean = 0.6
-//   sample variance = 0.24/2 = 0.12  → std ≈ 0.34641 → cv ≈ 0.57735
-//   pop    variance = 0.24/3 = 0.08  → std ≈ 0.28284 → cv ≈ 0.47140
-//   sample consistency = exp(-0.57735) ≈ 0.5614
-//   pop    consistency = exp(-0.47140) ≈ 0.6243
+//
+//	sample variance = 0.24/2 = 0.12  → std ≈ 0.34641 → cv ≈ 0.57735
+//	pop    variance = 0.24/3 = 0.08  → std ≈ 0.28284 → cv ≈ 0.47140
+//	sample consistency = exp(-0.57735) ≈ 0.5614
+//	pop    consistency = exp(-0.47140) ≈ 0.6243
 func TestCalculateSelectionConsistency_UsesSampleVariance(t *testing.T) {
 	spm := buildSPMWithValues(0.8, 0.2)
 	got := spm.calculateSelectionConsistency("chr1", 0, 15000)
@@ -94,5 +96,29 @@ func TestCalculateSelectionConsistency_InRange(t *testing.T) {
 		if got <= 0 || got > 1 {
 			t.Errorf("v1=%v v2=%v: consistency %v outside (0,1]", c[0], c[1], got)
 		}
+	}
+}
+
+// TestGetDnDsInformation_Deterministic: the dN/dS lookup for a region must
+// not depend on map iteration order, and must return the ratio stored for
+// the gene it names.
+func TestGetDnDsInformation_Deterministic(t *testing.T) {
+	spm, err := NewSelectionPressureModel()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Midpoint 10000 lies in the synthetic exon window [5000, 15000).
+	first := spm.getDnDsInformation("chr1", 5000, 15000)
+	if first == nil {
+		t.Fatal("expected dN/dS info for an exonic region")
+	}
+	for i := 0; i < 200; i++ {
+		got := spm.getDnDsInformation("chr1", 5000, 15000)
+		if *got != *first {
+			t.Fatalf("call %d returned %+v, first call %+v", i, *got, *first)
+		}
+	}
+	if want := spm.dNdSRatios[first.GeneClass+"_gene_1"]; first.DnDsRatio != want {
+		t.Errorf("ratio %v does not match stored %s_gene_1 ratio %v", first.DnDsRatio, first.GeneClass, want)
 	}
 }
