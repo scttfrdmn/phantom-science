@@ -107,7 +107,9 @@ type CloudConfig struct {
 	StorageConfig  StorageConfig
 	NetworkConfig  NetworkConfig
 	SecurityGroups []string
-	Credentials    map[string]string
+	// Credentials are never serialized, so reports and saved configs
+	// cannot leak them.
+	Credentials map[string]string `json:"-" yaml:"-"`
 }
 
 // StorageConfig defines cloud storage configuration

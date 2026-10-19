@@ -1,9 +1,9 @@
 package tools_test
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -478,20 +478,25 @@ func TestOverallAssessment_StatusMapping(t *testing.T) {
 // SaveValidationReport
 // ─────────────────────────────────────────────────────────────────────────────
 
-// makeMinimalValidator builds a GenomicsEcosystemValidator through
-// NewGenomicsEcosystemValidator with a temporary directory and /usr/bin/true as
-// the sole "tool". The workflow engine will fail to initialize if no real
-// workflow executables are present — so we can only test the validator's inner
-// components indirectly through the exported helper types.
+// SaveValidationReport writes the report, including the validator config,
+// to disk. Cloud credentials and the storage encryption key in that config
+// must never be written.
 func TestSaveValidationReport(t *testing.T) {
 	tmp := t.TempDir()
 	reportPath := filepath.Join(tmp, "report.json")
 
-	// Build a minimal report manually (the validator constructor performs real
-	// I/O that we cannot satisfy in a unit test environment).
+	const secretKey, secretToken, encKey = "AKIA-SECRET-ACCESS-KEY", "session-token-value-123", "enc-key-value-456"
 	report := &tools.EcosystemValidationReport{
 		StartTime: time.Now(),
 		EndTime:   time.Now(),
+		ValidatorConfig: tools.EcosystemConfig{
+			CloudConfig: tools.CloudConfig{
+				Provider:      "aws",
+				Region:        "us-west-2",
+				StorageConfig: tools.StorageConfig{BucketName: "bucket", EncryptionKey: encKey},
+				Credentials:   map[string]string{"aws_secret_access_key": secretKey, "session_token": secretToken},
+			},
+		},
 		ToolResults: map[string]*tools.ToolValidationResult{
 			"samtools": {
 				ToolName: "samtools",
@@ -508,19 +513,18 @@ func TestSaveValidationReport(t *testing.T) {
 	}
 	report.Duration = report.EndTime.Sub(report.StartTime)
 
-	// We need a validator instance to call SaveValidationReport.
-	// Since we can't construct a full validator here, we test the underlying
-	// JSON serialisation path directly.
-	data, err := json.MarshalIndent(report, "", "  ")
-	require.NoError(t, err)
+	// SaveValidationReport uses no validator state.
+	require.NoError(t, (&tools.GenomicsEcosystemValidator{}).SaveValidationReport(report, reportPath))
 
-	err = os.WriteFile(reportPath, data, 0600)
-	require.NoError(t, err)
-
-	// Read back and verify
 	raw, err := os.ReadFile(reportPath)
 	require.NoError(t, err)
 	assert.Contains(t, string(raw), "samtools")
+	assert.Contains(t, string(raw), "us-west-2", "non-secret cloud config should still be reported")
+	for _, secret := range []string{secretKey, secretToken, encKey, "aws_secret_access_key"} {
+		if strings.Contains(string(raw), secret) {
+			t.Errorf("saved report contains credential material %q", secret)
+		}
+	}
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
