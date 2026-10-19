@@ -1,7 +1,13 @@
 # Phantom Science - Development Makefile
 # Provides standardized commands for development, testing, and quality assurance
 
-.PHONY: help build test coverage lint security clean install-tools pre-commit fmt vet stegano
+# Every target is a command, not a file. VERSION in particular would otherwise
+# satisfy `version` on case-insensitive filesystems (macOS).
+.PHONY: help build stegano build-all test test-short test-integration test-e2e \
+	coverage coverage-html lint fmt vet staticcheck security validate-configs \
+	validate-sequencer-specs validate-changelog pre-commit install-tools \
+	install-pre-commit benchmark clean clean-all version check-version \
+	sync-version ci-status ci-watch dev ci quick docker-build config-examples setup
 
 # The stegano library (built by `make stegano`) for CGO builds of internal/fingerprinting.
 STEGANO_LIB_DIR := $(CURDIR)/.stegano/target/release

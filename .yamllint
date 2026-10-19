@@ -1,0 +1,13 @@
+# yamllint configuration for configs/ (used by `make lint` and
+# scripts/validate-configs.sh).
+extends: default
+
+rules:
+  # Sequencer templates document long read-header layouts verbatim.
+  line-length:
+    max: 120
+    level: warning
+  # Config files are single documents; a leading "---" adds nothing.
+  document-start: disable
+  comments:
+    min-spaces-from-content: 1

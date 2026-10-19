@@ -1,32 +1,41 @@
 #!/bin/bash
 # Configuration validation script for Phantom Science
-# Validates YAML/JSON syntax and schema compliance
+# Validates YAML/JSON syntax (yamllint with the repository's .yamllint),
+# schema versions and required fields, then loads every shipped sequencer
+# config through the Go config loader.
 
 set -euo pipefail
+
+cd "$(dirname "$0")/.."
 
 echo "🧬 Validating configuration files..."
 
 ERRORS=0
+fail() {
+    echo "❌ $*"
+    ERRORS=$((ERRORS + 1))
+}
 
-# Function to validate YAML/JSON syntax
+if ! command -v yamllint >/dev/null 2>&1; then
+    echo "❌ yamllint not found, install with: make install-tools"
+    exit 1
+fi
+
+# Validate YAML/JSON syntax
 validate_syntax() {
     local file="$1"
-    local ext="${file##*.}"
-    
-    case "$ext" in
-        "yaml"|"yml")
-            if ! yamllint -d '{extends: default, rules: {line-length: {max: 120}}}' "$file" >/dev/null 2>&1; then
-                echo "❌ YAML syntax error in $file"
-                yamllint "$file" || true
-                ((ERRORS++))
+    case "${file##*.}" in
+        yaml|yml)
+            if ! yamllint -c .yamllint "$file" >/dev/null 2>&1; then
+                fail "YAML lint errors in $file"
+                yamllint -c .yamllint "$file" || true
             else
                 echo "✅ $file: Valid YAML syntax"
             fi
             ;;
-        "json")
+        json)
             if ! python3 -m json.tool "$file" >/dev/null 2>&1; then
-                echo "❌ JSON syntax error in $file"
-                ((ERRORS++))
+                fail "JSON syntax error in $file"
             else
                 echo "✅ $file: Valid JSON syntax"
             fi
@@ -34,19 +43,17 @@ validate_syntax() {
     esac
 }
 
-# Function to validate schema version
+# Report the schema version of v1 YAML configs
 validate_schema() {
-    local file="$1"
-    local ext="${file##*.}"
-    
-    case "$ext" in
-        "yaml"|"yml")
+    local file="$1" version
+    case "${file##*.}" in
+        yaml|yml)
             if grep -q "schema_version:" "$file"; then
-                VERSION=$(grep "schema_version:" "$file" | head -1 | cut -d'"' -f2 | cut -d"'" -f2 | xargs)
-                if [[ "$VERSION" == "1.0" ]]; then
-                    echo "✅ $file: Valid schema version $VERSION"
+                version=$(grep "schema_version:" "$file" | head -1 | cut -d'"' -f2 | cut -d"'" -f2 | xargs)
+                if [[ "$version" == "1.0" ]]; then
+                    echo "✅ $file: Valid schema version $version"
                 else
-                    echo "⚠️  $file: Unsupported schema version $VERSION"
+                    echo "⚠️  $file: Unsupported schema version $version"
                 fi
             else
                 echo "⚠️  $file: Missing schema_version (legacy format)"
@@ -55,89 +62,60 @@ validate_schema() {
     esac
 }
 
-# Function to validate required fields
+# Check the top-level sections of v1 YAML configs
 validate_required_fields() {
-    local file="$1"
-    local type="$2"
-    
+    local file="$1" type="$2" field
+    local -a required
     case "$type" in
-        "sequencer")
-            # Check for required sequencer fields
-            if [[ "$file" == *.yaml ]] || [[ "$file" == *.yml ]]; then
-                REQUIRED_FIELDS=("sequencer:" "sample:" "reads:" "quality:")
-                for field in "${REQUIRED_FIELDS[@]}"; do
-                    if ! grep -q "$field" "$file"; then
-                        echo "❌ $file: Missing required field $field"
-                        ((ERRORS++))
-                    fi
-                done
-            fi
-            ;;
-        "phantom")
-            # Check for required phantom fields
-            if [[ "$file" == *.yaml ]] || [[ "$file" == *.yml ]]; then
-                REQUIRED_FIELDS=("enterprise:" "fingerprinting:" "validation:")
-                for field in "${REQUIRED_FIELDS[@]}"; do
-                    if ! grep -q "$field" "$file"; then
-                        echo "❌ $file: Missing required field $field"
-                        ((ERRORS++))
-                    fi
-                done
-            fi
-            ;;
+        sequencer) required=("sequencer:" "sample:" "reads:" "quality:") ;;
+        phantom) required=("enterprise:" "fingerprinting:" "validation:") ;;
+        *) return 0 ;;
     esac
-}
-
-# Find and validate all config files
-echo "Searching for configuration files..."
-
-# Validate sequencer configs
-if [ -d "configs/sequencer" ]; then
-    echo "Validating sequencer configurations..."
-    find configs/sequencer -name "*.yaml" -o -name "*.yml" -o -name "*.json" | while read -r file; do
-        validate_syntax "$file"
-        validate_schema "$file"
-        validate_required_fields "$file" "sequencer"
-    done
-fi
-
-# Validate phantom configs  
-if [ -d "configs/phantom" ]; then
-    echo "Validating phantom configurations..."
-    find configs/phantom -name "*.yaml" -o -name "*.yml" -o -name "*.json" | while read -r file; do
-        validate_syntax "$file"
-        validate_schema "$file"
-        validate_required_fields "$file" "phantom"
-    done
-fi
-
-# Validate any other config files in root
-for file in *.yaml *.yml *.json 2>/dev/null; do
-    if [ -f "$file" ]; then
-        validate_syntax "$file"
-        validate_schema "$file"
-    fi
-done
-
-# Test config loading with Go
-echo "Testing configuration loading..."
-if command -v go >/dev/null 2>&1; then
-    # Test loading each config with the actual Go application
-    for config in configs/sequencer/v1.0/*.yaml configs/sequencer/*.json 2>/dev/null; do
-        if [ -f "$config" ]; then
-            echo "Testing Go config loading: $config"
-            if ! timeout 10s go run main.go -config "$config" -version >/dev/null 2>&1; then
-                echo "❌ Failed to load config with Go: $config"
-                ((ERRORS++))
-            else
-                echo "✅ Go config loading successful: $config"
-            fi
+    case "$file" in
+        *.yaml|*.yml) ;;
+        *) return 0 ;;
+    esac
+    for field in "${required[@]}"; do
+        if ! grep -q "$field" "$file"; then
+            fail "$file: Missing required field $field"
         fi
     done
+}
+
+# validate_dir DIR TYPE validates every config file under DIR.
+validate_dir() {
+    local dir="$1" type="$2" file
+    [ -d "$dir" ] || return 0
+    echo "Validating $dir..."
+    # Process substitution (not a pipe) so ERRORS updates are kept.
+    while read -r file; do
+        validate_syntax "$file"
+        if [ "$type" != "template" ]; then
+            validate_schema "$file"
+            validate_required_fields "$file" "$type"
+        fi
+    done < <(find "$dir" \( -name "*.yaml" -o -name "*.yml" -o -name "*.json" \) | sort)
+}
+
+validate_dir configs/sequencer sequencer
+validate_dir configs/phantom phantom
+validate_dir configs/sequencers template
+validate_dir configs/dev template
+
+# Load every shipped sequencer config with the Go config loader.
+echo "Testing configuration loading..."
+if command -v go >/dev/null 2>&1; then
+    if CGO_ENABLED=0 go test -tags '!release' -count=1 -run 'TestLoadSequencerConfig_AllShippedConfigs' ./internal/cli/ >/dev/null 2>&1; then
+        echo "✅ Go config loading successful for configs/sequencer/v1.0 and configs/sequencers"
+    else
+        fail "Go config loading failed; run: CGO_ENABLED=0 go test -tags '!release' -run TestLoadSequencerConfig_AllShippedConfigs -v ./internal/cli/"
+    fi
+else
+    echo "⚠️  go not found; skipping config loading"
 fi
 
 # Final result
-if [ $ERRORS -eq 0 ]; then
+if [ "$ERRORS" -eq 0 ]; then
     echo "✅ All configuration files validated successfully!"
     exit 0
 else

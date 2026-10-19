@@ -1,5 +1,5 @@
 # MiSeq v3 Flow Cell Configuration
-# Based on Illumina MiSeq System Specifications (2024) 
+# Based on Illumina MiSeq System Specifications (2024)
 # Spec Reference: https://www.illumina.com/systems/sequencing-platforms/miseq/specifications.html
 #
 # Fields that affect `generate`: sequencer.run_id and flowcell_id (recorded in
@@ -61,7 +61,7 @@ technology:
   sbs_version: "v3"                      # MiSeq v3 chemistry
   reagent_improvements:
     - "Incorporation Mix (IMT)"           # New v3 reagent
-    - "Scan Mix (USM)"                    # New v3 reagent  
+    - "Scan Mix (USM)"                    # New v3 reagent
     - "Increased PR2 volume (500ml)"      # Support for longer runs
   cluster_generation: "onboard"          # Integrated cluster generation
   flow_cell_design: "single_lane"        # One lane per flow cell

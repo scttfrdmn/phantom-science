@@ -1,4 +1,4 @@
-# NextSeq 2000 P3 Flow Cell Configuration  
+# NextSeq 2000 P3 Flow Cell Configuration
 # Based on Illumina NextSeq 1000/2000 System Specifications (2024)
 # Spec Reference: https://www.illumina.com/systems/sequencing-platforms/nextseq-1000-2000/specifications.html
 #
@@ -48,7 +48,7 @@ quality:
   q30_percentage: 90.0                   # ≥90% Q30 for shorter reads
   cluster_density_k_per_mm2: 650000     # Higher density than NovaSeq
 
-# Performance Specifications  
+# Performance Specifications
 performance:
   run_time_hours: 18                     # Fast turnaround for 2×150bp
   max_output_gb: 120.0                   # P3 flow cell capacity
