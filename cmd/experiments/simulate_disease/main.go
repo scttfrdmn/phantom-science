@@ -7,7 +7,7 @@
 // It is a one-off experiment, not part of the supported phantom-science CLI.
 // The cohorts are synthetic and not suitable for clinical use; the
 // "validation" metrics compare the cohort against the configuration's own
-// expected values. The -validate flag is not read: validation always runs.
+// expected values; they are always computed.
 package main
 
 import (
@@ -33,7 +33,6 @@ var (
 	format               = flag.String("format", "json", "Output format: json, vcf, ped")
 	clinvarAPI           = flag.String("clinvar-api-key", "", "NCBI API key for ClinVar access")
 	verbose              = flag.Bool("verbose", false, "Enable verbose logging")
-	validate             = flag.Bool("validate", true, "Enable cohort validation against expected disease characteristics")
 	includePhenotypes    = flag.Bool("phenotypes", true, "Include phenotype profiles in output")
 	includeFamilyHistory = flag.Bool("family-history", true, "Include family history in synthetic patients")
 )
