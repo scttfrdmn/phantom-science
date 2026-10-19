@@ -128,10 +128,10 @@ func TestNewGenomicsToolSuite_KnownToolWithFakePath(t *testing.T) {
 
 func TestNewGenomicsToolSuite_MultipleKnownTools(t *testing.T) {
 	paths := map[string]string{
-		"gatk":      "/opt/tools/gatk",
-		"bwa":       "/opt/tools/bwa",
-		"samtools":  "/opt/tools/samtools",
-		"bcftools":  "/opt/tools/bcftools",
+		"gatk":     "/opt/tools/gatk",
+		"bwa":      "/opt/tools/bwa",
+		"samtools": "/opt/tools/samtools",
+		"bcftools": "/opt/tools/bcftools",
 	}
 	suite := tools.NewGenomicsToolSuite(paths)
 	avail := suite.GetAvailableTools()
@@ -499,7 +499,7 @@ func TestSaveValidationReport(t *testing.T) {
 				Metrics:  map[string]float64{"success_rate": 1.0},
 			},
 		},
-		WorkflowResults:   map[string]*tools.WorkflowValidationResult{},
+		WorkflowResults:    map[string]*tools.WorkflowValidationResult{},
 		PerformanceMetrics: tools.NewEcosystemMetrics(),
 		OverallAssessment: &tools.OverallAssessment{
 			OverallScore: 0.92,
