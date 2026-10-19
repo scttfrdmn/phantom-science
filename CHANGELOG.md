@@ -82,6 +82,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - With an HMM model, each output file uses its own model instance, so a file generated alone matches the same file in a full run (#16).
 - `Generate` writes through a hidden spool directory in the output directory and finishes by writing the manifest (#16).
 - Added the github.com/klauspost/compress v1.19.2 dependency, for zstd in BLOW5 (#15).
+- Documentation audit (#20):
+  - The README, `docs/`, CLI help, config files, the Cromwell workflow and the Go doc comments now describe what the code does.
+  - Compliance, "production-ready", "indistinguishable" and unbenchmarked performance claims are removed. Stubs and heuristics are named as such.
+  - Remaining work is tracked in #22–#27.
+- Sample configs (#20):
+  - `configs/phantom/v1.0/enterprise-settings.yaml` keeps only the keys the code reads, with valid validation test names. It previously listed `hardy_weinberg_equilibrium`, which the framework rejects.
+  - `configs/dev/*.json` drop keys the loader ignores.
+  - The `sequencers/*.yaml` templates drop the descriptive `steganography`, `workflows` and `validation` sections.
+- Output strings that presented fixed values as results are relabelled, for example the benchmark report's fixed per-platform figures and the TUI's display-only embedding strategy (#20).
+- `examples/enterprise_fingerprinting.go` demonstrates encrypted, per-file fingerprinting with a key and verification, and its tests cover the failure cases (#20).
+- **BREAKING:** codon-usage ORF and `CodonChange` coordinates are forward-strand, and `Strand` is `"+"`/`"-"` (was `"0"`/`"1"`) (#20).
+- An unknown chromosome in VCF genomic context is now an error instead of returning generated bases (#20).
 
 ### Removed
 - Unused "business" Prometheus metrics in `internal/monitoring` (`phantom_customers_active`, `phantom_datasets_processed_total`, `phantom_revenue_generated_total`, `phantom_sla_compliance_percent`, `phantom_customer_satisfaction_score`). Nothing recorded values to them.
@@ -89,6 +101,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `.github/workflows/enterprise-ci.yml`, which could not pass (#9), and `deploy/production/docker/Dockerfile.enterprise`, which could not build (#4).
 - The retired "~50.3%" accuracy target and its grading (#7).
 - "mock output" workflow results, always-true engine availability, forced `success = true` and hardcoded workflow metrics (#18).
+- `docs/TUI_DESIGN.md`, which described an unbuilt design (#20).
+- Configs that failed to load or silently loaded as empty: `configs/sequencer/novaseq-6000.json`, `configs/phantom/enterprise-settings.json`, `configs/phantom/volume-testing.json`, `configs/phantom/v1.0/volume-testing.yaml` and `sample_config.json` (#20).
+- The unread `-validate` flag of `cmd/experiments/simulate_disease` (#20).
 
 ### Fixed
 - `--command verify` printed "Verification completed" without checking anything, and `NewVerifier` returned a mock that reported every file as verified (#2).
@@ -126,6 +141,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `read_length_consistency` counted a trailing CR in CRLF files (#10).
 - The Metal GPU backend's Objective-C compiled on Linux CGO builds; it is now macOS-only (#9).
 - In paired-end file output with a read-length distribution, R1 and R2 mates had different lengths; they now share the sampled length, and fixed-length output is unchanged (#16).
+- Coalescent θ_π was half of Tajima's estimator (Σf(1−f) instead of Σ2f(1−f)). This biased ThetaPi, Tajima's D (mean −2 under neutrality) and Fay–Wu H low. Site-frequency binning also put sites in the wrong bin (truncation instead of rounding) (#20).
+- Mutational-signature contributions were always 0, because substitution keys ("ACA>ATA") were compared with context keys ("ACA"). Signatures are now compared by reference-context distribution on the pyrimidine strand (#20).
+- Codon bias (#20):
+  - The default codon-usage table was never loaded, giving NaN probabilities and a CAI of 0.
+  - Reverse-strand ORFs were edited at reverse-complement offsets on the forward sequence. Edits are now synonymous on both strands.
+  - Seeded runs are now reproducible.
+- `getDnDsInformation` returned a different gene class and dN/dS per call, depending on map iteration order (#20).
+- `SimpleReferenceGenome` matched FASTA headers by substring, so `chr1` also collected `chr10`–`chr19` (#20).
+- `ReferenceManager.OptimizeCache` could deadlock against a concurrent writer (recursive RLock). The request and cache counters are now race-free (#20).
+- `LazyReferenceLoader` returned generated bases instead of reading the reference. Regions are now read from the FASTA (using `.fai` when present), so chromosomes with equal-length names no longer share sequence (#20).
+- The Metal `extract_kmers_small_k` kernel declared 256 KB of threadgroup memory, above the 32 KB limit. Its pipeline failed to build, and with it all Metal setup. It now uses 16 KB, and GPU counts match the CPU for k=3–8 (#20).
+- `cmd/experiments` (#20):
+  - fixed a data race in `population_specific_training`
+  - fixed a panic in `quick_validation` with fewer than five chromosomes
+  - `sequence_classifier` now returns a deterministic population instead of a random one
+- The Cromwell workflow's validation task hit SIGPIPE under `pipefail`, and `continueOnReturnCode 141` hid it, so the report stopped after the first file (#20).
 
 ## [0.7.0] - 2026-10-17
 
