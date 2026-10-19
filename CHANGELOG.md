@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `signal --profile-set NAME=VALUE` overrides signal-profile parameters (dwell, stall, skip, noise, adapter, offset and model scaling) for calibration runs. Overrides are validated before anything is written and recorded in the manifest as `signal.profile_overrides` (#14).
+- `dorado_identity.sh --squigulator [PATH]` simulates the same truth with squigulator and uses its median identity, minus `--tolerance` points (default 1.0), as the pass threshold. Without it, `--min-identity` applies (default 90.5%) (#14).
+- `transcriptome_bambu.sh` reports `injected_skip_isoforms_min_reads` and `novel_recall_any_fraction`. `MIN_GENE_FRACTION` sets the gene-read share an injected isoform needs to count as detectable (default 0.05) (#13).
+
+### Changed
+- **BREAKING (output):** the `dna_r10.4.1_e8.2_400bps_5khz` signal profile is calibrated against real R10.4.1 data with Dorado 2.1.2 SUP v5.2.0. The new values are dwell CV 0.31 (was 0.5), skip probability 0 (was 0.004), extra white noise 0 pA (was 1.0) and drift 0 pA (was 1.0); stalls stay at 0.004. Dorado median identity rises from 88.05% to 90.79%, against 91.47% for squigulator on the same truth, and the mean dwell (13.0 samples/base) matches real reads (13.1). Signal for a given seed differs from 0.8.0 (#14).
+- `dorado_identity.sh` passes signal relative to squigulator instead of at a fixed 95%, which no k-mer-table synthesizer reaches. Real reads reached 98.52% and squigulator 91.47% with the same model (#14).
+- `transcriptome_bambu.sh` defaults (#13):
+  - `NOVEL_RATE` is 0.2 (was 0.05). At 0.05 almost no injected isoform reaches the 5% gene share Bambu requires.
+  - `NDR` is 1 (Bambu's novel-discovery-rate filter off), since injected isoforms are the only true novel transcripts. `NDR=` keeps Bambu's default.
+  - Recall is scored over isoforms with at least 5 reads and 5% of their gene's reads.
+- The DNA signal profile's pore-model scaling (mean 93.692, stdev 23.506) was checked against Dorado's `dna_r10.4.1_e8.2_400bps_sup@v5.2.0` config.toml, and the profile comment now cites it (#14).
+
 ## [0.8.0] - 2026-10-18
 
 ### Added

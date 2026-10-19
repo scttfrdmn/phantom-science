@@ -272,9 +272,39 @@ distribution.
 `internal/genomics/signal` reimplements squigulator's algorithm: k-mer
 pore-model levels, gamma dwell, level and white noise, baseline drift,
 stalls, skips, an adapter leader, poly-A/T plateaus and int16 digitisation.
-The pore models are ONT's published tables. Basecalling identity with Dorado
-(`scripts/acceptance/dorado_identity.sh`, pass if the median identity is in
-[95%, 99.9%)) **has not been measured yet**.
+The pore models are ONT's published tables, scaled to pA with the fixed
+standardisation in Dorado's `dna_r10.4.1_e8.2_400bps_sup@v5.2.0` config
+(mean 93.6924 pA, stdev 23.5067 pA).
+
+`scripts/acceptance/dorado_identity.sh` basecalls the signal with Dorado
+SUP and aligns the calls to the source sequences. Measured on 2026-10-18
+with Dorado 2.1.2:
+
+| Signal | Median identity |
+|---|---|
+| Real R10.4.1 reads (`ont-open-data/pgx_as_2025.07`, against GRCh38) | 98.52% |
+| squigulator 0.5.0 | 91.47% |
+| `signal`, default DNA profile | 90.79% |
+| `signal`, the 0.8.0 DNA profile | 88.05% |
+
+The DNA profile's dwell, stall, skip and noise values were chosen in these
+runs: short dwells and skips cost accuracy, and the real dwell tail is
+reproduced by stalls on a low-variance gamma dwell (mean dwell 13.0
+samples/base, CV 0.89; real 13.1, CV 1.08). The remaining ~7-point gap to
+real reads is shared with squigulator and comes from the step-function
+level model, so the script passes signal within one point of squigulator
+rather than at a fixed identity. The RNA004 profile is not calibrated.
+
+### 5.4 cDNA transcriptome
+
+`scripts/acceptance/transcriptome_bambu.sh` runs Pychopper, minimap2 and
+Bambu on simulated cDNA reads and scores them against the simulation's
+truth. On GRCh38 chr22 with GENCODE v49 (200,000 reads, novel rate 0.2,
+2026-10-18): Bambu transcript counts correlate with the true read counts at
+Pearson 0.872 (log1p) and Spearman 0.832; Bambu (NDR 1) reports novel
+isoforms with precision 0.90 against the injected exon skips, and recovers
+55% of the injected exon-skip isoforms that hold at least 5 reads and 5% of
+their gene's reads.
 
 ---
 
@@ -288,7 +318,8 @@ The pore models are ONT's published tables. Basecalling identity with Dorado
 | Structured coalescent presets | yes | literature F_ST ranges, π ordering (calibrated) | LD, admixture, other populations |
 | Illumina qualities and errors | fixed quality ramp, no errors | — | everything |
 | ONT error and quality model | yes | parameter round trip | real basecalls |
-| Raw signal | yes | BLOW5 format (slow5tools, blue-crab) | Dorado identity |
+| Raw signal | yes | BLOW5 format (slow5tools, blue-crab); Dorado identity against squigulator | identity of real signal (~7 points lower) |
+| cDNA transcriptome | yes | Bambu counts and novel-isoform discovery | real cDNA libraries |
 
 ---
 

@@ -8,9 +8,9 @@ is missing.
 | Script | Checks | Issue | Status |
 |---|---|---|---|
 | `slow5_validate.sh` | BLOW5/SLOW5 files pass slow5tools and convert to pod5 | #15 | Passed: 132/132 checks with slow5tools 1.5.0 and blue-crab 0.6.0 (recorded in #15) |
-| `dorado_identity.sh` | Dorado basecalls of synthetic signal match the source sequences | #14 | Not run yet |
-| `transcriptome_bambu.sh` | Bambu quantification and novel-isoform discovery on simulated cDNA | #13 | Not run yet |
-| `pycoqc.sh` | PycoQC reads a generated `sequencing_summary.txt` | #16 | Not run yet |
+| `dorado_identity.sh` | Dorado basecalls of synthetic signal match the source sequences | #14 | Passed: 90.79% median identity against a squigulator baseline of 91.47% (threshold 90.46%), Dorado 2.1.2 SUP v5.2.0 |
+| `transcriptome_bambu.sh` | Bambu quantification and novel-isoform discovery on simulated cDNA | #13 | Completed on GRCh38 chr22 / GENCODE v49: count Pearson 0.872, Spearman 0.832; novel precision 0.90, recall 0.55 |
+| `pycoqc.sh` | PycoQC reads a generated `sequencing_summary.txt` | #16 | Passed: PycoQC 2.5.2 counted all 537 reads |
 | `../fetch-pore-model.sh` | Downloads an ONT k-mer pore model for `signal` | #14 | Used for the end-to-end example below |
 
 Until a script has been run, the feature it checks has only the repository's
@@ -83,18 +83,38 @@ it first re-encodes to zlib + svb-zd). It then basecalls with Dorado
 identity (PAF matches / alignment block length, primary alignments) and
 mean query coverage. It also prints a dwell histogram from the move tables.
 With `--real-pod5` it compares dwell and pA level distributions against
-real data, e.g. a slice of `s3://ont-open-data/UHRR_HG002_2026.06`.
+real data, e.g. a pod5 file from `s3://ont-open-data/pgx_as_2025.07`
+(PromethION FLO-PRO114M, 5 kHz).
 
 - Tools: `blue-crab`, `dorado`, `minimap2`, `samtools`, `awk` (required).
-  `slow5tools` is optional. The level comparison also needs python3 with
-  `pod5` and `numpy`.
+  `slow5tools` and `squigulator` are optional. The level comparison also
+  needs python3 with `pod5` and `numpy`.
 - Arguments: `--blow5 FILE` (one file) and `--truth FASTA|FASTQ` (required).
   Optional: `--model` (default `sup`), `--real-pod5`, `--outdir` (default
-  `./dorado_identity_out`), `--threads` (default 8), `--device`, `--rna`.
-- Pass: median identity in [95%, 99.9%). Expect about 98-99% for R10.4.1
-  with SUP. Identity of 99.9% or more means the noise model is too clean.
-  Below 95% means the dwell, stall or skip parameters are off. Exits 0 on
-  pass, 1 on fail, 2 on usage or tool errors.
+  `./dorado_identity_out`), `--threads` (default 8), `--device`, `--rna`,
+  `--squigulator [PATH]`, `--tolerance` (default 1.0 points),
+  `--min-identity` (default 90.5%).
+- Pass: median identity at or above the threshold and below 99.9% (at or
+  above 99.9% means the noise model is too clean). Exits 0 on pass, 1 on
+  fail, 2 on usage or tool errors.
+- Threshold: synthetic signal from ONT's k-mer level tables cannot reach the
+  identity of real reads. On 2026-10-18, with Dorado 2.1.2 and
+  `dna_r10.4.1_e8.2_400bps_sup@v5.2.0`, real R10.4.1 reads
+  (`pgx_as_2025.07`, 348 reads at MAPQ >= 20 against GRCh38) reached 98.52%
+  median identity, and squigulator 0.5.0, the algorithm `signal`
+  reimplements, reached 91.47% on the same truth as phantom-science. The
+  pass threshold is therefore relative to squigulator: with
+  `--squigulator`, the script simulates the same truth with squigulator,
+  basecalls it the same way, and passes `signal` output within `--tolerance`
+  points of it. Without it, `--min-identity` applies (90.5%: that baseline
+  minus one point).
+- Measured with the default `dna_r10.4.1_e8.2_400bps_5khz` profile, on the
+  end-to-end example below (158 reads, seed 1): median identity 90.79%;
+  dwell from Dorado's moves mean 13.03 samples/base, CV 0.886 (real: 13.12,
+  CV 1.077 over 5,325 reads); signal mean 93.8 pA, SD 23.8 (real: 97.8 pA,
+  SD 24.3).
+- `signal --profile-set NAME=VALUE` overrides profile parameters for
+  calibration runs; the overrides are recorded in the manifest.
 - `signal` writes one BLOW5 file per `--reads-per-file` reads (default 4000).
   Either pass one chunk, raise `--reads-per-file` so the run fits in one
   file, or merge the chunks first:
@@ -110,18 +130,37 @@ against the simulation's truth (`counts.tsv`, `novel_isoforms.tsv`).
 - Tools: `pychopper` >= 2.7, `minimap2` >= 2.22, `samtools` >= 1.10,
   `Rscript` with Bioconductor `bambu` >= 3.0. It also needs `go` to build
   phantom-science, unless `PHANTOM` points at a binary.
-- Environment (defaults): `READS` (200000), `SEED` (1), `NOVEL_RATE` (0.05),
-  `TIER` (sup), `KIT` (PCS114), `THREADS` (8), `NDR` (Bambu's default),
-  `MIN_NOVEL_READS` (5), `PHANTOM`.
+- Environment (defaults): `READS` (200000), `SEED` (1), `NOVEL_RATE` (0.2),
+  `TIER` (sup), `KIT` (PCS114), `THREADS` (8), `NDR` (1), `MIN_NOVEL_READS`
+  (5), `MIN_GENE_FRACTION` (0.05), `PHANTOM`.
 - Output: `OUTDIR/acceptance.tsv` and stdout. It reports the Pearson
   correlation of log1p(true reads) against log1p(Bambu counts) and the
   Spearman correlation, both over annotated transcripts. It also reports
-  novel-isoform precision and recall, scored on injected exon-skip isoforms
-  with at least `MIN_NOVEL_READS` reads. Alternative-3'-end isoforms keep
-  their parent's intron chain, so they are counted but not scored.
-- Pass criteria: the script exits 0 once the pipeline completes. Judge the
-  metrics yourself; there is no hard threshold. Expect high count
-  correlations, and recall that rises with the reads per novel isoform.
+  novel-isoform precision and recall, scored on injected exon-skip isoforms.
+  Alternative-3'-end isoforms keep their parent's intron chain, so they are
+  counted but not scored.
+- Detectable isoforms: recall is scored over injected exon-skip isoforms
+  with at least `MIN_NOVEL_READS` reads and at least `MIN_GENE_FRACTION` of
+  their gene's reads, because Bambu drops novel candidates below 5% of their
+  gene's reads (`min.readFractionByGene`). `novel_recall_any_fraction` also
+  reports recall over every isoform with enough reads. `NOVEL_RATE` 0.2
+  gives injected isoforms a share Bambu can find; at 0.05 almost none reach
+  5% of their gene.
+- `NDR` 1 turns off Bambu's novel-discovery-rate filter, which is tuned for
+  real data where most candidates are false. Here the injected isoforms are
+  the only true novel transcripts, so precision still counts false
+  discoveries. `NDR=` (empty) uses Bambu's default: on the run below that
+  gave precision 0.90 and recall 0.135.
+- Measured on 2026-10-18 (GRCh38 chr22 from UCSC, GENCODE v49 chr22, 11,615
+  transcripts, defaults above; Pychopper 2.7.10 found primers in 99.86% of
+  reads): count Pearson 0.872, Spearman 0.832; Bambu 3.8.3 reported 335
+  novel multi-exon isoforms, precision 0.90 (302 are injected exon skips);
+  recall 0.55 over 319 detectable isoforms, 0.23 over the 763 with at least
+  5 reads. Of the 265 new junctions of the detectable isoforms, 228 have at
+  least 5 aligned reads, so the misses are Bambu's read-class filters, not
+  missing evidence.
+- Pass criteria: the script exits 0 once the pipeline completes. There is
+  no hard threshold; compare with the figures above.
 
 ```sh
 awk '$1=="chr22"' gencode.v46.primary_assembly.annotation.gtf > chr22.gtf
@@ -149,6 +188,22 @@ PHANTOM_BIN=./phantom-science scripts/acceptance/pycoqc.sh
 scripts/acceptance/pycoqc.sh reads/ qc_report/
 ```
 
+## Tool versions
+
+These combinations worked on macOS arm64 (2026-10-18). Newer library
+versions broke each tool:
+
+- PycoQC 2.5.2 needs `pandas==1.5.3`, `numpy<2`, `plotly<6` and
+  `setuptools<81` (Python 3.11). With pandas 2 it fails with "sort array is
+  read-only".
+- Pychopper 2.7.10 needs `pandas<3`; its plotting step fails on pandas 3.
+- Bambu 3.8.3 needs xgboost < 2 (xgboost 3 fails with "Got numeric 'y'").
+  Bioconda has no osx-arm64 Bambu, so install it from Bioconductor into a
+  conda env with R 4.4 and `compilers`, after building xgboost 1.7.11.1 from
+  the CRAN archive.
+- Dorado 2.1.2 (`dorado-2.1.2-osx-arm64.zip` from ONT's CDN), blue-crab
+  0.6.0, squigulator 0.5.0 (built from source), minimap2 2.31.
+
 ## End to end: reads -> signal -> basecalling identity
 
 ```sh
@@ -166,7 +221,8 @@ model=$(scripts/fetch-pore-model.sh dna_r10.4.1_e8.2_400bps)
 
 # 4. Validate the files, then basecall and score.
 scripts/acceptance/slow5_validate.sh sig/
-scripts/acceptance/dorado_identity.sh --blow5 sig/*_0.blow5 --truth sig/truth.fa --device metal
+scripts/acceptance/dorado_identity.sh --blow5 sig/*_0.blow5 --truth sig/truth.fa --device metal \
+    --squigulator
 ```
 
 `truth.fa` holds, for each BLOW5 read ID, the sequence the signal was made

@@ -222,9 +222,9 @@ are in [scripts/acceptance/README.md](scripts/acceptance/README.md).
 | Feature | Script | Status |
 |---|---|---|
 | BLOW5 writer (#15) | `slow5_validate.sh` | Passed 132/132 checks with slow5tools 1.5.0 and blue-crab 0.6.0, including a pod5 round trip |
-| Signal synthesis (#14) | `dorado_identity.sh` | Not run yet: Dorado basecall identity is unmeasured |
-| Transcriptome (#13) | `transcriptome_bambu.sh` | Not run yet: Bambu quantification is unmeasured |
-| Sequencing summary (#16) | `pycoqc.sh` | Not run yet |
+| Signal synthesis (#14) | `dorado_identity.sh` | Passed: Dorado SUP median identity 90.79%, within one point of squigulator (91.47%) on the same truth. Real R10.4.1 reads reach 98.52%, so synthetic signal is not yet basecalled like real signal |
+| Transcriptome (#13) | `transcriptome_bambu.sh` | Completed on GRCh38 chr22: Bambu count correlation 0.872 (Pearson, log1p), novel-isoform precision 0.90 and recall 0.55 over detectable isoforms |
+| Sequencing summary (#16) | `pycoqc.sh` | Passed: PycoQC 2.5.2 counted all 537 reads |
 
 ## Fingerprinting
 
