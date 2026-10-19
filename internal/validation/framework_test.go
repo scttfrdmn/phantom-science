@@ -119,12 +119,16 @@ func TestValidationWithRegulatoryCompliance(t *testing.T) {
 	framework := NewFramework(config)
 	results := framework.RunValidation([]byte("test data"))
 
-	if !results.RegulatoryReady {
-		t.Error("Expected regulatory readiness with FDA/EMA compliance")
+	// "hardy_weinberg" is not a statistical test, so the run fails. Setting
+	// the FDA/EMA flags must not turn a failed run into a regulatory claim.
+	if results.OverallPass {
+		t.Fatal("run with an unknown test passed; test premise broken")
 	}
-
-	if results.ComplianceLevel != "regulatory" {
-		t.Errorf("Expected compliance level 'regulatory', got %s", results.ComplianceLevel)
+	if results.RegulatoryReady {
+		t.Error("RegulatoryReady = true from FDA/EMA config flags alone, with failing tests")
+	}
+	if results.ComplianceLevel == "regulatory" {
+		t.Errorf("ComplianceLevel = %q from config flags alone", results.ComplianceLevel)
 	}
 }
 
@@ -143,8 +147,58 @@ func TestValidationWithAcademicCompliance(t *testing.T) {
 	framework := NewFramework(config)
 	results := framework.RunValidation([]byte("academic test data"))
 
-	if !results.AcademicReady {
-		t.Error("Expected academic readiness with peer review settings")
+	// Both tests are unknown statistical tests and fail: a failed run is
+	// never academically ready, whatever the academic settings say.
+	if results.OverallPass {
+		t.Fatal("run with unknown tests passed; test premise broken")
+	}
+	if results.AcademicReady {
+		t.Error("AcademicReady = true although validation tests failed")
+	}
+}
+
+func TestReadinessRequiresPassingRun(t *testing.T) {
+	fastq := "@read1\nACGTACGT\n+\nIIIIIIII\n"
+	base := types.ValidationConfig{
+		Enable:           true,
+		StatisticalTests: []string{"format_compliance"},
+		RegulatoryCompliance: types.RegulatoryConfig{
+			FDACompliance: true,
+			EMACompliance: true,
+		},
+	}
+
+	// Passing run, no academic flag: passes, but claims neither readiness.
+	r := NewFramework(base).RunValidation(fastq)
+	if !r.OverallPass {
+		t.Fatalf("format_compliance failed on valid FASTQ: %+v", r.Tests)
+	}
+	if r.RegulatoryReady {
+		t.Error("RegulatoryReady = true; no regulatory validation procedure exists")
+	}
+	if r.ComplianceLevel == "regulatory" {
+		t.Errorf("ComplianceLevel = %q; no regulatory validation procedure exists", r.ComplianceLevel)
+	}
+	if r.AcademicReady {
+		t.Error("AcademicReady = true without academic validation requested")
+	}
+
+	// Passing run with the academic flag: academically ready.
+	withAcademic := base
+	withAcademic.AcademicValidation.PeerReviewReady = true
+	r = NewFramework(withAcademic).RunValidation(fastq)
+	if !r.OverallPass || !r.AcademicReady {
+		t.Errorf("passing run with peer_review_ready: OverallPass=%v AcademicReady=%v, want true, true", r.OverallPass, r.AcademicReady)
+	}
+	if r.RegulatoryReady {
+		t.Error("RegulatoryReady = true; no regulatory validation procedure exists")
+	}
+
+	// Failing run with the academic flag: not ready.
+	withAcademic.StatisticalTests = append(withAcademic.StatisticalTests, "no_such_test")
+	r = NewFramework(withAcademic).RunValidation(fastq)
+	if r.OverallPass || r.AcademicReady || r.RegulatoryReady {
+		t.Errorf("failing run: OverallPass=%v AcademicReady=%v RegulatoryReady=%v, want all false", r.OverallPass, r.AcademicReady, r.RegulatoryReady)
 	}
 }
 
@@ -586,12 +640,16 @@ func TestValidationWithComplexRegulatoryConfig(t *testing.T) {
 	framework := NewFramework(config)
 	results := framework.RunValidation("@read1\nATCG\n+\nIIII")
 
-	if results.ComplianceLevel != "regulatory" {
-		t.Errorf("Expected regulatory compliance level, got %s", results.ComplianceLevel)
+	// Validation studies and quality metrics in the config are not run by
+	// the framework, so they cannot support a regulatory claim.
+	if results.ComplianceLevel == "regulatory" {
+		t.Errorf("ComplianceLevel = %q from config alone", results.ComplianceLevel)
 	}
-
-	if !results.RegulatoryReady {
-		t.Error("Should be regulatory ready with FDA and EMA compliance")
+	if results.RegulatoryReady {
+		t.Error("RegulatoryReady = true from config alone")
+	}
+	if !strings.Contains(results.Summary, "regulatory") {
+		t.Errorf("Summary %q does not say regulatory readiness was not assessed", results.Summary)
 	}
 }
 

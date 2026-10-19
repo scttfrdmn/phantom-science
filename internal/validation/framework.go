@@ -101,15 +101,10 @@ func WithReadLengths(exp ReadLengthExpectation) Option {
 	return func(f *Framework) { f.readLengths = exp }
 }
 
-// RunValidation runs the configured tests on data, which may be a FASTQ
-// string, []byte or *ValidationData (some tests accept only a string). The
-// results pass when at least one test ran and every test passed. Unknown test
-// names fail.
-//
-// ComplianceLevel is "regulatory" and RegulatoryReady is true when the
-// config sets both fda_compliance and ema_compliance, and ComplianceLevel is
-// "academic" otherwise; these labels reflect configuration only.
-// AcademicReady is true whenever at least one test ran, even if tests failed.
+// RunValidation runs every configured test against data. AcademicReady is
+// set only when all tests ran and passed and academic validation
+// (PeerReviewReady) was requested; RegulatoryReady is never set, because no
+// regulatory validation procedure exists. See types.ValidationResults.
 func (f *Framework) RunValidation(data interface{}) types.ValidationResults {
 	// Check if validation is disabled
 	if !f.config.Enable {
@@ -123,22 +118,15 @@ func (f *Framework) RunValidation(data interface{}) types.ValidationResults {
 		}
 	}
 
-	// Determine compliance level based on regulatory configuration
-	complianceLevel := "academic"
-	regulatoryReady := false
-
-	if f.config.RegulatoryCompliance.FDACompliance && f.config.RegulatoryCompliance.EMACompliance {
-		complianceLevel = "regulatory"
-		regulatoryReady = true
-	}
-
+	// Readiness is decided after the tests run. RegulatoryReady stays false:
+	// no FDA/EMA validation procedure is implemented, so the regulatory
+	// config flags cannot support a regulatory claim.
 	results := types.ValidationResults{
 		OverallPass:     true,
-		ComplianceLevel: complianceLevel,
+		ComplianceLevel: "none",
 		Tests:           []types.ValidationResult{},
-		Summary:         "All validation tests passed",
-		RegulatoryReady: regulatoryReady,
-		AcademicReady:   true,
+		RegulatoryReady: false,
+		AcademicReady:   false,
 	}
 
 	// Run configured statistical tests
@@ -168,14 +156,18 @@ func (f *Framework) RunValidation(data interface{}) types.ValidationResults {
 		}
 	}
 
-	// Update summary based on results
+	// Update summary and readiness based on results
 	if len(results.Tests) == 0 {
 		results.OverallPass = false
-		results.AcademicReady = false
-		results.RegulatoryReady = false
 		results.Summary = "No validation tests configured"
 	} else if results.OverallPass {
 		results.Summary = fmt.Sprintf("All %d validation tests passed", len(results.Tests))
+		results.AcademicReady = f.config.AcademicValidation.PeerReviewReady
+		if results.AcademicReady {
+			results.ComplianceLevel = "academic"
+		} else {
+			results.ComplianceLevel = "tests_passed"
+		}
 	} else {
 		failedTests := 0
 		for _, test := range results.Tests {
@@ -184,6 +176,11 @@ func (f *Framework) RunValidation(data interface{}) types.ValidationResults {
 			}
 		}
 		results.Summary = fmt.Sprintf("%d of %d tests failed", failedTests, len(results.Tests))
+	}
+
+	rc := f.config.RegulatoryCompliance
+	if rc.FDACompliance || rc.EMACompliance || len(rc.ValidationStudies) > 0 || len(rc.QualityMetrics) > 0 {
+		results.Summary += "; regulatory readiness not assessed (no FDA/EMA validation procedure is implemented)"
 	}
 
 	return results

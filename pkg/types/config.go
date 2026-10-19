@@ -300,9 +300,9 @@ type ValidationConfig struct {
 	AcademicValidation         AcademicConfig   `json:"academic_validation"`
 }
 
-// RegulatoryConfig holds flags copied into validation results. Setting
-// FDACompliance and EMACompliance does not run any FDA or EMA procedure;
-// ValidationStudies and QualityMetrics are not used.
+// RegulatoryConfig records regulatory intentions. The validation framework
+// does not implement an FDA/EMA procedure, so these settings never make
+// ValidationResults.RegulatoryReady true.
 type RegulatoryConfig struct {
 	FDACompliance     bool     `json:"fda_compliance"`
 	EMACompliance     bool     `json:"ema_compliance"`
@@ -343,17 +343,23 @@ type ValidationResult struct {
 	ComplianceOK bool      `json:"compliance_ok"`
 }
 
-// ValidationResults collects the results of a validation run.
-// ComplianceLevel and RegulatoryReady reflect the RegulatoryCompliance flags
-// in the configuration, and AcademicReady only that at least one test ran;
-// none of them is the result of a regulatory or academic review.
+// ValidationResults is the outcome of one validation-framework run.
 type ValidationResults struct {
-	OverallPass     bool               `json:"overall_pass"`
+	// OverallPass is true only if at least one test ran and every test passed.
+	OverallPass bool `json:"overall_pass"`
+	// ComplianceLevel reflects only what ran: "none" (disabled, no tests, or
+	// a test failed), "tests_passed" (all tests passed), or "academic" (all
+	// tests passed and academic validation was requested). Config flags alone
+	// never raise it, and no "regulatory" level is produced.
 	ComplianceLevel string             `json:"compliance_level"`
 	Tests           []ValidationResult `json:"tests"`
 	Summary         string             `json:"summary"`
-	RegulatoryReady bool               `json:"regulatory_ready"`
-	AcademicReady   bool               `json:"academic_ready"`
+	// RegulatoryReady is always false: no FDA/EMA validation procedure is
+	// implemented, so RegulatoryConfig flags cannot establish readiness. The
+	// field is kept for JSON compatibility.
+	RegulatoryReady bool `json:"regulatory_ready"`
+	// AcademicReady is OverallPass && AcademicValidation.PeerReviewReady.
+	AcademicReady bool `json:"academic_ready"`
 }
 
 // Placeholder types for PhantomConfig sections that have no settings yet.
