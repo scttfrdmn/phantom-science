@@ -78,6 +78,7 @@ func main() {
 
 	// Train population-specific models
 	results := make(map[string]PopulationResults)
+	var resultsMu sync.Mutex // results is written from one goroutine per profile
 	var wg sync.WaitGroup
 
 	for _, profile := range profiles {
@@ -92,7 +93,9 @@ func main() {
 			duration := time.Since(start)
 
 			result.TrainingTime = duration
+			resultsMu.Lock()
 			results[p.Population] = result
+			resultsMu.Unlock()
 
 			fmt.Printf("[POPULATION %s] ✅ Training complete in %v\n", p.Population, duration)
 		}(profile)
