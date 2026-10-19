@@ -19,16 +19,31 @@
 #   awk '$1=="chr22"' gencode.v46.primary_assembly.annotation.gtf > chr22.gtf
 #
 # Environment overrides (defaults in brackets):
-#   READS [200000]  SEED [1]  NOVEL_RATE [0.05]  TIER [sup]  KIT [PCS114]
-#   THREADS [8]  NDR [Bambu default]  MIN_NOVEL_READS [5]
+#   READS [200000]  SEED [1]  NOVEL_RATE [0.2]  TIER [sup]  KIT [PCS114]
+#   THREADS [8]  NDR [1]  MIN_NOVEL_READS [5]
+#   MIN_GENE_FRACTION [0.05]
 #   PHANTOM [build ./phantom-science into OUTDIR/bin]
 #
 # Metrics written to OUTDIR/acceptance.tsv and printed:
 #   - Pearson correlation of log1p(true reads) vs log1p(Bambu counts) and
 #     Spearman correlation, over annotated transcripts;
 #   - novel-isoform precision (Bambu novel transcripts whose intron chain
-#     equals an injected exon-skip isoform) and recall (injected exon-skip
-#     isoforms with >= MIN_NOVEL_READS reads that Bambu reports).
+#     equals an injected exon-skip isoform) and recall over the detectable
+#     injected exon-skip isoforms: those with >= MIN_NOVEL_READS reads and
+#     >= MIN_GENE_FRACTION of their gene's reads. Bambu drops novel
+#     candidates below 5% of their gene's reads by default
+#     (min.readFractionByGene = 0.05), so isoforms under that share cannot be
+#     found and are not scored; recall over all isoforms with enough reads is
+#     reported too, as novel_recall_any_fraction.
+# NOVEL_RATE is the share of each eligible transcript's molecules that come
+# from its novel isoform. Its gene share is lower still, so at the
+# simulator's default of 0.05 almost no injected isoform reaches Bambu's 5%
+# cutoff; 0.2 gives most of them a detectable share.
+# NDR defaults to 1 (Bambu's novel-discovery-rate filter off). Bambu's own
+# default is tuned for real data, where most candidates are false; here the
+# injected isoforms are the only true novel transcripts, so NDR=1 measures
+# whether the simulated reads make them discoverable, and precision still
+# counts false discoveries. Set NDR= (empty) for Bambu's default.
 # Alternative-3'-end isoforms keep their parent's intron chain, so a
 # junction-based caller like Bambu cannot report them as new; they are
 # counted but not scored.
@@ -46,12 +61,13 @@ GTF=$2
 OUT=${3:-transcriptome_bambu_out}
 READS=${READS:-200000}
 SEED=${SEED:-1}
-NOVEL_RATE=${NOVEL_RATE:-0.05}
+NOVEL_RATE=${NOVEL_RATE:-0.2}
 TIER=${TIER:-sup}
 KIT=${KIT:-PCS114}
 THREADS=${THREADS:-8}
-NDR=${NDR:-}
+NDR=${NDR-1}
 MIN_NOVEL_READS=${MIN_NOVEL_READS:-5}
+MIN_GENE_FRACTION=${MIN_GENE_FRACTION:-0.05}
 
 die() {
 	echo "transcriptome_bambu: $*" >&2
@@ -118,6 +134,7 @@ suppressPackageStartupMessages(library(bambu))
 a <- commandArgs(trailingOnly = TRUE)
 bam <- a[1]; gtf <- a[2]; genome <- a[3]; outdir <- a[4]; simdir <- a[5]
 ncore <- as.integer(a[6]); ndr <- a[7]; min_reads <- as.integer(a[8]); metrics <- a[9]
+min_gene_fraction <- as.numeric(a[10])
 
 anno <- prepareAnnotations(gtf)
 se <- if (nzchar(ndr)) {
@@ -157,20 +174,25 @@ nov <- rd("novel_isoforms.tsv")
 nov$reads <- as.numeric(nov$reads)
 skip <- nov[nov$novel_isoform == "skip_exon" & nov$intron_chain != "", ]
 skip$key <- paste0(skip$chrom, ":", skip$strand, ":", skip$intron_chain)
-detectable <- skip[skip$reads >= min_reads, ]
+gene_reads <- tapply(truth$reads, truth$gene_id, sum)
+skip$gene_fraction <- skip$reads / as.numeric(gene_reads[skip$gene_id])
+enough <- skip[skip$reads >= min_reads, ]
+detectable <- enough[enough$gene_fraction >= min_gene_fraction, ]
 recall <- if (nrow(detectable) > 0) mean(detectable$key %in% bambu_keys) else NA
+recall_any <- if (nrow(enough) > 0) mean(enough$key %in% bambu_keys) else NA
 precision <- if (length(bambu_keys) > 0) mean(bambu_keys %in% skip$key) else NA
 
 m <- data.frame(
   metric = c("annotated_transcripts", "pearson_log1p_counts", "spearman_counts",
              "bambu_novel_multiexon", "injected_skip_isoforms", "injected_skip_isoforms_detectable",
-             "injected_alt3_isoforms", "novel_precision", "novel_recall"),
+             "injected_skip_isoforms_min_reads", "injected_alt3_isoforms", "novel_precision",
+             "novel_recall", "novel_recall_any_fraction"),
   value = c(nrow(ann), pearson, spearman, length(bambu_keys), nrow(skip), nrow(detectable),
-            sum(nov$novel_isoform == "alt_3prime"), precision, recall))
+            nrow(enough), sum(nov$novel_isoform == "alt_3prime"), precision, recall, recall_any))
 write.table(m, metrics, sep = "\t", quote = FALSE, row.names = FALSE)
 print(m, row.names = FALSE)
 RSCRIPT
 Rscript --vanilla "$OUT/score_bambu.R" "$OUT/aln.bam" "$GTF" "$GENOME" "$OUT/bambu" "$OUT/sim" \
-	"$THREADS" "$NDR" "$MIN_NOVEL_READS" "$OUT/acceptance.tsv"
+	"$THREADS" "$NDR" "$MIN_NOVEL_READS" "$OUT/acceptance.tsv" "$MIN_GENE_FRACTION"
 
 echo "== done: metrics in $OUT/acceptance.tsv"
