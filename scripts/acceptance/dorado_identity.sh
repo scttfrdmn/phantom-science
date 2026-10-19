@@ -3,9 +3,18 @@
 # synthetic BLOW5 with Dorado and align the calls to the known source
 # sequences.
 #
-# Expected for R10.4.1 DNA with Dorado SUP: ~98–99% median identity.
-#   100%   -> noise model too clean
-#   < 95%  -> dwell / stall / skip parameters are off
+# Real R10.4.1 DNA reads reach ~98.5% median identity with Dorado SUP, but
+# signal synthesised from ONT's k-mer level tables with squigulator's
+# step-function algorithm does not: squigulator itself reaches ~91.5%
+# (Dorado 2.1.2, dna_r10.4.1_e8.2_400bps_sup@v5.2.0). The pass criterion is
+# therefore relative to that algorithm, not to real data:
+#   >= 99.9%                -> FAIL, noise model too clean
+#   >= baseline - tolerance -> PASS
+#   below                   -> FAIL, dwell / stall / skip / noise parameters are off
+# The baseline is measured live with --squigulator (squigulator simulates the
+# same truth and its signal is basecalled the same way), or set with
+# --min-identity (default 90.5%, i.e. the squigulator figure above minus one
+# point).
 #
 # Optionally compares per-base dwell (from Dorado's move table) and pA level
 # distributions with a real pod5 slice, e.g. from ONT open data
@@ -14,7 +23,8 @@
 # Usage:
 #   scripts/acceptance/dorado_identity.sh --blow5 reads.blow5 --truth truth.fa \
 #       [--model sup] [--real-pod5 real.pod5] [--outdir DIR] [--threads N] \
-#       [--device DEV] [--rna]
+#       [--device DEV] [--rna] [--squigulator [PATH]] [--tolerance PTS] \
+#       [--min-identity PCT]
 #
 #   --blow5      synthetic signal (BLOW5/SLOW5); converted to pod5 with blue-crab s2p
 #   --truth      source sequences (FASTA or FASTQ) whose names are the read IDs
@@ -25,17 +35,22 @@
 #   --threads    minimap2/samtools threads (default: 8)
 #   --device     Dorado --device (e.g. cpu, metal, cuda:0)
 #   --rna        direct RNA: minimap2 -x splice -uf -k14 instead of map-ont
+#   --squigulator  also simulate the truth with squigulator (binary on PATH, or
+#                PATH) using -x dna-r10-prom (rna004-prom with --rna) and use
+#                its median identity minus --tolerance as the pass threshold
+#   --tolerance  points below the squigulator baseline still passing (default 1.0)
+#   --min-identity  threshold in percent without --squigulator (default 90.5)
 #
 # Requires: blue-crab (pip install blue-crab; slow5tools itself has no s2p),
 # dorado, minimap2, samtools, awk. slow5tools is optional: when present the
 # input is first re-encoded to zlib + svb-zd, because the PyPI blue-crab build
 # cannot read zstd-compressed BLOW5. The level
 # comparison additionally needs python3 with the pod5 and numpy packages
-# (skipped otherwise). Exits 0 if the median identity is in [95%, 99.9%],
-# 1 otherwise, 2 on usage/tool errors.
+# (skipped otherwise). Exits 0 on PASS, 1 on FAIL, 2 on usage/tool errors.
 set -euo pipefail
 
 BLOW5="" TRUTH="" MODEL="sup" REAL="" OUTDIR="./dorado_identity_out" THREADS=8 DEVICE="" RNA=0
+SQUIG="" TOLERANCE=1.0 MIN_IDENTITY=90.5
 
 die() { echo "error: $*" >&2; exit 2; }
 usage() { awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"; }
@@ -50,6 +65,10 @@ while [[ $# -gt 0 ]]; do
     --threads) THREADS="$2"; shift 2 ;;
     --device) DEVICE="$2"; shift 2 ;;
     --rna) RNA=1; shift ;;
+    --squigulator)
+      if [[ $# -gt 1 && "$2" != --* ]]; then SQUIG="$2"; shift 2; else SQUIG="squigulator"; shift; fi ;;
+    --tolerance) TOLERANCE="$2"; shift 2 ;;
+    --min-identity) MIN_IDENTITY="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) usage >&2; die "unknown argument: $1" ;;
   esac
@@ -61,7 +80,7 @@ done
 [[ -z "$REAL" || -e "$REAL" ]] || die "no such file: $REAL"
 
 missing=()
-for tool in blue-crab dorado minimap2 samtools awk; do
+for tool in blue-crab dorado minimap2 samtools awk ${SQUIG:+"$SQUIG"}; do
   command -v "$tool" >/dev/null 2>&1 || missing+=("$tool")
 done
 if [[ ${#missing[@]} -gt 0 ]]; then
@@ -72,59 +91,89 @@ if [[ ${#missing[@]} -gt 0 ]]; then
   exit 2
 fi
 
-mkdir -p "$OUTDIR/pod5"
-POD5="$OUTDIR/pod5/synthetic.pod5"
-CALLS="$OUTDIR/calls.bam"
-FASTQ="$OUTDIR/calls.fastq"
-PAF="$OUTDIR/calls.paf"
-
-S2P_IN="$BLOW5"
-if command -v slow5tools >/dev/null 2>&1; then
-  echo "== slow5tools view -c zlib -s svb-zd (re-encode for blue-crab)" >&2
-  S2P_IN="$OUTDIR/reencoded.blow5"
-  slow5tools view "$BLOW5" -c zlib -s svb-zd -o "$S2P_IN"
-fi
-echo "== blue-crab s2p" >&2
-rm -f "$POD5"
-blue-crab s2p "$S2P_IN" -o "$POD5"
-
-dorado_args=(basecaller --emit-moves "$MODEL" "$OUTDIR/pod5")
-[[ -n "$DEVICE" ]] && dorado_args+=(--device "$DEVICE")
-echo "== dorado ${dorado_args[*]}" >&2
-dorado "${dorado_args[@]}" > "$CALLS"
-samtools fastq -@ "$THREADS" "$CALLS" > "$FASTQ" 2>/dev/null
-
 preset=(-x map-ont)
 [[ $RNA -eq 1 ]] && preset=(-x splice -uf -k14)
-echo "== minimap2 ${preset[*]}" >&2
-minimap2 -c --secondary=no -t "$THREADS" "${preset[@]}" "$TRUTH" "$FASTQ" > "$PAF" 2>/dev/null
 
-ncalls=$(awk 'NR % 4 == 1' "$FASTQ" | wc -l | tr -d ' ')
-# PAF: col10 = matches, col11 = alignment block length; identity = 10/11
-# (BLAST identity, gaps included). Keep the primary (tp:A:P) alignment of
-# each read.
-awk '{
-  tp = ""
-  for (i = 13; i <= NF; i++) if ($i ~ /^tp:A:/) tp = substr($i, 6)
-  if (tp == "P" && !($1 in seen)) { seen[$1] = 1; print $10 / $11, $10, $11, $2, $4 - $3 }
-}' "$PAF" | sort -g > "$OUTDIR/identity.txt"
-naln=$(wc -l < "$OUTDIR/identity.txt" | tr -d ' ')
-[[ "$naln" -gt 0 ]] || { echo "error: no reads aligned ($ncalls basecalled)" >&2; exit 1; }
+# score BLOW5 DIR: convert to pod5, basecall with moves, align to the truth
+# and print the identity summary. Sets MEDIAN and CALLS_BAM.
+score() {
+  local blow5=$1 dir=$2
+  mkdir -p "$dir/pod5"
+  local pod5="$dir/pod5/synthetic.pod5" calls="$dir/calls.bam" fastq="$dir/calls.fastq" paf="$dir/calls.paf"
+  local s2p_in="$blow5"
+  if command -v slow5tools >/dev/null 2>&1; then
+    echo "== slow5tools view -c zlib -s svb-zd (re-encode for blue-crab)" >&2
+    s2p_in="$dir/reencoded.blow5"
+    slow5tools view "$blow5" -c zlib -s svb-zd -o "$s2p_in"
+  fi
+  echo "== blue-crab s2p" >&2
+  rm -f "$pod5"
+  blue-crab s2p "$s2p_in" -o "$pod5"
 
-read -r median mean wmean qcov <<<"$(awk '
-  { id[NR] = $1; s += $1; m += $2; b += $3; q += $5 / $4 }
-  END {
-    med = (NR % 2) ? id[(NR + 1) / 2] : (id[NR / 2] + id[NR / 2 + 1]) / 2
-    printf "%.5f %.5f %.5f %.4f\n", med, s / NR, m / b, q / NR
-  }' "$OUTDIR/identity.txt")"
+  local dorado_args=(basecaller --emit-moves "$MODEL" "$dir/pod5")
+  [[ -n "$DEVICE" ]] && dorado_args+=(--device "$DEVICE")
+  echo "== dorado ${dorado_args[*]}" >&2
+  dorado "${dorado_args[@]}" > "$calls"
+  samtools fastq -@ "$THREADS" "$calls" > "$fastq" 2>/dev/null
 
-echo
-echo "basecalled reads:     $ncalls"
-echo "aligned (primary):    $naln"
-echo "median identity:      $(awk -v x="$median" 'BEGIN{printf "%.2f%%", 100*x}')"
-echo "mean identity:        $(awk -v x="$mean" 'BEGIN{printf "%.2f%%", 100*x}')"
-echo "aggregate identity:   $(awk -v x="$wmean" 'BEGIN{printf "%.2f%%", 100*x}')"
-echo "mean query coverage:  $(awk -v x="$qcov" 'BEGIN{printf "%.1f%%", 100*x}')"
+  echo "== minimap2 ${preset[*]}" >&2
+  minimap2 -c --secondary=no -t "$THREADS" "${preset[@]}" "$TRUTH" "$fastq" > "$paf" 2>/dev/null
+
+  local ncalls naln mean wmean qcov
+  ncalls=$(awk 'NR % 4 == 1' "$fastq" | wc -l | tr -d ' ')
+  # PAF: col10 = matches, col11 = alignment block length; identity = 10/11
+  # (BLAST identity, gaps included). Keep the primary (tp:A:P) alignment of
+  # each read.
+  awk '{
+    tp = ""
+    for (i = 13; i <= NF; i++) if ($i ~ /^tp:A:/) tp = substr($i, 6)
+    if (tp == "P" && !($1 in seen)) { seen[$1] = 1; print $10 / $11, $10, $11, $2, $4 - $3 }
+  }' "$paf" | sort -g > "$dir/identity.txt"
+  naln=$(wc -l < "$dir/identity.txt" | tr -d ' ')
+  [[ "$naln" -gt 0 ]] || { echo "error: no reads aligned ($ncalls basecalled)" >&2; exit 1; }
+
+  read -r MEDIAN mean wmean qcov <<<"$(awk '
+    { id[NR] = $1; s += $1; m += $2; b += $3; q += $5 / $4 }
+    END {
+      med = (NR % 2) ? id[(NR + 1) / 2] : (id[NR / 2] + id[NR / 2 + 1]) / 2
+      printf "%.5f %.5f %.5f %.4f\n", med, s / NR, m / b, q / NR
+    }' "$dir/identity.txt")"
+  CALLS_BAM=$calls
+
+  echo
+  echo "basecalled reads:     $ncalls"
+  echo "aligned (primary):    $naln"
+  echo "median identity:      $(awk -v x="$MEDIAN" 'BEGIN{printf "%.2f%%", 100*x}')"
+  echo "mean identity:        $(awk -v x="$mean" 'BEGIN{printf "%.2f%%", 100*x}')"
+  echo "aggregate identity:   $(awk -v x="$wmean" 'BEGIN{printf "%.2f%%", 100*x}')"
+  echo "mean query coverage:  $(awk -v x="$qcov" 'BEGIN{printf "%.1f%%", 100*x}')"
+}
+
+echo "== synthetic signal"
+score "$BLOW5" "$OUTDIR"
+median=$MEDIAN
+CALLS=$CALLS_BAM
+POD5="$OUTDIR/pod5/synthetic.pod5"
+
+threshold=$(awk -v x="$MIN_IDENTITY" 'BEGIN{printf "%.5f", x / 100}')
+if [[ -n "$SQUIG" ]]; then
+  echo
+  echo "== squigulator baseline (same truth)"
+  profile=dna-r10-prom
+  [[ $RNA -eq 1 ]] && profile=rna004-prom
+  # squigulator reads FASTA; take the first word of each header as the name.
+  awk 'NR == 1 { fq = /^@/ }
+       fq && NR % 4 == 1 { print ">" substr($1, 2); next }
+       fq && NR % 4 == 2 { print; next }
+       !fq { if (/^>/) print $1; else print }' "$TRUTH" > "$OUTDIR/squigulator_truth.fa"
+  "$SQUIG" -x "$profile" --full-contigs --ont-friendly=yes --seed 1 \
+    -o "$OUTDIR/squigulator.blow5" "$OUTDIR/squigulator_truth.fa" >&2
+  score "$OUTDIR/squigulator.blow5" "$OUTDIR/squigulator"
+  baseline=$MEDIAN
+  threshold=$(awk -v b="$baseline" -v t="$TOLERANCE" 'BEGIN{printf "%.5f", b - t / 100}')
+  echo "squigulator baseline: $(awk -v x="$baseline" 'BEGIN{printf "%.2f%%", 100*x}')"
+fi
+echo "pass threshold:       $(awk -v x="$threshold" 'BEGIN{printf "%.2f%%", 100*x}')"
 
 # Per-base dwell (samples) from the move table: mv:B:c,stride,m1,m2,...;
 # each 1 starts a base, its dwell is stride × (moves until the next 1).
@@ -191,12 +240,12 @@ PY
 fi
 
 echo
-pass=$(awk -v x="$median" 'BEGIN{print (x >= 0.95 && x < 0.999) ? 1 : 0}')
+pass=$(awk -v x="$median" -v t="$threshold" 'BEGIN{print (x >= t && x < 0.999) ? 1 : 0}')
 if awk -v x="$median" 'BEGIN{exit !(x >= 0.999)}'; then
   echo "FAIL: identity ~100%: the noise model is too clean"
-elif awk -v x="$median" 'BEGIN{exit !(x < 0.95)}'; then
-  echo "FAIL: identity < 95%: dwell, stall or skip parameters are off"
+elif [[ "$pass" -ne 1 ]]; then
+  echo "FAIL: identity below the threshold: dwell, stall, skip or noise parameters are off"
 else
-  echo "PASS: identity within the realistic range (expect ~98-99% for R10.4.1 SUP)"
+  echo "PASS: identity at or above the threshold (real R10.4.1 SUP reads reach ~98.5%)"
 fi
 [[ "$pass" -eq 1 ]]

@@ -564,7 +564,7 @@ func TestPresetsAndValidate(t *testing.T) {
 		func(p *Profile) { p.SkipProb = 1.5 },
 		func(p *Profile) { p.StallProb, p.SkipProb = 0.6, 0.6 },
 		func(p *Profile) { p.StallMin, p.StallMax = 20, 5 },
-		func(p *Profile) { p.DriftTau = 0 },
+		func(p *Profile) { p.DriftPA, p.DriftTau = 1, 0 },
 		func(p *Profile) { p.SpeedBPS = 1e6 },
 		func(p *Profile) { p.WhiteNoisePA = math.NaN() },
 	}

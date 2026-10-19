@@ -77,14 +77,16 @@ type Manifest struct {
 // it names, it reproduces every BLOW5 byte. Inputs are recorded by base name,
 // size and SHA-256, never by path.
 type Signal struct {
-	Profile           string  `json:"profile"`
-	PoreModel         Input   `json:"pore_model"`
-	ModelUnits        string  `json:"model_units"` // "pa" or "standardised"
-	RecordCompression string  `json:"record_compression"`
-	SignalCompression string  `json:"signal_compression"`
-	ReadsPerFile      int     `json:"reads_per_file"`
-	Inputs            []Input `json:"inputs"`
-	Truth             *Input  `json:"truth,omitempty"`
+	Profile string `json:"profile"`
+	// ProfileOverrides are the parameters set with signal --profile-set.
+	ProfileOverrides  map[string]float64 `json:"profile_overrides,omitempty"`
+	PoreModel         Input              `json:"pore_model"`
+	ModelUnits        string             `json:"model_units"` // "pa" or "standardised"
+	RecordCompression string             `json:"record_compression"`
+	SignalCompression string             `json:"signal_compression"`
+	ReadsPerFile      int                `json:"reads_per_file"`
+	Inputs            []Input            `json:"inputs"`
+	Truth             *Input             `json:"truth,omitempty"`
 	// Samples is the total number of signal samples written.
 	Samples int64 `json:"samples"`
 	// Skipped counts input reads shorter than the pore model's k, which

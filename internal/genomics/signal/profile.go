@@ -96,24 +96,36 @@ const kit14Adapter = "TTTTTTTTCCTGTACTTCGTTCAGTTACGTATTGCT"
 
 // Presets. Device values (digitisation, sampling rate, range, offset and
 // median_before distributions) are squigulator v0.4's dna-r10-prom and
-// rna004-prom profiles (src/sim.c). The model scaling for ONT's
-// standardised kmer_models tables is Dorado's per-model standardisation
-// (dna_r10.4.1_e8.2_400bps_*@v5: mean 93.69 pA, stdev 23.51 pA); the
-// RNA004 values are approximate. Dwell CV, noise, drift, stall/skip rates
-// and the adapter leader are modelling choices, not measured values: they
-// are starting points to be calibrated against real pod5 data with
-// scripts/acceptance/dorado_identity.sh.
+// rna004-prom profiles (src/sim.c). The DNA model scaling for ONT's
+// standardised kmer_models tables is the fixed pA standardisation in
+// Dorado's dna_r10.4.1_e8.2_400bps_sup@v5.2.0 config.toml (mean 93.6924,
+// stdev 23.5067); the RNA004 values are approximate.
+//
+// The DNA dwell, stall, skip and noise values were chosen against real
+// R10.4.1 data (FLO-PRO114M, 5 kHz; ont-open-data pgx_as_2025.07) with
+// scripts/acceptance/dorado_identity.sh and Dorado 2.1.2 SUP v5.2.0, measuring
+// dwell from Dorado's move tables. Real reads: mean dwell 13.1 samples/base,
+// CV 1.12 (a long right tail with few short dwells), 98.5% median identity.
+// With these settings synthetic reads have mean dwell 13.0, CV 0.88 and
+// 90.8% identity, against 91.5% for squigulator 0.5.0 on the same truth.
+// Short dwells cost accuracy (gamma CV 0.5: 88.9%, CV 1.0: 67.8%) and skips
+// are deletions by construction, so the dwell CV is squigulator's 4/13 and
+// the tail comes from stalls; extra white noise and drift lowered identity
+// without a measured basis and are off. The ~7-point gap to real reads is
+// the step-function level model and table, shared with squigulator. The
+// RNA004 dwell, noise, stall/skip and adapter values are uncalibrated
+// starting points.
 var presets = map[string]Profile{
 	PresetDNAR10: {
 		Name:         PresetDNAR10,
 		SamplingRate: 5000, Digitisation: 2048, Range: 281.345551,
 		OffsetMean: -127.5655735, OffsetStd: 19.377283387665,
 		MedianBeforeMean: 189.87607393756, MedianBeforeStd: 15.788097978713,
-		SpeedBPS: 400, DwellCV: 0.5,
-		LevelNoiseScale: 1, WhiteNoisePA: 1.0,
-		DriftPA: 1.0, DriftTau: 2.0,
+		SpeedBPS: 400, DwellCV: 0.31,
+		LevelNoiseScale: 1, WhiteNoisePA: 0,
+		DriftPA: 0, DriftTau: 2.0,
 		ReadShiftSD: 3.0, ReadScaleSD: 0.03,
-		StallProb: 0.004, StallMin: 5, StallMax: 20, SkipProb: 0.004,
+		StallProb: 0.004, StallMin: 5, StallMax: 20, SkipProb: 0,
 		// 0.2 s matches the 0.1–0.3 s adapter time of nanopore.ChannelModel.
 		AdapterSeconds: 0.2, AdapterLevelPA: 110, AdapterNoisePA: 8, AdapterSeq: kit14Adapter,
 		PolyANoisePA: 1.0,
@@ -153,6 +165,46 @@ func PresetNames() []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+// tunable maps the parameter names accepted by Set to their fields.
+func (p *Profile) tunable() map[string]*float64 {
+	return map[string]*float64{
+		"speed_bps": &p.SpeedBPS, "dwell_cv": &p.DwellCV,
+		"level_noise_scale": &p.LevelNoiseScale, "white_noise_pa": &p.WhiteNoisePA,
+		"drift_pa": &p.DriftPA, "drift_tau": &p.DriftTau,
+		"read_shift_sd": &p.ReadShiftSD, "read_scale_sd": &p.ReadScaleSD,
+		"stall_prob": &p.StallProb, "stall_min": &p.StallMin, "stall_max": &p.StallMax,
+		"skip_prob":       &p.SkipProb,
+		"adapter_seconds": &p.AdapterSeconds, "adapter_level_pa": &p.AdapterLevelPA,
+		"adapter_noise_pa": &p.AdapterNoisePA, "polya_noise_pa": &p.PolyANoisePA,
+		"offset_mean": &p.OffsetMean, "offset_std": &p.OffsetStd,
+		"median_before_mean": &p.MedianBeforeMean, "median_before_std": &p.MedianBeforeStd,
+		"model_scale": &p.ModelScale, "model_shift": &p.ModelShift,
+	}
+}
+
+// ParameterNames lists the parameter names accepted by Set, sorted.
+func ParameterNames() []string {
+	var p Profile
+	names := make([]string, 0, len(p.tunable()))
+	for n := range p.tunable() {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// Set overrides one modelling parameter by name (see ParameterNames), for
+// calibrating a profile against real data. Device geometry (sampling rate,
+// digitisation, range) and k cannot be changed. Call Validate afterwards.
+func (p *Profile) Set(name string, v float64) error {
+	f, ok := p.tunable()[name]
+	if !ok {
+		return fmt.Errorf("unknown signal profile parameter %q (have %v)", name, ParameterNames())
+	}
+	*f = v
+	return nil
 }
 
 // MeanDwell is the mean number of samples per base, SamplingRate/SpeedBPS.

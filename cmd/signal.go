@@ -96,6 +96,7 @@ func init() {
 	f.String("pore-model", "", "k-mer pore model table (required; see scripts/fetch-pore-model.sh)")
 	f.String("model-units", "auto", "Pore model units: auto, pa or standardised")
 	f.String("profile", signal.PresetDNAR10, "Signal profile: "+strings.Join(signal.PresetNames(), ", "))
+	f.StringArray("profile-set", nil, "Override a profile parameter, NAME=VALUE (repeatable): "+strings.Join(signal.ParameterNames(), ", "))
 	f.String("truth", "", "Optional FASTA/FASTQ of true sequences by read ID; matching reads are synthesised from it")
 	f.Uint64("seed", 0, "Random seed (0 or unset: draw one and log it to stderr)")
 	f.Int("reads-per-file", slow5.DefaultReadsPerFile, "Reads per BLOW5 file")
@@ -112,6 +113,7 @@ type signalOptions struct {
 	modelPath   string
 	modelUnits  string
 	profileName string
+	profileSet  map[string]float64
 	truthPath   string
 	seed        uint64
 	perFile     int
@@ -129,6 +131,18 @@ func runSignal(cmd *cobra.Command, out, logw io.Writer) error {
 	o.modelPath, _ = f.GetString("pore-model")
 	o.modelUnits, _ = f.GetString("model-units")
 	o.profileName, _ = f.GetString("profile")
+	sets, _ := f.GetStringArray("profile-set")
+	for _, kv := range sets {
+		name, val, ok := strings.Cut(kv, "=")
+		v, err := strconv.ParseFloat(strings.TrimSpace(val), 64)
+		if !ok || err != nil {
+			return fmt.Errorf("--profile-set %q: want NAME=VALUE with a number", kv)
+		}
+		if o.profileSet == nil {
+			o.profileSet = map[string]float64{}
+		}
+		o.profileSet[strings.TrimSpace(name)] = v
+	}
 	o.truthPath, _ = f.GetString("truth")
 	o.seed, _ = f.GetUint64("seed")
 	o.perFile, _ = f.GetInt("reads-per-file")
@@ -753,6 +767,14 @@ func signalRun(o signalOptions, logw io.Writer) (*signalResult, error) {
 	if err != nil {
 		return nil, err
 	}
+	for name, v := range o.profileSet {
+		if err := p.Set(name, v); err != nil {
+			return nil, err
+		}
+	}
+	if err := p.Validate(); err != nil {
+		return nil, err
+	}
 	units := o.modelUnits
 	if units == "auto" {
 		if units, err = detectModelUnits(o.modelPath); err != nil {
@@ -850,6 +872,7 @@ func signalRun(o signalOptions, logw io.Writer) (*signalResult, error) {
 	m := manifest.New(Version, o.seed, pl.runs[0].expStart, types.SequencerConfig{})
 	m.Signal = &manifest.Signal{
 		Profile:           p.Name,
+		ProfileOverrides:  o.profileSet,
 		PoreModel:         manifest.Input{Name: filepath.Base(o.modelPath), Bytes: modelSize, SHA256: modelSum},
 		ModelUnits:        units,
 		RecordCompression: o.rc.String(),

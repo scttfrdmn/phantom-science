@@ -24,7 +24,7 @@ import (
 
 var signalFlagNames = []string{
 	"input", "out", "pore-model", "model-units", "profile", "truth", "seed", "reads-per-file",
-	"compression", "signal-compression", "workers", "overwrite",
+	"compression", "signal-compression", "workers", "overwrite", "profile-set",
 }
 
 // runSignalCLI runs "phantom-science signal args..." through the root
@@ -571,6 +571,65 @@ func TestSignalCommand_OverwriteAndErrors(t *testing.T) {
 		}
 		if err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("%s: error %v, want %q", name, err, c.want)
+		}
+	}
+}
+
+// --profile-set overrides profile parameters: halving speed_bps doubles the
+// body samples, the overrides are recorded in the manifest, and bad names or
+// values are rejected before anything is written.
+func TestSignalCommand_ProfileSet(t *testing.T) {
+	dir := t.TempDir()
+	model := writeTestPoreModel(t)
+	seq := strings.Repeat("ACGGTCAATCG", 200)
+	input := filepath.Join(dir, "r.fastq")
+	if err := os.WriteFile(input, []byte("@r1\n"+seq+"\n+\n"+strings.Repeat("5", len(seq))+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	samples := func(name string, sets ...string) (int, *manifest.Manifest) {
+		t.Helper()
+		out := filepath.Join(dir, name)
+		args := []string{"--input", input, "--out", out, "--pore-model", model, "--seed", "3",
+			"--profile-set", "adapter_seconds=0", "--profile-set", "stall_prob=0", "--profile-set", "skip_prob=0"}
+		for _, s := range sets {
+			args = append(args, "--profile-set", s)
+		}
+		if _, stderr, err := runSignalCLI(t, args...); err != nil {
+			t.Fatalf("%v\n%s", err, stderr)
+		}
+		_, _, recs := readBLOW5Dir(t, out)
+		m, err := manifest.Read(filepath.Join(out, manifest.FileName))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return len(recs[0].RawSignal), m
+	}
+	base, m := samples("base")
+	slow, ms := samples("slow", "speed_bps=200")
+	// Gamma dwells (CV 0.5) over ~2200 k-mers: the ratio's SD is ~1.5%.
+	if r := float64(slow) / float64(base); r < 1.9 || r > 2.1 {
+		t.Errorf("speed_bps 400 -> 200: samples %d -> %d (ratio %.3f), want ~2", base, slow, r)
+	}
+	want := map[string]float64{"adapter_seconds": 0, "stall_prob": 0, "skip_prob": 0, "speed_bps": 200}
+	if got := ms.Signal.ProfileOverrides; len(got) != len(want) || got["speed_bps"] != 200 {
+		t.Errorf("manifest overrides %v, want %v", got, want)
+	}
+	if len(m.Signal.ProfileOverrides) != 3 {
+		t.Errorf("manifest overrides %v", m.Signal.ProfileOverrides)
+	}
+	for set, msg := range map[string]string{
+		"dwell_cv=-1":        "dwell_cv",
+		"sampling_rate=4000": "unknown signal profile parameter",
+		"speed_bps":          "NAME=VALUE",
+		"speed_bps=fast":     "NAME=VALUE",
+	} {
+		out := filepath.Join(dir, "bad")
+		_, _, err := runSignalCLI(t, "--input", input, "--out", out, "--pore-model", model, "--profile-set", set)
+		if err == nil || !strings.Contains(err.Error(), msg) {
+			t.Errorf("--profile-set %s: error %v, want %q", set, err, msg)
+		}
+		if _, statErr := os.Stat(out); statErr == nil {
+			t.Errorf("--profile-set %s: output written despite the error", set)
 		}
 	}
 }
