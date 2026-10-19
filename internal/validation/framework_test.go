@@ -11,12 +11,12 @@ import (
 
 func TestNewFramework(t *testing.T) {
 	config := types.ValidationConfig{
-		Enable:          true,
-		StatisticalTests: []string{"hardy_weinberg", "linkage_disequilibrium"},
-		PopulationGeneticsTests: []string{"population_structure"},
+		Enable:                     true,
+		StatisticalTests:           []string{"hardy_weinberg", "linkage_disequilibrium"},
+		PopulationGeneticsTests:    []string{"population_structure"},
 		PipelineCompatibilityTests: []string{"gatk_validation"},
 	}
-	
+
 	framework := NewFramework(config)
 	if framework == nil {
 		t.Fatal("Expected validation framework to be created")
@@ -31,32 +31,32 @@ func TestNewFramework(t *testing.T) {
 
 func TestFrameworkRunValidation(t *testing.T) {
 	config := types.ValidationConfig{
-		Enable: true,
-		StatisticalTests: []string{"hardy_weinberg_equilibrium"},
-		PopulationGeneticsTests: []string{"population_structure"},
+		Enable:                     true,
+		StatisticalTests:           []string{"hardy_weinberg_equilibrium"},
+		PopulationGeneticsTests:    []string{"population_structure"},
 		PipelineCompatibilityTests: []string{"gatk_best_practices"},
 	}
-	
+
 	framework := NewFramework(config)
-	
+
 	// Mock data - in real implementation this would be actual genomic data
 	mockData := []byte("mock genomic data")
-	
+
 	results := framework.RunValidation(mockData)
-	
+
 	if results.Summary == "" {
 		t.Fatal("Expected validation results to be returned")
 	}
-	
+
 	// Check that tests were run
-	expectedTests := len(config.StatisticalTests) + 
-					 len(config.PopulationGeneticsTests) + 
-					 len(config.PipelineCompatibilityTests)
-	
+	expectedTests := len(config.StatisticalTests) +
+		len(config.PopulationGeneticsTests) +
+		len(config.PipelineCompatibilityTests)
+
 	if len(results.Tests) != expectedTests {
 		t.Errorf("Expected %d test results, got %d", expectedTests, len(results.Tests))
 	}
-	
+
 	// Check overall structure
 	if results.ComplianceLevel == "" {
 		t.Error("Expected compliance level to be set")
@@ -68,13 +68,13 @@ func TestFrameworkRunValidation(t *testing.T) {
 
 func TestFrameworkDisabled(t *testing.T) {
 	config := types.ValidationConfig{
-		Enable: false,
+		Enable:           false,
 		StatisticalTests: []string{"hardy_weinberg"},
 	}
-	
+
 	framework := NewFramework(config)
 	results := framework.RunValidation(nil)
-	
+
 	// Should return minimal results when disabled
 	if results.OverallPass {
 		t.Error("Expected validation to not pass when disabled")
@@ -87,18 +87,18 @@ func TestFrameworkDisabled(t *testing.T) {
 func TestMockValidationTests(t *testing.T) {
 	// Test validation framework with mock implementations
 	config := types.ValidationConfig{
-		Enable: true,
+		Enable:           true,
 		StatisticalTests: []string{"hardy_weinberg_equilibrium"},
 	}
-	
+
 	framework := NewFramework(config)
 	results := framework.RunValidation([]byte("mock data"))
-	
+
 	// Basic validation that framework produces results
 	if len(results.Tests) == 0 {
 		t.Error("Expected at least one test result")
 	}
-	
+
 	if results.ComplianceLevel == "" {
 		t.Error("Expected compliance level to be set")
 	}
@@ -106,23 +106,23 @@ func TestMockValidationTests(t *testing.T) {
 
 func TestValidationWithRegulatoryCompliance(t *testing.T) {
 	config := types.ValidationConfig{
-		Enable: true,
+		Enable:           true,
 		StatisticalTests: []string{"hardy_weinberg"},
 		RegulatoryCompliance: types.RegulatoryConfig{
-			FDACompliance: true,
-			EMACompliance: true,
+			FDACompliance:     true,
+			EMACompliance:     true,
 			ValidationStudies: []string{"analytical_validation"},
-			QualityMetrics: []string{"precision_recall"},
+			QualityMetrics:    []string{"precision_recall"},
 		},
 	}
-	
+
 	framework := NewFramework(config)
 	results := framework.RunValidation([]byte("test data"))
-	
+
 	if !results.RegulatoryReady {
 		t.Error("Expected regulatory readiness with FDA/EMA compliance")
 	}
-	
+
 	if results.ComplianceLevel != "regulatory" {
 		t.Errorf("Expected compliance level 'regulatory', got %s", results.ComplianceLevel)
 	}
@@ -130,19 +130,19 @@ func TestValidationWithRegulatoryCompliance(t *testing.T) {
 
 func TestValidationWithAcademicCompliance(t *testing.T) {
 	config := types.ValidationConfig{
-		Enable: true,
+		Enable:           true,
 		StatisticalTests: []string{"hardy_weinberg", "linkage_disequilibrium"},
 		AcademicValidation: types.AcademicConfig{
-			PeerReviewReady: true,
+			PeerReviewReady:   true,
 			PublicationFormat: "nature_genetics",
 			BenchmarkDatasets: []string{"1000_genomes"},
-			StatisticalPower: 0.8,
+			StatisticalPower:  0.8,
 		},
 	}
-	
+
 	framework := NewFramework(config)
 	results := framework.RunValidation([]byte("academic test data"))
-	
+
 	if !results.AcademicReady {
 		t.Error("Expected academic readiness with peer review settings")
 	}
@@ -150,13 +150,13 @@ func TestValidationWithAcademicCompliance(t *testing.T) {
 
 func TestValidationResultTimestamp(t *testing.T) {
 	config := types.ValidationConfig{
-		Enable: true,
+		Enable:           true,
 		StatisticalTests: []string{"hardy_weinberg_equilibrium"},
 	}
-	
+
 	framework := NewFramework(config)
 	results := framework.RunValidation([]byte("test"))
-	
+
 	if len(results.Tests) > 0 && results.Tests[0].Timestamp.IsZero() {
 		t.Error("Expected timestamp to be set in validation result")
 	}
@@ -164,19 +164,19 @@ func TestValidationResultTimestamp(t *testing.T) {
 
 func TestEmptyTestConfiguration(t *testing.T) {
 	config := types.ValidationConfig{
-		Enable: true,
-		StatisticalTests: []string{},
-		PopulationGeneticsTests: []string{},
+		Enable:                     true,
+		StatisticalTests:           []string{},
+		PopulationGeneticsTests:    []string{},
 		PipelineCompatibilityTests: []string{},
 	}
-	
+
 	framework := NewFramework(config)
 	results := framework.RunValidation([]byte("test data"))
-	
+
 	if len(results.Tests) != 0 {
 		t.Errorf("Expected no tests with empty configuration, got %d", len(results.Tests))
 	}
-	
+
 	// Should still have overall structure
 	if results.Summary == "" {
 		t.Error("Expected summary even with no tests")
@@ -190,13 +190,13 @@ func TestEmptyTestConfiguration(t *testing.T) {
 
 func TestUnknownTestType(t *testing.T) {
 	config := types.ValidationConfig{
-		Enable: true,
+		Enable:           true,
 		StatisticalTests: []string{"unknown_test_type"},
 	}
-	
+
 	framework := NewFramework(config)
 	results := framework.RunValidation([]byte("test data"))
-	
+
 	// Should handle unknown tests gracefully
 	if len(results.Tests) > 1 {
 		t.Error("Expected unknown tests to be skipped")
@@ -205,22 +205,22 @@ func TestUnknownTestType(t *testing.T) {
 
 func TestValidationResultConsistency(t *testing.T) {
 	config := types.ValidationConfig{
-		Enable: true,
+		Enable:           true,
 		StatisticalTests: []string{"hardy_weinberg_equilibrium"},
 	}
-	
+
 	framework := NewFramework(config)
-	
+
 	// Run validation multiple times with same data
 	data := []byte("consistent test data")
-	
+
 	results1 := framework.RunValidation(data)
 	results2 := framework.RunValidation(data)
-	
+
 	if len(results1.Tests) != len(results2.Tests) {
 		t.Error("Expected consistent number of test results")
 	}
-	
+
 	if results1.Tests[0].TestName != results2.Tests[0].TestName {
 		t.Error("Expected consistent test names")
 	}
@@ -240,22 +240,22 @@ func TestValidationPerformance(t *testing.T) {
 			"gatk_best_practices",
 		},
 	}
-	
+
 	framework := NewFramework(config)
-	
+
 	// Large mock dataset
 	largeData := make([]byte, 10000)
 	for i := range largeData {
 		largeData[i] = byte('A' + (i % 4)) // Mock DNA sequence
 	}
-	
+
 	// Validation should complete in reasonable time
 	results := framework.RunValidation(largeData)
-	
+
 	if results.Summary == "" {
 		t.Fatal("Expected validation to complete with large dataset")
 	}
-	
+
 	if len(results.Tests) == 0 {
 		t.Error("Expected tests to run with large dataset")
 	}
@@ -265,7 +265,7 @@ func TestValidationPerformance(t *testing.T) {
 func TestValidateFASTQFormat(t *testing.T) {
 	config := types.ValidationConfig{Enable: true}
 	framework := NewFramework(config)
-	
+
 	// Valid FASTQ format
 	validFASTQ := `@read1
 ATCGATCGATCG
@@ -275,22 +275,22 @@ IIIIIIIIIIII
 GCTAGCTAGCTA
 +
 HHHHHHHHHHHH`
-	
+
 	result := framework.runStatisticalTest("format_compliance", validFASTQ)
 	if !result.Passed {
 		t.Errorf("Valid FASTQ should pass format validation: %s", result.Message)
 	}
-	
+
 	// Invalid FASTQ format (wrong line count)
 	invalidFASTQ := `@read1
 ATCGATCG
 +`
-	
+
 	result = framework.runStatisticalTest("format_compliance", invalidFASTQ)
 	if result.Passed {
 		t.Error("Invalid FASTQ should fail format validation")
 	}
-	
+
 	// Invalid data type
 	result = framework.runStatisticalTest("format_compliance", 123)
 	if result.Passed {
@@ -301,29 +301,29 @@ ATCGATCG
 func TestValidateSequenceComplexity(t *testing.T) {
 	config := types.ValidationConfig{Enable: true}
 	framework := NewFramework(config)
-	
+
 	// Complex sequence (should pass)
 	complexFASTQ := `@read1
 ATCGATCGATCG
 +
 IIIIIIIIIIII`
-	
+
 	result := framework.runStatisticalTest("sequence_complexity", complexFASTQ)
 	if !result.Passed {
 		t.Errorf("Complex sequence should pass: %s", result.Message)
 	}
-	
+
 	// Homopolymer sequence (should fail)
 	homopolymerFASTQ := `@read1
 AAAAAAAAAA
 +
 IIIIIIIIII`
-	
+
 	result = framework.runStatisticalTest("sequence_complexity", homopolymerFASTQ)
 	if result.Passed {
 		t.Error("Homopolymer sequence should fail complexity check")
 	}
-	
+
 	// Invalid data type
 	result = framework.runStatisticalTest("sequence_complexity", []int{1, 2, 3})
 	if result.Passed {
@@ -334,29 +334,29 @@ IIIIIIIIII`
 func TestValidateBaseComposition(t *testing.T) {
 	config := types.ValidationConfig{Enable: true}
 	framework := NewFramework(config)
-	
+
 	// Valid DNA bases
 	validFASTQ := `@read1
 ATCGATCGN
 +
 IIIIIIIII`
-	
+
 	result := framework.runPopulationGeneticsTest("base_composition", validFASTQ)
 	if !result.Passed {
 		t.Errorf("Valid DNA bases should pass: %s", result.Message)
 	}
-	
+
 	// Invalid DNA base
 	invalidFASTQ := `@read1
 ATCGATCGX
 +
 IIIIIIIII`
-	
+
 	result = framework.runPopulationGeneticsTest("base_composition", invalidFASTQ)
 	if result.Passed {
 		t.Error("Invalid DNA base should fail validation")
 	}
-	
+
 	// Invalid data type
 	result = framework.runPopulationGeneticsTest("base_composition", map[string]int{"test": 1})
 	if result.Passed {
@@ -367,51 +367,51 @@ IIIIIIIII`
 func TestValidateGCContent(t *testing.T) {
 	config := types.ValidationConfig{Enable: true}
 	framework := NewFramework(config)
-	
+
 	// Normal GC content (50%)
 	normalGC := `@read1
 ATCGATCG
 +
 IIIIIIII`
-	
+
 	result := framework.runPopulationGeneticsTest("gc_content", normalGC)
 	if !result.Passed {
 		t.Errorf("Normal GC content should pass: %s", result.Message)
 	}
-	
+
 	// Very low GC content (0%)
 	lowGC := `@read1
 ATATATATAT
 +
 IIIIIIIIII`
-	
+
 	result = framework.runPopulationGeneticsTest("gc_content", lowGC)
 	if result.Passed {
 		t.Error("Very low GC content should fail validation")
 	}
-	
+
 	// Very high GC content (100%)
 	highGC := `@read1
 GCGCGCGCGC
 +
 IIIIIIIIII`
-	
+
 	result = framework.runPopulationGeneticsTest("gc_content", highGC)
 	if result.Passed {
 		t.Error("Very high GC content should fail validation")
 	}
-	
+
 	// No valid bases
 	noBases := `@read1
 NNNNNNNNNN
 +
 IIIIIIIIII`
-	
+
 	result = framework.runPopulationGeneticsTest("gc_content", noBases)
 	if result.Passed {
 		t.Error("No valid bases should fail GC content validation")
 	}
-	
+
 	// Invalid data type
 	result = framework.runPopulationGeneticsTest("gc_content", 42.5)
 	if result.Passed {
@@ -422,29 +422,29 @@ IIIIIIIIII`
 func TestValidateHeaderFormat(t *testing.T) {
 	config := types.ValidationConfig{Enable: true}
 	framework := NewFramework(config)
-	
+
 	// Valid header format
 	validFASTQ := `@read1_illumina
 ATCGATCG
 +
 IIIIIIII`
-	
+
 	result := framework.runPipelineCompatibilityTest("header_format", validFASTQ)
 	if !result.Passed {
 		t.Errorf("Valid header should pass: %s", result.Message)
 	}
-	
+
 	// Invalid header format (missing @)
 	invalidFASTQ := `read1_no_prefix
 ATCGATCG
 +
 IIIIIIII`
-	
+
 	result = framework.runPipelineCompatibilityTest("header_format", invalidFASTQ)
 	if result.Passed {
 		t.Error("Invalid header format should fail validation")
 	}
-	
+
 	// Invalid data type
 	result = framework.runPipelineCompatibilityTest("header_format", []string{"test"})
 	if result.Passed {
@@ -457,7 +457,7 @@ func TestValidationTestsWithAllMethods(t *testing.T) {
 		Enable: true,
 		StatisticalTests: []string{
 			"format_compliance",
-			"quality_distribution", 
+			"quality_distribution",
 			"sequence_complexity",
 			"read_length_consistency",
 		},
@@ -472,9 +472,9 @@ func TestValidationTestsWithAllMethods(t *testing.T) {
 			"header_format",
 		},
 	}
-	
+
 	framework := NewFramework(config)
-	
+
 	testFASTQ := `@read1_illumina
 ATCGATCGATCG
 +read1_illumina
@@ -483,17 +483,17 @@ IIIIIIIIIIII
 GCTAGCTAGCTA
 +read2_illumina
 HHHHHHHHHHHH`
-	
+
 	results := framework.RunValidation(testFASTQ)
-	
-	expectedTestCount := len(config.StatisticalTests) + 
-						len(config.PopulationGeneticsTests) + 
-						len(config.PipelineCompatibilityTests)
-	
+
+	expectedTestCount := len(config.StatisticalTests) +
+		len(config.PopulationGeneticsTests) +
+		len(config.PipelineCompatibilityTests)
+
 	if len(results.Tests) != expectedTestCount {
 		t.Errorf("Expected %d test results, got %d", expectedTestCount, len(results.Tests))
 	}
-	
+
 	// Check that all tests have proper structure
 	for _, test := range results.Tests {
 		if test.TestName == "" {
@@ -511,7 +511,7 @@ HHHHHHHHHHHH`
 func TestUnknownTestTypes(t *testing.T) {
 	config := types.ValidationConfig{Enable: true}
 	framework := NewFramework(config)
-	
+
 	// Test unknown statistical test
 	result := framework.runStatisticalTest("unknown_stat_test", "data")
 	if result.Passed {
@@ -520,13 +520,13 @@ func TestUnknownTestTypes(t *testing.T) {
 	if result.TestName != "unknown_stat_test" {
 		t.Error("Unknown test should preserve test name")
 	}
-	
+
 	// Test unknown population genetics test
 	result = framework.runPopulationGeneticsTest("unknown_popgen_test", "data")
 	if result.Passed {
 		t.Error("Unknown population genetics test should fail")
 	}
-	
+
 	// Test unknown pipeline compatibility test
 	result = framework.runPipelineCompatibilityTest("unknown_pipeline_test", "data")
 	if result.Passed {
@@ -536,18 +536,18 @@ func TestUnknownTestTypes(t *testing.T) {
 
 func TestValidationSummaryGeneration(t *testing.T) {
 	config := types.ValidationConfig{
-		Enable: true,
+		Enable:           true,
 		StatisticalTests: []string{"format_compliance", "sequence_complexity"},
 	}
-	
+
 	framework := NewFramework(config)
-	
+
 	// Test with passing data
 	validFASTQ := `@read1
 ATCGATCGATCG
 +
 IIIIIIIIIIII`
-	
+
 	results := framework.RunValidation(validFASTQ)
 	if !results.OverallPass {
 		t.Error("Valid FASTQ should result in overall pass")
@@ -555,13 +555,13 @@ IIIIIIIIIIII`
 	if results.Summary == "" {
 		t.Error("Summary should be generated")
 	}
-	
+
 	// Test with failing data (homopolymer)
 	invalidFASTQ := `@read1
 AAAAAAAAAAAA
 +
 IIIIIIIIIIII`
-	
+
 	results = framework.RunValidation(invalidFASTQ)
 	if results.OverallPass {
 		t.Error("Invalid FASTQ should result in overall fail")
@@ -573,23 +573,23 @@ IIIIIIIIIIII`
 
 func TestValidationWithComplexRegulatoryConfig(t *testing.T) {
 	config := types.ValidationConfig{
-		Enable: true,
+		Enable:           true,
 		StatisticalTests: []string{"format_compliance"},
 		RegulatoryCompliance: types.RegulatoryConfig{
-			FDACompliance: true,
-			EMACompliance: true,
+			FDACompliance:     true,
+			EMACompliance:     true,
 			ValidationStudies: []string{"analytical_validation", "clinical_validation"},
-			QualityMetrics: []string{"precision", "recall", "f1_score"},
+			QualityMetrics:    []string{"precision", "recall", "f1_score"},
 		},
 	}
-	
+
 	framework := NewFramework(config)
 	results := framework.RunValidation("@read1\nATCG\n+\nIIII")
-	
+
 	if results.ComplianceLevel != "regulatory" {
 		t.Errorf("Expected regulatory compliance level, got %s", results.ComplianceLevel)
 	}
-	
+
 	if !results.RegulatoryReady {
 		t.Error("Should be regulatory ready with FDA and EMA compliance")
 	}
@@ -598,19 +598,19 @@ func TestValidationWithComplexRegulatoryConfig(t *testing.T) {
 func TestValidationEdgeCases(t *testing.T) {
 	config := types.ValidationConfig{Enable: true}
 	framework := NewFramework(config)
-	
+
 	// Test empty string
 	result := framework.runStatisticalTest("format_compliance", "")
 	if result.Passed {
 		t.Error("Empty string should fail format validation")
 	}
-	
+
 	// Test single line (not valid FASTQ)
 	result = framework.runStatisticalTest("format_compliance", "single line")
 	if result.Passed {
 		t.Error("Single line should fail FASTQ format validation")
 	}
-	
+
 	// Test whitespace-only
 	result = framework.runStatisticalTest("format_compliance", "   \n  \n  ")
 	if result.Passed {
@@ -842,7 +842,7 @@ func TestComputeGenotypeProxy_AllSameGC_AllHet(t *testing.T) {
 
 func TestComputeGenotypeProxy_PolarisedReads(t *testing.T) {
 	// 3 AT-rich reads (low GC) + 3 balanced + 3 GC-rich → should produce HomRef, Het, HomAlt
-	atRich := makeFASTQRead("AAATTTAAAT")    // ~10% GC
+	atRich := makeFASTQRead("AAATTTAAAT")   // ~10% GC
 	balanced := makeFASTQRead("ACGTACGTAC") // ~40% GC
 	gcRich := makeFASTQRead("GCGCGCGCGC")   // ~90% GC
 	var sb strings.Builder
