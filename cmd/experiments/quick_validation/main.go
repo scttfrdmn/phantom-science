@@ -28,7 +28,7 @@ func main() {
 	// Check chromosomes available
 	chromosomes := refGenome.GetChromosomeNames()
 	log.Printf("✓ Chromosomes available: %d", len(chromosomes))
-	log.Printf("✓ First few: %v", chromosomes[:5])
+	log.Printf("✓ First few: %v", chromosomes[:min(5, len(chromosomes))])
 
 	// Load chr22 (smallest autosome for quick test)
 	log.Printf("\n[TEST] Loading chromosome 22 for quick validation...")
