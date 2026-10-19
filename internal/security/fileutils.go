@@ -9,7 +9,9 @@
 package security
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,123 +19,125 @@ import (
 
 // SecureFileCreate creates a file with security validation to prevent directory traversal
 func SecureFileCreate(filename string, allowedBaseDir string) (*os.File, error) {
-	// Clean and validate the path
-	cleanPath := filepath.Clean(filename)
-
-	// Prevent directory traversal
-	if strings.Contains(cleanPath, "..") {
-		return nil, fmt.Errorf("path traversal not allowed: %s", filename)
+	cleanPath, err := checkPath(filename, allowedBaseDir)
+	if err != nil {
+		return nil, err
 	}
-
-	// Ensure path is within allowed directory if specified
-	if allowedBaseDir != "" {
-		absPath, err := filepath.Abs(cleanPath)
-		if err != nil {
-			return nil, fmt.Errorf("failed to resolve path %s: %w", filename, err)
-		}
-
-		absAllowed, err := filepath.Abs(allowedBaseDir)
-		if err != nil {
-			return nil, fmt.Errorf("failed to resolve allowed directory %s: %w", allowedBaseDir, err)
-		}
-
-		if !strings.HasPrefix(absPath, absAllowed) {
-			return nil, fmt.Errorf("path %s outside allowed directory %s", filename, allowedBaseDir)
-		}
-	}
-
 	// Create with secure permissions (0600 - owner read/write only)
 	return os.OpenFile(cleanPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
 }
 
 // SecureMkdirAll creates directories with security validation to prevent directory traversal
 func SecureMkdirAll(dir string, allowedBaseDir string) error {
-	// Clean and validate the path
-	cleanPath := filepath.Clean(dir)
-
-	// Prevent directory traversal
-	if strings.Contains(cleanPath, "..") {
-		return fmt.Errorf("path traversal not allowed: %s", dir)
+	cleanPath, err := checkPath(dir, allowedBaseDir)
+	if err != nil {
+		return err
 	}
-
-	// Ensure path is within allowed directory if specified
-	if allowedBaseDir != "" {
-		absPath, err := filepath.Abs(cleanPath)
-		if err != nil {
-			return fmt.Errorf("failed to resolve path %s: %w", dir, err)
-		}
-
-		absAllowed, err := filepath.Abs(allowedBaseDir)
-		if err != nil {
-			return fmt.Errorf("failed to resolve allowed directory %s: %w", allowedBaseDir, err)
-		}
-
-		if !strings.HasPrefix(absPath, absAllowed) {
-			return fmt.Errorf("path %s outside allowed directory %s", dir, allowedBaseDir)
-		}
-	}
-
 	// Create with secure permissions (0750 - owner read/write/execute, group read/execute)
 	return os.MkdirAll(cleanPath, 0750)
 }
 
 // SecureWriteFile writes a file with security validation to prevent directory traversal
 func SecureWriteFile(filename string, data []byte, allowedBaseDir string) error {
-	// Clean and validate the path
-	cleanPath := filepath.Clean(filename)
-
-	// Prevent directory traversal
-	if strings.Contains(cleanPath, "..") {
-		return fmt.Errorf("path traversal not allowed: %s", filename)
+	cleanPath, err := checkPath(filename, allowedBaseDir)
+	if err != nil {
+		return err
 	}
-
-	// Ensure path is within allowed directory if specified
-	if allowedBaseDir != "" {
-		absPath, err := filepath.Abs(cleanPath)
-		if err != nil {
-			return fmt.Errorf("failed to resolve path %s: %w", filename, err)
-		}
-
-		absAllowed, err := filepath.Abs(allowedBaseDir)
-		if err != nil {
-			return fmt.Errorf("failed to resolve allowed directory %s: %w", allowedBaseDir, err)
-		}
-
-		if !strings.HasPrefix(absPath, absAllowed) {
-			return fmt.Errorf("path %s outside allowed directory %s", filename, allowedBaseDir)
-		}
-	}
-
 	// Write with secure permissions (0600 - owner read/write only)
 	return os.WriteFile(cleanPath, data, 0600)
 }
 
-// ValidateFilePath validates a file path for security concerns
+// ValidateFilePath validates a file path for security concerns.
+//
+// A path is rejected if, after filepath.Clean, it still has a ".." path
+// component (a relative path that climbs above its starting directory).
+// Names that merely contain ".." (for example "a..b.fastq") are allowed.
+//
+// If allowedBaseDir is non-empty, the path must also be allowedBaseDir
+// itself or lie beneath it. Containment is checked on path components, not
+// string prefixes (base "/data" does not admit "/data2/x"), and symlinks in
+// the existing part of either path are resolved first, so a symlink inside
+// the base that points outside it is rejected.
 func ValidateFilePath(path string, allowedBaseDir string) error {
-	// Clean and validate the path
+	_, err := checkPath(path, allowedBaseDir)
+	return err
+}
+
+// checkPath implements ValidateFilePath and returns the cleaned path.
+func checkPath(path, allowedBaseDir string) (string, error) {
 	cleanPath := filepath.Clean(path)
 
-	// Prevent directory traversal
-	if strings.Contains(cleanPath, "..") {
-		return fmt.Errorf("path traversal not allowed: %s", path)
+	if hasDotDotComponent(cleanPath) {
+		return "", fmt.Errorf("path traversal not allowed: %s", path)
 	}
 
-	// Ensure path is within allowed directory if specified
-	if allowedBaseDir != "" {
-		absPath, err := filepath.Abs(cleanPath)
-		if err != nil {
-			return fmt.Errorf("failed to resolve path %s: %w", path, err)
-		}
-
-		absAllowed, err := filepath.Abs(allowedBaseDir)
-		if err != nil {
-			return fmt.Errorf("failed to resolve allowed directory %s: %w", allowedBaseDir, err)
-		}
-
-		if !strings.HasPrefix(absPath, absAllowed) {
-			return fmt.Errorf("path %s outside allowed directory %s", path, allowedBaseDir)
-		}
+	if allowedBaseDir == "" {
+		return cleanPath, nil
 	}
 
-	return nil
+	absPath, err := filepath.Abs(cleanPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve path %s: %w", path, err)
+	}
+	absAllowed, err := filepath.Abs(allowedBaseDir)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve allowed directory %s: %w", allowedBaseDir, err)
+	}
+
+	realPath, err := resolveExisting(absPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve path %s: %w", path, err)
+	}
+	realAllowed, err := resolveExisting(absAllowed)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve allowed directory %s: %w", allowedBaseDir, err)
+	}
+
+	if !within(realAllowed, realPath) {
+		return "", fmt.Errorf("path %s outside allowed directory %s", path, allowedBaseDir)
+	}
+	return cleanPath, nil
+}
+
+// hasDotDotComponent reports whether a cleaned path has a ".." element.
+func hasDotDotComponent(cleanPath string) bool {
+	for _, part := range strings.Split(filepath.ToSlash(cleanPath), "/") {
+		if part == ".." {
+			return true
+		}
+	}
+	return false
+}
+
+// within reports whether target is base or lies beneath it. Both must be
+// absolute and clean.
+func within(base, target string) bool {
+	rel, err := filepath.Rel(base, target)
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
+}
+
+// resolveExisting resolves symlinks in the longest existing prefix of an
+// absolute path and re-appends the not-yet-existing remainder.
+func resolveExisting(absPath string) (string, error) {
+	existing := absPath
+	var rest []string
+	for {
+		resolved, err := filepath.EvalSymlinks(existing)
+		if err == nil {
+			return filepath.Join(append([]string{resolved}, rest...)...), nil
+		}
+		if !errors.Is(err, fs.ErrNotExist) {
+			return "", err
+		}
+		parent := filepath.Dir(existing)
+		if parent == existing {
+			// Nothing exists, not even the root; compare lexically.
+			return absPath, nil
+		}
+		rest = append([]string{filepath.Base(existing)}, rest...)
+		existing = parent
+	}
 }

@@ -53,7 +53,7 @@ func TestValidateFilePath(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			err := ValidateFilePath(tt.path, tt.allowedBase)
-			
+
 			if tt.expectError {
 				if err == nil {
 					t.Errorf("Expected error for path %s, got none", tt.path)
@@ -71,7 +71,7 @@ func TestValidateFilePath(t *testing.T) {
 
 func TestSecureFileCreate(t *testing.T) {
 	tmpDir := t.TempDir()
-	
+
 	tests := []struct {
 		name          string
 		filename      string
@@ -104,7 +104,7 @@ func TestSecureFileCreate(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			file, err := SecureFileCreate(tt.filename, tt.allowedBase)
-			
+
 			if tt.expectError {
 				if err == nil {
 					t.Errorf("Expected error for filename %s, got none", tt.filename)
@@ -123,7 +123,7 @@ func TestSecureFileCreate(t *testing.T) {
 						t.Error("Expected file to be created")
 					} else {
 						file.Close()
-						
+
 						// Check file was created with secure permissions
 						info, err := os.Stat(tt.filename)
 						if err != nil {
@@ -135,7 +135,7 @@ func TestSecureFileCreate(t *testing.T) {
 								t.Errorf("Expected file mode %o, got %o", expectedMode, mode)
 							}
 						}
-						
+
 						// Clean up
 						os.Remove(tt.filename)
 					}
@@ -147,7 +147,7 @@ func TestSecureFileCreate(t *testing.T) {
 
 func TestSecureMkdirAll(t *testing.T) {
 	tmpDir := t.TempDir()
-	
+
 	tests := []struct {
 		name          string
 		dir           string
@@ -180,7 +180,7 @@ func TestSecureMkdirAll(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			err := SecureMkdirAll(tt.dir, tt.allowedBase)
-			
+
 			if tt.expectError {
 				if err == nil {
 					t.Errorf("Expected error for dir %s, got none", tt.dir)
@@ -204,7 +204,7 @@ func TestSecureMkdirAll(t *testing.T) {
 							t.Errorf("Expected directory mode %o, got %o", expectedMode, mode)
 						}
 					}
-					
+
 					// Clean up
 					os.RemoveAll(tt.dir)
 				}
@@ -216,7 +216,7 @@ func TestSecureMkdirAll(t *testing.T) {
 func TestSecureWriteFile(t *testing.T) {
 	tmpDir := t.TempDir()
 	testData := []byte("test data content")
-	
+
 	tests := []struct {
 		name          string
 		filename      string
@@ -249,7 +249,7 @@ func TestSecureWriteFile(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			err := SecureWriteFile(tt.filename, testData, tt.allowedBase)
-			
+
 			if tt.expectError {
 				if err == nil {
 					t.Errorf("Expected error for filename %s, got none", tt.filename)
@@ -272,7 +272,7 @@ func TestSecureWriteFile(t *testing.T) {
 						if mode != expectedMode {
 							t.Errorf("Expected file mode %o, got %o", expectedMode, mode)
 						}
-						
+
 						// Check content
 						content, err := os.ReadFile(tt.filename)
 						if err != nil {
@@ -281,7 +281,7 @@ func TestSecureWriteFile(t *testing.T) {
 							t.Errorf("File content mismatch. Expected %s, got %s", testData, content)
 						}
 					}
-					
+
 					// Clean up
 					os.Remove(tt.filename)
 				}
@@ -348,5 +348,80 @@ func TestSecureWriteFile_PathTraversalDotDot(t *testing.T) {
 	}
 	if err != nil && !strings.Contains(err.Error(), "path traversal") {
 		t.Errorf("expected path traversal error, got: %v", err)
+	}
+}
+
+// TestValidateFilePath_SiblingPrefixRejected guards against a containment
+// check that compares raw string prefixes: base "/x/data" must not accept
+// "/x/data2/file" or "/x/database".
+func TestValidateFilePath_SiblingPrefixRejected(t *testing.T) {
+	root := t.TempDir()
+	base := filepath.Join(root, "data")
+	for _, p := range []string{
+		filepath.Join(root, "data2", "x.fastq"),
+		filepath.Join(root, "database"),
+	} {
+		if err := ValidateFilePath(p, base); err == nil {
+			t.Errorf("ValidateFilePath(%q, %q) = nil, want outside-directory error", p, base)
+		}
+		if err := SecureWriteFile(p, []byte("x"), base); err == nil {
+			t.Errorf("SecureWriteFile(%q, %q) wrote outside the base directory", p, base)
+		}
+		if err := SecureMkdirAll(p, base); err == nil {
+			t.Errorf("SecureMkdirAll(%q, %q) created a directory outside the base", p, base)
+		}
+		if f, err := SecureFileCreate(p, base); err == nil {
+			f.Close()
+			t.Errorf("SecureFileCreate(%q, %q) created a file outside the base", p, base)
+		}
+	}
+	// The base itself and paths beneath it are allowed.
+	for _, p := range []string{base, filepath.Join(base, "sub", "x.fastq")} {
+		if err := ValidateFilePath(p, base); err != nil {
+			t.Errorf("ValidateFilePath(%q, %q) = %v, want nil", p, base, err)
+		}
+	}
+}
+
+// TestValidateFilePath_DotsInNameAllowed checks that only real ".."
+// path components are treated as traversal, not names containing "..".
+func TestValidateFilePath_DotsInNameAllowed(t *testing.T) {
+	dir := t.TempDir()
+	for _, p := range []string{"a..b.fastq", "reads..fq", filepath.Join(dir, "x..y", "z.fastq")} {
+		if err := ValidateFilePath(p, ""); err != nil {
+			t.Errorf("ValidateFilePath(%q) = %v, want nil", p, err)
+		}
+	}
+	if err := SecureWriteFile(filepath.Join(dir, "a..b.fastq"), []byte("x"), dir); err != nil {
+		t.Errorf("SecureWriteFile rejected a name containing \"..\": %v", err)
+	}
+	for _, p := range []string{"..", "../x", "a/../../x"} {
+		if err := ValidateFilePath(p, ""); err == nil {
+			t.Errorf("ValidateFilePath(%q) = nil, want traversal error", p)
+		}
+	}
+}
+
+// TestValidateFilePath_SymlinkEscapeRejected checks that a symlink inside
+// the base pointing outside it does not let writes escape the base.
+func TestValidateFilePath_SymlinkEscapeRejected(t *testing.T) {
+	root := t.TempDir()
+	base := filepath.Join(root, "base")
+	outside := filepath.Join(root, "outside")
+	if err := os.MkdirAll(base, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(outside, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(base, "link")); err != nil {
+		t.Skipf("symlinks unsupported: %v", err)
+	}
+	target := filepath.Join(base, "link", "escaped.txt")
+	if err := SecureWriteFile(target, []byte("x"), base); err == nil {
+		t.Errorf("SecureWriteFile followed a symlink out of the base directory")
+	}
+	if _, err := os.Stat(filepath.Join(outside, "escaped.txt")); err == nil {
+		t.Errorf("file was written outside the base directory via symlink")
 	}
 }
