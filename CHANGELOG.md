@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-18
+
 ### Added
 - Fingerprint encryption (#3).
   - Quality-score and SAM fingerprints are encrypted with a key using stegano's Argon2id plus AES-256-GCM.
@@ -341,5 +343,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Basic FASTQ file generation with a flag-based command-line interface and sequencer configuration files.
 
-[Unreleased]: https://github.com/scttfrdmn/phantom-science/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/scttfrdmn/phantom-science/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/scttfrdmn/phantom-science/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/scttfrdmn/phantom-science/releases/tag/v0.7.0
