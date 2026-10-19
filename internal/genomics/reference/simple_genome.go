@@ -90,9 +90,8 @@ func (c *SimpleChromosome) GetLength() int {
 }
 
 // readFastaFile reads the whole FASTA file into memory and returns the
-// upper-cased sequence of every record whose header contains
-// targetChromosome as a substring, so "chr1" also collects chr10–chr19 when
-// they are in the same file.
+// upper-cased sequence of the record whose name (the first
+// whitespace-delimited token of the header) equals targetChromosome.
 func readFastaFile(filename, targetChromosome string) ([]byte, error) {
 	data, err := os.ReadFile(filename) // #nosec G304
 	if err != nil {
@@ -110,12 +109,10 @@ func readFastaFile(filename, targetChromosome string) ([]byte, error) {
 		}
 
 		if strings.HasPrefix(line, ">") {
-			// Header line
-			if strings.Contains(line, targetChromosome) {
-				inTargetChromosome = true
-			} else {
-				inTargetChromosome = false
-			}
+			// Header line: the record name is the first whitespace-delimited
+			// token after '>' and must equal the target exactly.
+			fields := strings.Fields(line[1:])
+			inTargetChromosome = len(fields) > 0 && fields[0] == targetChromosome
 		} else if inTargetChromosome {
 			// Sequence line
 			sequence = append(sequence, []byte(strings.ToUpper(line))...)

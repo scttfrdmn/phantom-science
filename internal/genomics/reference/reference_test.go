@@ -581,6 +581,24 @@ func TestSimpleReferenceGenome_LoadChromosome_MultipleInFile(t *testing.T) {
 	assert.Equal(t, 8, chr.GetLength())
 }
 
+// TestSimpleReferenceGenome_LoadChromosome_ExactHeaderMatch: a record is
+// selected by the first whitespace-delimited token of its header, so "chr1"
+// must not also collect chr10 and chr11.
+func TestSimpleReferenceGenome_LoadChromosome_ExactHeaderMatch(t *testing.T) {
+	dir := t.TempDir()
+	fasta := ">chr10\nGGGG\n>chr1 dna:chromosome chromosome:GRCh38:1\nAC\nGT\n>chr11\nCCCC\n"
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "GRCh38.fasta"), []byte(fasta), 0644))
+
+	g := reference.NewSimpleReferenceGenome(dir)
+	for name, want := range map[string]string{"chr1": "ACGT", "chr10": "GGGG", "chr11": "CCCC"} {
+		chr, err := g.LoadChromosome(name)
+		require.NoError(t, err, name)
+		assert.Equal(t, want, string(chr.GetSequence()), name)
+	}
+	_, err := g.LoadChromosome("chr")
+	assert.Error(t, err, "a prefix of a record name must not match")
+}
+
 func TestSimpleReferenceGenome_LoadChromosome_NotFoundInFile(t *testing.T) {
 	dir := t.TempDir()
 	fasta := ">chr1\nATCG\n"
@@ -845,10 +863,10 @@ func TestNewReferenceManager_BadDefaultFile(t *testing.T) {
 
 func TestNewReferenceManager_Defaults(t *testing.T) {
 	rm, err := reference.NewReferenceManager(reference.ManagerConfig{
-		DefaultCacheSize:  -1,
-		PrefetchWindow:    -1,
-		MaxLoaders:        0,
-		CompressionLevel:  -5,
+		DefaultCacheSize: -1,
+		PrefetchWindow:   -1,
+		MaxLoaders:       0,
+		CompressionLevel: -5,
 	})
 	require.NoError(t, err)
 	assert.NotNil(t, rm)
