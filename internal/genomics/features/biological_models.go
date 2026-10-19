@@ -458,6 +458,9 @@ func NewCodonUsageModel() (*CodonUsageModel, error) {
 	// Initialize codon table
 	model.codonTable = getStandardGeneticCode()
 
+	// Codon usage frequencies for the organism (used by ApplyCodonBias).
+	model.loadDefaultCodonUsage()
+
 	return model, nil
 }
 

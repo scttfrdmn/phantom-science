@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand/v2"
+	"sort"
 )
 
 // OpenReadingFrame represents a protein-coding sequence
@@ -108,9 +109,9 @@ func getStandardGeneticCode() *GeneticCode {
 }
 
 // loadDefaultCodonUsage loads default codon usage frequencies for the
-// organism. NewCodonUsageModel does not call it, so codonFrequencies (used by
-// ApplyCodonBias and GetOptimalCodons) is empty until this or LoadCodonTable
-// runs.
+// organism into codonFrequencies (used by ApplyCodonBias and
+// GetOptimalCodons). NewCodonUsageModel calls it; LoadCodonTable replaces
+// the result.
 func (m *CodonUsageModel) loadDefaultCodonUsage() {
 	switch m.organism {
 	case "human", "homo_sapiens":
@@ -224,6 +225,10 @@ func (m *CodonUsageModel) buildAminoAcidMapping() {
 			m.aminoAcidMapping[aa] = append(m.aminoAcidMapping[aa], codon)
 		}
 	}
+	// Fixed codon order, so a seeded model makes reproducible choices.
+	for _, codons := range m.aminoAcidMapping {
+		sort.Strings(codons)
+	}
 }
 
 // LoadCodonTable loads a custom codon usage table
@@ -244,12 +249,19 @@ func (m *CodonUsageModel) SetExpressionLevel(level float64) {
 
 // ApplyCodonBias finds ORFs (ATG to stop, at least 150 bp) in all six frames
 // and resamples each internal codon from its synonymous codons with
-// probability proportional to frequency^(1+expressionLevel). Reverse-strand
-// ORF coordinates refer to the reverse complement but are applied to the
-// forward sequence.
+// probability proportional to frequency^(1+expressionLevel), so the encoded
+// proteins are unchanged. ORF and CodonChange coordinates are forward-strand
+// (a reverse-strand ORF [Start, End) is the reverse complement of that
+// slice); codons are reported as read on the coding strand. An ORF that
+// overlaps an already-edited ORF in a different frame or on the other strand
+// is left unedited, since synonymous changes in one frame are generally not
+// synonymous in another.
 func (m *CodonUsageModel) ApplyCodonBias(sequence []byte) (*CodonBiasResult, error) {
 	if len(sequence) == 0 {
 		return nil, fmt.Errorf("sequence cannot be empty")
+	}
+	if len(m.codonFrequencies) == 0 {
+		m.loadDefaultCodonUsage()
 	}
 
 	result := &CodonBiasResult{
@@ -266,8 +278,22 @@ func (m *CodonUsageModel) ApplyCodonBias(sequence []byte) (*CodonBiasResult, err
 	orfs := m.findOpenReadingFrames(sequence)
 	result.ORFs = orfs
 
-	// Apply codon bias to each ORF
+	// Apply codon bias to each ORF that does not overlap an edited ORF in
+	// another reading frame.
+	var edited []OpenReadingFrame
 	for _, orf := range orfs {
+		conflict := false
+		for _, e := range edited {
+			overlaps := orf.Start < e.End && e.Start < orf.End
+			if overlaps && (orf.Strand != e.Strand || orf.Frame != e.Frame) {
+				conflict = true
+				break
+			}
+		}
+		if conflict {
+			continue
+		}
+		edited = append(edited, orf)
 		changes := m.applyCodonBiasToORF(result.BiasedSequence, orf)
 		result.CodonChanges = append(result.CodonChanges, changes...)
 	}
@@ -293,6 +319,16 @@ func (m *CodonUsageModel) findOpenReadingFrames(sequence []byte) []OpenReadingFr
 
 		for frame := 0; frame < 3; frame++ {
 			frameORFs := m.findORFsInFrame(searchSeq, frame, strand)
+			for i := range frameORFs {
+				frameORFs[i].Frame = frame
+				if strand == 1 {
+					// Map reverse-complement coordinates [s, e) to the
+					// forward strand: [len-e, len-s).
+					s, e := frameORFs[i].Start, frameORFs[i].End
+					frameORFs[i].Start = len(sequence) - e
+					frameORFs[i].End = len(sequence) - s
+				}
+			}
 			orfs = append(orfs, frameORFs...)
 		}
 	}
@@ -325,9 +361,13 @@ func (m *CodonUsageModel) findORFsInFrame(sequence []byte, frame int, strand int
 
 // extendORF extends an ORF from a start codon to a stop codon
 func (m *CodonUsageModel) extendORF(sequence []byte, start int, strand int) OpenReadingFrame {
+	strandSymbol := "+"
+	if strand == 1 {
+		strandSymbol = "-"
+	}
 	orf := OpenReadingFrame{
 		Start:      start,
-		Strand:     fmt.Sprintf("%d", strand),
+		Strand:     strandSymbol,
 		StartCodon: string(sequence[start : start+3]),
 		CodonCount: make(map[string]int),
 	}
@@ -356,12 +396,27 @@ func (m *CodonUsageModel) extendORF(sequence []byte, start int, strand int) Open
 	return orf
 }
 
-// applyCodonBiasToORF applies codon bias to a single ORF
+// applyCodonBiasToORF applies codon bias to a single ORF, editing the forward
+// sequence in place. A reverse-strand ORF is edited on the reverse
+// complement of its footprint and written back.
 func (m *CodonUsageModel) applyCodonBiasToORF(sequence []byte, orf OpenReadingFrame) []CodonChange {
+	if orf.Strand != "-" {
+		return m.applyCodonBiasToCDS(sequence[orf.Start:orf.End], func(off int) int { return orf.Start + off })
+	}
+	cds := m.reverseComplement(sequence[orf.Start:orf.End])
+	changes := m.applyCodonBiasToCDS(cds, func(off int) int { return orf.End - off - 3 })
+	copy(sequence[orf.Start:orf.End], m.reverseComplement(cds))
+	return changes
+}
+
+// applyCodonBiasToCDS resamples the internal codons of a coding sequence read
+// from offset 0. forwardPos maps a codon offset in cds to the forward-strand
+// position reported in CodonChange.
+func (m *CodonUsageModel) applyCodonBiasToCDS(cds []byte, forwardPos func(int) int) []CodonChange {
 	changes := make([]CodonChange, 0)
 
-	for i := orf.Start; i < orf.End-2; i += 3 {
-		codon := string(sequence[i : i+3])
+	for i := 0; i+3 <= len(cds); i += 3 {
+		codon := string(cds[i : i+3])
 
 		// Skip start and stop codons
 		if m.isStartCodon(codon) || m.isStopCodon(codon) {
@@ -377,12 +432,12 @@ func (m *CodonUsageModel) applyCodonBiasToORF(sequence []byte, orf OpenReadingFr
 		// Choose optimal codon based on usage frequency and expression level
 		newCodon := m.chooseOptimalCodon(aa, m.expressionLevel)
 
-		if newCodon != codon {
+		if newCodon != "" && newCodon != codon {
 			// Apply the change
-			copy(sequence[i:i+3], []byte(newCodon))
+			copy(cds[i:i+3], newCodon)
 
 			change := CodonChange{
-				Position:      i,
+				Position:      forwardPos(i),
 				OriginalCodon: codon,
 				NewCodon:      newCodon,
 				AminoAcid:     aa,
@@ -415,6 +470,9 @@ func (m *CodonUsageModel) chooseOptimalCodon(aa string, expressionLevel float64)
 		adjustedFreq := math.Pow(baseFreq, 1.0+expressionLevel)
 		probabilities[i] = adjustedFreq
 		totalProb += adjustedFreq
+	}
+	if totalProb == 0 {
+		return "" // no usage data for these codons: leave the codon as is
 	}
 
 	// Normalize probabilities

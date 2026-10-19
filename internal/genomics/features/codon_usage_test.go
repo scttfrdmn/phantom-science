@@ -4,6 +4,7 @@
 package features
 
 import (
+	"math"
 	"testing"
 )
 
@@ -304,5 +305,127 @@ func TestLoadEcoliCodonUsage_DiffersFromUniversal(t *testing.T) {
 
 	if ecoliCTG == univCTG {
 		t.Errorf("E. coli CTG (%f) should differ from universal CTG (%f)", ecoliCTG, univCTG)
+	}
+}
+
+// reverseStrandORFFixture returns a forward-strand sequence whose only ORF
+// is on the reverse strand: flankL + revcomp(coding) + flankR, where coding
+// is ATG, 59 sense codons and TAA (183 nt). The sense codons all have
+// synonyms, and neither strand contains another ATG.
+func reverseStrandORFFixture(m *CodonUsageModel) (seq, coding []byte, start, end int) {
+	sense := []string{"CTG", "GCC", "GGC", "TCC", "CGC", "GTG", "CCC", "ACC"}
+	coding = []byte("ATG")
+	for i := 0; i < 59; i++ {
+		coding = append(coding, sense[i%len(sense)]...)
+	}
+	coding = append(coding, "TAA"...)
+	flankL := []byte("CCCCCCCCCC")            // 10 nt
+	flankR := []byte("CCCCCCCCCCCCCCCCCCCCC") // 21 nt, so forward and reverse offsets differ
+	seq = append(append(append([]byte{}, flankL...), m.reverseComplement(coding)...), flankR...)
+	return seq, coding, len(flankL), len(flankL) + len(coding)
+}
+
+func translate(m *CodonUsageModel, cds []byte) string {
+	var p []byte
+	for i := 0; i+3 <= len(cds); i += 3 {
+		p = append(p, m.codonTable.CodonToAA[string(cds[i:i+3])]...)
+	}
+	return string(p)
+}
+
+// TestApplyCodonBias_DefaultModelHasCodonUsage: NewCodonUsageModel must load
+// the organism's codon usage. Without it every codon frequency is 0, codon
+// choice normalises 0/0 (NaN) and the CAI of every ORF is 0.
+func TestApplyCodonBias_DefaultModelHasCodonUsage(t *testing.T) {
+	m, err := NewCodonUsageModel()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(m.codonFrequencies) != 64 {
+		t.Fatalf("default model has %d codon frequencies, want 64", len(m.codonFrequencies))
+	}
+	seq, _, _, _ := reverseStrandORFFixture(m)
+	res, err := m.ApplyCodonBias(seq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.ORFs) == 0 {
+		t.Fatal("no ORF found")
+	}
+	for _, orf := range res.ORFs {
+		if math.IsNaN(orf.CAI) || orf.CAI <= 0 || orf.CAI > 1 {
+			t.Errorf("ORF CAI = %v, want in (0, 1]", orf.CAI)
+		}
+	}
+	if math.IsNaN(res.BiasStrength) || res.BiasStrength <= 0 {
+		t.Errorf("BiasStrength = %v, want a positive number", res.BiasStrength)
+	}
+}
+
+// TestApplyCodonBias_ReverseStrandORF: an ORF found on the reverse strand
+// must be reported and edited at its forward-strand coordinates, the edits
+// must be synonymous (same protein), and bases outside the ORF must not
+// change.
+func TestApplyCodonBias_ReverseStrandORF(t *testing.T) {
+	m, err := NewCodonUsageModel()
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.SetSeed(3)
+	seq, coding, start, end := reverseStrandORFFixture(m)
+
+	res, err := m.ApplyCodonBias(seq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.ORFs) != 1 {
+		t.Fatalf("found %d ORFs, want 1", len(res.ORFs))
+	}
+	orf := res.ORFs[0]
+	if orf.Strand != "-" || orf.Start != start || orf.End != end {
+		t.Fatalf("ORF = strand %q [%d,%d), want strand \"-\" [%d,%d)", orf.Strand, orf.Start, orf.End, start, end)
+	}
+	if len(res.CodonChanges) == 0 {
+		t.Fatal("no codon changes applied to the reverse-strand ORF")
+	}
+
+	b := res.BiasedSequence
+	if string(b[:start]) != string(seq[:start]) || string(b[end:]) != string(seq[end:]) {
+		t.Errorf("bases outside the ORF changed:\n got %s\nwant %s", b, seq)
+	}
+	newCDS := m.reverseComplement(b[start:end])
+	if got, want := translate(m, newCDS), translate(m, coding); got != want {
+		t.Errorf("protein changed:\n got %s\nwant %s", got, want)
+	}
+	for _, c := range res.CodonChanges {
+		if c.Position < start || c.Position+3 > end {
+			t.Errorf("change at %d outside ORF [%d,%d)", c.Position, start, end)
+			continue
+		}
+		// Codons are reported on the coding strand.
+		if got := string(m.reverseComplement(b[c.Position : c.Position+3])); got != c.NewCodon {
+			t.Errorf("change at %d: forward bases encode %s, change says %s", c.Position, got, c.NewCodon)
+		}
+	}
+}
+
+// TestApplyCodonBias_SeededIsDeterministic: with the same seed, two models
+// must make the same codon choices (synonymous codon order must not depend
+// on map iteration).
+func TestApplyCodonBias_SeededIsDeterministic(t *testing.T) {
+	var first []byte
+	for i := 0; i < 10; i++ {
+		m, _ := NewCodonUsageModel()
+		m.SetSeed(11)
+		seq, _, _, _ := reverseStrandORFFixture(m)
+		res, err := m.ApplyCodonBias(seq)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if i == 0 {
+			first = res.BiasedSequence
+		} else if string(res.BiasedSequence) != string(first) {
+			t.Fatalf("run %d differs from run 0 with the same seed", i)
+		}
 	}
 }
