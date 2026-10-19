@@ -3,6 +3,7 @@ package reference
 import (
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/scttfrdmn/phantom-science/internal/genomics/authenticity/kmer"
@@ -117,8 +118,8 @@ func (rm *ReferenceManager) RegisterReferenceGenome(name, filepath string, cache
 func (rm *ReferenceManager) GetSequence(chromosome string, start, end int64, referenceName ...string) ([]byte, error) {
 	startTime := time.Now()
 	defer func() {
-		rm.totalRequests++
-		rm.totalLoadTime += time.Since(startTime).Nanoseconds()
+		atomic.AddInt64(&rm.totalRequests, 1)
+		atomic.AddInt64(&rm.totalLoadTime, time.Since(startTime).Nanoseconds())
 	}()
 
 	loader := rm.getLoader(referenceName...)
@@ -165,11 +166,10 @@ func (rm *ReferenceManager) GetKmerProfile(chromosome string, start, end int64, 
 
 // getLoader returns the specified loader or default loader
 func (rm *ReferenceManager) getLoader(referenceName ...string) *LazyReferenceLoader {
+	rm.loaderMutex.RLock()
+	defer rm.loaderMutex.RUnlock()
 	if len(referenceName) > 0 && referenceName[0] != "" {
-		rm.loaderMutex.RLock()
-		loader, exists := rm.customLoaders[referenceName[0]]
-		rm.loaderMutex.RUnlock()
-		if exists {
+		if loader, exists := rm.customLoaders[referenceName[0]]; exists {
 			return loader
 		}
 	}
@@ -192,14 +192,15 @@ func (rm *ReferenceManager) GetCombinedStatistics() CombinedCacheStatistics {
 	rm.loaderMutex.RLock()
 	defer rm.loaderMutex.RUnlock()
 
+	totalRequests := atomic.LoadInt64(&rm.totalRequests)
 	stats := CombinedCacheStatistics{
-		TotalRequests: rm.totalRequests,
+		TotalRequests: totalRequests,
 		AvgLoadTime:   0,
 		LoaderStats:   make(map[string]CacheStatistics),
 	}
 
-	if rm.totalRequests > 0 {
-		stats.AvgLoadTime = float64(rm.totalLoadTime) / float64(rm.totalRequests)
+	if totalRequests > 0 {
+		stats.AvgLoadTime = float64(atomic.LoadInt64(&rm.totalLoadTime)) / float64(totalRequests)
 	}
 
 	// Collect statistics from default loader
@@ -223,9 +224,9 @@ func (rm *ReferenceManager) GetCombinedStatistics() CombinedCacheStatistics {
 	}
 
 	// Calculate overall hit ratio
-	totalRequests := stats.TotalCacheHits + stats.TotalCacheMisses
-	if totalRequests > 0 {
-		stats.OverallHitRatio = float64(stats.TotalCacheHits) / float64(totalRequests)
+	cacheRequests := stats.TotalCacheHits + stats.TotalCacheMisses
+	if cacheRequests > 0 {
+		stats.OverallHitRatio = float64(stats.TotalCacheHits) / float64(cacheRequests)
 	}
 
 	return stats
@@ -246,10 +247,9 @@ type CombinedCacheStatistics struct {
 // OptimizeCache prints cache-size suggestions to stdout when the hit ratio
 // is below 0.8 or a loader is over 95% full. It changes nothing.
 func (rm *ReferenceManager) OptimizeCache() {
-	rm.loaderMutex.RLock()
-	defer rm.loaderMutex.RUnlock()
-
-	// Get current statistics
+	// GetCombinedStatistics takes loaderMutex itself. Holding a read lock
+	// here as well would be a recursive RLock, which deadlocks once a writer
+	// (RegisterReferenceGenome, Close) is queued between the two.
 	stats := rm.GetCombinedStatistics()
 
 	// If overall hit ratio is low, suggest cache size increases
@@ -281,9 +281,9 @@ func (rm *ReferenceManager) ClearAllCaches() {
 	}
 
 	// Reset manager statistics
-	rm.totalRequests = 0
-	rm.totalCacheHits = 0
-	rm.totalLoadTime = 0
+	atomic.StoreInt64(&rm.totalRequests, 0)
+	atomic.StoreInt64(&rm.totalCacheHits, 0)
+	atomic.StoreInt64(&rm.totalLoadTime, 0)
 }
 
 // Close releases all resources used by the reference manager

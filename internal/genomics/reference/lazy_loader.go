@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/scttfrdmn/phantom-science/internal/errors"
@@ -116,12 +117,12 @@ func (lrl *LazyReferenceLoader) GetSequence(chromosome string, start, end int64)
 	lrl.cacheMutex.RUnlock()
 
 	if found && region.IsLoaded {
-		lrl.cacheHits++
+		atomic.AddInt64(&lrl.cacheHits, 1)
 		lrl.updateAccessTime(region)
 		return region.Sequence, nil
 	}
 
-	lrl.cacheMisses++
+	atomic.AddInt64(&lrl.cacheMisses, 1)
 
 	// Load region on demand
 	sequence, err := lrl.loadRegionSequence(chromosome, start, end)
@@ -143,12 +144,16 @@ func (lrl *LazyReferenceLoader) GetKmerProfile(chromosome string, start, end int
 	// Check if region is cached with k-mer profile
 	lrl.cacheMutex.RLock()
 	region, found := lrl.regionCache[regionKey]
+	var profile *kmer.PackedFrequencyTable
+	if found {
+		profile = region.KmerProfile // written under cacheMutex.Lock below
+	}
 	lrl.cacheMutex.RUnlock()
 
-	if found && region.IsLoaded && region.KmerProfile != nil {
-		lrl.cacheHits++
+	if found && region.IsLoaded && profile != nil {
+		atomic.AddInt64(&lrl.cacheHits, 1)
 		lrl.updateAccessTime(region)
-		return region.KmerProfile, nil
+		return profile, nil
 	}
 
 	// Load sequence if not already loaded
@@ -180,7 +185,7 @@ func (lrl *LazyReferenceLoader) GetKmerProfile(chromosome string, start, end int
 func (lrl *LazyReferenceLoader) loadRegionSequence(chromosome string, start, end int64) ([]byte, error) {
 	startTime := time.Now()
 	defer func() {
-		lrl.loadingTime += time.Since(startTime).Nanoseconds()
+		atomic.AddInt64(&lrl.loadingTime, time.Since(startTime).Nanoseconds())
 	}()
 
 	// Placeholder sequence; no file access
@@ -275,7 +280,7 @@ func (lrl *LazyReferenceLoader) evictLeastRecentlyUsed() {
 	// Sort by LastAccessed (ascending - oldest first)
 	for i := 0; i < len(regions)-1; i++ {
 		for j := i + 1; j < len(regions); j++ {
-			if regions[i].region.LastAccessed > regions[j].region.LastAccessed {
+			if atomic.LoadInt64(&regions[i].region.LastAccessed) > atomic.LoadInt64(&regions[j].region.LastAccessed) {
 				regions[i], regions[j] = regions[j], regions[i]
 			}
 		}
@@ -295,15 +300,12 @@ func (lrl *LazyReferenceLoader) evictLeastRecentlyUsed() {
 
 // updateAccessTime updates the access time for a cached region
 func (lrl *LazyReferenceLoader) updateAccessTime(region *CachedRegion) {
-	region.LoadMutex.Lock()
-	region.LastAccessed = lrl.getAccessCounter()
-	region.LoadMutex.Unlock()
+	atomic.StoreInt64(&region.LastAccessed, lrl.getAccessCounter())
 }
 
 // getAccessCounter returns an incremented access counter for LRU tracking
 func (lrl *LazyReferenceLoader) getAccessCounter() int64 {
-	lrl.accessCounter++
-	return lrl.accessCounter
+	return atomic.AddInt64(&lrl.accessCounter, 1)
 }
 
 // preloadRegions preloads specified genomic regions into cache
@@ -338,15 +340,17 @@ func (lrl *LazyReferenceLoader) GetCacheStatistics() CacheStatistics {
 	lrl.cacheMutex.RLock()
 	defer lrl.cacheMutex.RUnlock()
 
-	totalRequests := lrl.cacheHits + lrl.cacheMisses
+	cacheHits := atomic.LoadInt64(&lrl.cacheHits)
+	cacheMisses := atomic.LoadInt64(&lrl.cacheMisses)
+	totalRequests := cacheHits + cacheMisses
 	hitRatio := 0.0
 	if totalRequests > 0 {
-		hitRatio = float64(lrl.cacheHits) / float64(totalRequests)
+		hitRatio = float64(cacheHits) / float64(totalRequests)
 	}
 
 	avgLoadTime := 0.0
-	if lrl.cacheMisses > 0 {
-		avgLoadTime = float64(lrl.loadingTime) / float64(lrl.cacheMisses)
+	if cacheMisses > 0 {
+		avgLoadTime = float64(atomic.LoadInt64(&lrl.loadingTime)) / float64(cacheMisses)
 	}
 
 	cacheUtil := 0.0
@@ -355,8 +359,8 @@ func (lrl *LazyReferenceLoader) GetCacheStatistics() CacheStatistics {
 	}
 
 	return CacheStatistics{
-		CacheHits:        lrl.cacheHits,
-		CacheMisses:      lrl.cacheMisses,
+		CacheHits:        cacheHits,
+		CacheMisses:      cacheMisses,
 		HitRatio:         hitRatio,
 		CachedRegions:    int64(len(lrl.regionCache)),
 		CacheSize:        lrl.currentCacheSize,
@@ -413,10 +417,10 @@ func (lrl *LazyReferenceLoader) ClearCache() {
 
 	lrl.regionCache = make(map[string]*CachedRegion)
 	lrl.currentCacheSize = 0
-	lrl.cacheHits = 0
-	lrl.cacheMisses = 0
-	lrl.loadingTime = 0
-	lrl.accessCounter = 0
+	atomic.StoreInt64(&lrl.cacheHits, 0)
+	atomic.StoreInt64(&lrl.cacheMisses, 0)
+	atomic.StoreInt64(&lrl.loadingTime, 0)
+	atomic.StoreInt64(&lrl.accessCounter, 0)
 }
 
 // Close releases resources used by the lazy loader
