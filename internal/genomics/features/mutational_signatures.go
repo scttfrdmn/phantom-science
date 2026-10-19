@@ -194,11 +194,12 @@ func (msm *MutationalSignatureModel) setProcessActivity(processes []MutationalPr
 }
 
 // AnalyzeSequence scores a sequence's trinucleotide composition against the
-// signature profiles. The profiles are keyed by substitution ("ACA>ATA") and
-// the observed frequencies by trinucleotide ("ACA"), so the cosine
-// similarities, signature contributions and dominant signatures are always
-// zero; the score comes from the composition, hotspot and bias terms only.
-// No mutations are called, since a single sequence has none to call.
+// signature profiles. Each signature is compared through its distribution
+// over reference contexts (see calculateSignatureContributions), so a
+// signature contribution measures how closely the sequence's context
+// composition matches the contexts that signature mutates, not evidence that
+// the process acted. No mutations are called, since a single sequence has
+// none to call.
 func (msm *MutationalSignatureModel) AnalyzeSequence(sequence []byte) (float64, *MutationalSignatureDetails, error) {
 	if len(sequence) < 50 {
 		return 0.0, nil, fmt.Errorf("sequence too short for mutational signature analysis")
@@ -264,13 +265,21 @@ func (msm *MutationalSignatureModel) extractTrinucleotideFrequencies(sequence []
 	return frequencies
 }
 
-// calculateSignatureContributions calculates the contribution of each signature
+// calculateSignatureContributions scores each signature by the cosine
+// similarity between the observed trinucleotide context frequencies and the
+// signature's context distribution, weighted by the process activity.
+//
+// Signature profiles are keyed by substitution ("ACA>ATA") but a sequence
+// only yields context frequencies ("ACA"), so each signature is first summed
+// over substitutions per reference context, and observed contexts are folded
+// onto the pyrimidine-centred strand (COSMIC convention: "TGT" counts as its
+// reverse complement "ACA").
 func (msm *MutationalSignatureModel) calculateSignatureContributions(observedFreq map[string]float64) map[string]float64 {
 	contributions := make(map[string]float64)
+	observed := foldToPyrimidineContexts(observedFreq)
 
 	for sigName, signature := range msm.signatures {
-		// Calculate similarity between observed and signature profile
-		similarity := msm.calculateProfileSimilarity(observedFreq, signature.TrinucleotideProfile)
+		similarity := msm.calculateProfileSimilarity(observed, signatureContextProfile(signature.TrinucleotideProfile))
 
 		// Weight by process activity
 		processActivity := msm.processActivity[signature.Process.String()]
@@ -280,6 +289,37 @@ func (msm *MutationalSignatureModel) calculateSignatureContributions(observedFre
 	}
 
 	return contributions
+}
+
+// signatureContextProfile sums a substitution-keyed profile ("ACA>ATA") over
+// substitutions, giving a weight per reference trinucleotide context ("ACA").
+func signatureContextProfile(profile map[string]float64) map[string]float64 {
+	contexts := make(map[string]float64, len(profile))
+	for key, w := range profile {
+		if len(key) < 3 {
+			continue
+		}
+		contexts[key[:3]] += w
+	}
+	return contexts
+}
+
+// foldToPyrimidineContexts maps trinucleotide frequencies onto contexts with
+// a pyrimidine (C or T) middle base by reverse-complementing purine-centred
+// contexts, since a substitution and its complement are the same event.
+func foldToPyrimidineContexts(freq map[string]float64) map[string]float64 {
+	comp := map[byte]byte{'A': 'T', 'C': 'G', 'G': 'C', 'T': 'A'}
+	folded := make(map[string]float64, len(freq))
+	for ctx, w := range freq {
+		if len(ctx) != 3 {
+			continue
+		}
+		if ctx[1] == 'A' || ctx[1] == 'G' {
+			ctx = string([]byte{comp[ctx[2]], comp[ctx[1]], comp[ctx[0]]})
+		}
+		folded[ctx] += w
+	}
+	return folded
 }
 
 // calculateProfileSimilarity calculates similarity between two trinucleotide profiles

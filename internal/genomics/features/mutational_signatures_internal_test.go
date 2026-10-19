@@ -123,10 +123,11 @@ func TestCalculateTrinucleotideBias_ScoreInRange(t *testing.T) {
 // TestAssessSignatureConsistency_UsesSampleVariance verifies ÷(N-1) is used.
 //
 // Contributions: {A: 0.8, B: 0.8, C: 0.2}  mean = 0.6
-//   sample variance  = ((0.2²+0.2²+0.4²) / 2) = 0.24/2 = 0.12 → cv = sqrt(0.12)/0.6 ≈ 0.5774
-//   pop    variance  = 0.24/3 = 0.08                            → cv = sqrt(0.08)/0.6 ≈ 0.4714
-//   sample consistency = exp(-0.5774) ≈ 0.5614
-//   pop    consistency = exp(-0.4714) ≈ 0.6243
+//
+//	sample variance  = ((0.2²+0.2²+0.4²) / 2) = 0.24/2 = 0.12 → cv = sqrt(0.12)/0.6 ≈ 0.5774
+//	pop    variance  = 0.24/3 = 0.08                            → cv = sqrt(0.08)/0.6 ≈ 0.4714
+//	sample consistency = exp(-0.5774) ≈ 0.5614
+//	pop    consistency = exp(-0.4714) ≈ 0.6243
 func TestAssessSignatureConsistency_UsesSampleVariance(t *testing.T) {
 	msm := &MutationalSignatureModel{}
 	contribs := map[string]float64{"A": 0.8, "B": 0.8, "C": 0.2}
@@ -174,5 +175,45 @@ func TestAssessSignatureConsistency_InRange(t *testing.T) {
 		if got <= 0 || got > 1 {
 			t.Errorf("contributions=%v: consistency %v outside (0,1]", c, got)
 		}
+	}
+}
+
+// TestCalculateSignatureContributions_PositiveControl: signature profiles are
+// keyed by substitution ("ACA>ATA") while observed frequencies are keyed by
+// trinucleotide context ("ACA"). An observed profile equal to a signature's
+// context distribution must have cosine similarity 1 with that signature, so
+// its contribution equals the process activity.
+func TestCalculateSignatureContributions_PositiveControl(t *testing.T) {
+	msm, err := NewMutationalSignatureModel(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sig := msm.signatures["Signature_1"]
+
+	// Observed context frequencies: sum the signature over substitutions.
+	observed := make(map[string]float64)
+	for key, w := range sig.TrinucleotideProfile {
+		observed[key[:3]] += w
+	}
+
+	contrib := msm.calculateSignatureContributions(observed)
+	activity := msm.processActivity[sig.Process.String()]
+	if activity == 0 {
+		t.Fatal("Signature_1 process has zero activity; test needs a nonzero weight")
+	}
+	if got := contrib["Signature_1"] / activity; math.Abs(got-1) > 1e-9 {
+		t.Fatalf("cosine similarity of Signature_1 with its own context profile = %v, want 1", got)
+	}
+
+	// Strand symmetry: the same contexts written on the purine strand
+	// (reverse complements, e.g. ACA -> TGT) describe the same sites.
+	rc := make(map[string]float64)
+	for ctx, w := range observed {
+		b := []byte(ctx)
+		comp := map[byte]byte{'A': 'T', 'C': 'G', 'G': 'C', 'T': 'A'}
+		rc[string([]byte{comp[b[2]], comp[b[1]], comp[b[0]]})] += w
+	}
+	if got := msm.calculateSignatureContributions(rc)["Signature_1"] / activity; math.Abs(got-1) > 1e-9 {
+		t.Fatalf("reverse-complemented context profile: similarity = %v, want 1", got)
 	}
 }
