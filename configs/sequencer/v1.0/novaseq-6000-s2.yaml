@@ -27,7 +27,7 @@ sequencer:
   run_id: "240101_A00123_0001_BH5TNVDRXY" # Format: YYMMDD_INSTRUMENT_RUN_FLOWCELL
   flowcell_id: "H5TNVDRXY"               # 8-character alphanumeric
 
-# Sample and Run Configuration  
+# Sample and Run Configuration
 sample:
   name: "Sample_001"
   lane: 1                                 # Lane 1-4 for NovaSeq

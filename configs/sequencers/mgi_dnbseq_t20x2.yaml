@@ -28,14 +28,14 @@ specifications:
     default: 150              # PE150 most common
     insert_size_range: [200, 800]
     insert_size_average: 350
-  
+
   # Quality specifications
   accuracy:
     q30_percentage: 85.0      # 85% Q30+ typical for MGI platforms
     median_quality: 30
     quality_encoding: "phred33"
     error_rate: 0.01         # ~1% error rate
-  
+
   # Ultra-high throughput specifications
   throughput:
     slides_per_run: 6         # Up to 6 slides simultaneously
@@ -47,7 +47,7 @@ specifications:
 # Timing specifications
 timing:
   run_time_hours: 48          # ~48 hours for full capacity run
-  
+
   # Phase breakdown for DNB sequencing
   phases:
     initialization: 2.0       # System startup and calibration
@@ -55,7 +55,7 @@ timing:
     dnb_formation: 4.0        # DNA Nanoball formation
     sequencing: 40.0          # Active sequencing across 6 slides
     data_processing: 1.0      # Initial data processing
-  
+
   # Time compression support
   compression_factors: [1, 10, 100, 1000]
   default_compression: 100
@@ -66,7 +66,7 @@ dnb_technology:
   amplification_method: "rolling_circle"  # Rolling circle amplification
   slide_based: true          # Uses slides instead of flow cells
   dip_immersion: true        # Novel dip-immersion technology
-  
+
   # Slide specifications
   slide_format: "large_silicon_wafer"
   slide_size_mm: [75, 25]    # Large sequencing slides
@@ -78,7 +78,7 @@ hardware:
   robotic_arm: true          # Rotational robotic arm
   slide_capacity: 6          # 6 slides simultaneous processing
   automation_level: "high"   # Highly automated system
-  
+
   # Imaging system
   imaging_technology: "fluorescence"
   wavelengths: 4             # 4-color imaging
@@ -94,11 +94,11 @@ economics:
 output:
   file_format: "fastq"
   compression: "gzip"
-  
+
   # MGI file naming convention
   # Format: {sample_id}_L{lane}_R{read}.fastq.gz
   file_pattern: "{sample_id}_L{lane:03d}_R{read}.fastq.gz"
-  
+
   # Read ID format for MGI
   # Format: @{instrument_id}:{run_id}:{slide_id}:{lane}:{x_coord}:{y_coord} {read}:N:0:{index}
   read_id_pattern: "@{instrument_id}:{run_id}:{slide_id}:{lane}:{x_coord}:{y_coord} {read}:N:0:{index}"
@@ -118,7 +118,7 @@ quality_decay:
   decay_rate: 0.15          # Moderate decay rate
   minimum_quality: 10
   position_based: true      # Some positional quality decay
-  
+
   # MGI-specific quality patterns
   end_quality_drop: true    # Quality drops toward read ends
   cycle_dependent: true     # Quality varies by sequencing cycle
@@ -128,12 +128,12 @@ error_patterns:
   insertion_rate: 0.003
   deletion_rate: 0.003
   substitution_rate: 0.004
-  
+
   # DNB-specific characteristics
   dnb_specific_errors: true
   systematic_errors: true   # Some systematic bias patterns
   gc_bias: "moderate"       # Moderate GC bias
-  
+
   # Error distribution
   error_position_bias: true
   early_cycle_errors: false
@@ -154,7 +154,7 @@ multi_slide:
   max_slides: 6
   slide_coordination: "parallel"
   load_balancing: true
-  
+
   # Slide-specific parameters
   slide_processing:
     independent_timing: true
@@ -167,7 +167,7 @@ comparisons:
     throughput_advantage: 3.0      # 3x higher throughput
     cost_advantage: 0.3            # ~70% cost reduction
     accuracy_comparison: "comparable"
-  
+
   vs_pacbio_revio:
     read_length: "much_shorter"    # 150bp vs 15-20kb
     throughput: "higher"           # Higher total throughput
@@ -180,7 +180,7 @@ notes: |
   achieving unprecedented scale with DNA Nanoball (DNB) technology. The system
   uses novel dip-immersion flow cell design and robotic automation to process
   6 slides simultaneously.
-  
+
   Key implementation considerations:
   - DNB technology differs from PCR amplification (bridge amplification)
   - Slide-based system rather than traditional flow cells
@@ -188,7 +188,7 @@ notes: |
   - Cost optimization is a primary design goal
   - Quality patterns may differ from Illumina due to DNB chemistry
   - Dip-immersion technology requires different simulation approach
-  
+
   Market positioning:
   - Targets cost-sensitive high-throughput applications
   - Competitive alternative to Illumina NovaSeq for large-scale projects

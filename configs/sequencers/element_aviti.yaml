@@ -28,7 +28,7 @@ specifications:
     max: 300
     standard: [75, 150, 300]  # Standard configurations
     default: 150
-  
+
   # Quality specifications - AVITI's key differentiator
   accuracy:
     q50_percentage: 70.0      # ≥70% Q50 bases (with UltraQ)
@@ -37,7 +37,7 @@ specifications:
     peak_quality: 44          # Q44 peak quality score
     quality_encoding: "phred33"
     ultraq_mode: true         # Enhanced quality with Cloudbreak UltraQ
-  
+
   # Throughput specifications
   throughput:
     max_output_gb: 600        # 600 GB maximum output
@@ -45,7 +45,7 @@ specifications:
     min_reads_million: 100    # 100 million reads minimum
     reads_per_flowcell: 1000000000  # ≥1B read pairs per flow cell
     medium_flowcell_reads: 25000000  # ~25M reads for medium flow cell
-    
+
     # Dual flow cell system
     dual_flowcell: true
     independent_operation: true  # Each flow cell operates independently
@@ -54,14 +54,14 @@ specifications:
 timing:
   run_time_hours: 38          # 38 hours for 2×150 standard run
   max_run_time_hours: 60      # Up to 60 hours for high-output runs
-  
+
   # Phases breakdown
   phases:
     initialization: 2.0       # System initialization
     sample_loading: 1.0       # Flow cell loading
     sequencing: 34.0         # Active sequencing (dual flow cell)
     final_processing: 1.0     # Final data processing
-  
+
   # Time compression support
   compression_factors: [1, 10, 100, 1000]
   default_compression: 100
@@ -86,12 +86,12 @@ technology_features:
   multivalent_scaffolds: true    # 2-10 arms per avidite
   unlabeled_nucleotides: true    # Uses unlabeled nucleotides
   rolling_circle_amplification: true  # RCA vs bridge amplification
-  
+
   # Reduced artifacts
   no_index_hopping: true
   no_optical_duplicates: true
   no_exclusion_amplification: true
-  
+
   # Enhanced performance
   homopolymer_stability: true    # Stable through homopolymers
   enhanced_contrast: true        # Better contrast-to-noise ratio
@@ -100,10 +100,10 @@ technology_features:
 output:
   file_format: "fastq"
   compression: "gzip"
-  
+
   # File naming pattern similar to Illumina but with AVITI identifiers
   file_pattern: "{sample_name}_S{sample_number}_L{lane}_{read}_001.fastq.gz"
-  
+
   # Read ID format for AVITI
   # Format: @{instrument}:{run_id}:{flowcell}:{lane}:{tile}:{x}:{y} {read}:{filtered}:{control}:{index}
   read_id_pattern: "@{instrument_id}:{run_id}:{flowcell_id}:{lane}:{tile}:{x_pos}:{y_pos} {read}:N:0:{index}"
@@ -123,7 +123,7 @@ quality_decay:
   decay_rate: 0.02          # Moderate decay rate
   minimum_quality: 20
   position_based: false     # Less positional bias than Illumina
-  
+
   # AVITI-specific quality characteristics
   within_read_variance: true  # Higher variance within individual reads
   stable_homopolymer: true   # Stable quality through homopolymers
@@ -131,9 +131,9 @@ quality_decay:
 # Error patterns (for realistic simulation)
 error_patterns:
   insertion_rate: 0.002
-  deletion_rate: 0.002  
+  deletion_rate: 0.002
   substitution_rate: 0.003
-  
+
   # AVITI-specific characteristics
   homopolymer_errors: false      # Improved homopolymer performance
   homopolymer_error_reduction: 0.97  # 97% better than SBS
@@ -146,7 +146,7 @@ aviti_specific:
   binding_kinetics: true     # Model binding vs synthesis kinetics
   multivalent_interactions: true
   nanomolar_concentrations: true  # vs micromolar for SBS
-  
+
   # Performance characteristics
   coverage_optimization: true    # Better performance at 20-30x coverage
   quality_calibration: true     # Well-calibrated quality scores
@@ -157,7 +157,7 @@ notes: |
   Element Biosciences AVITI uses revolutionary Sequencing-by-Binding (SBB) technology
   with multivalent avidite reagents instead of traditional sequencing-by-synthesis.
   This enables exceptional accuracy (Q40+) with significantly reduced reagent costs.
-  
+
   Key implementation considerations:
   - Higher quality score variance within individual reads compared to Illumina
   - Stable performance through homopolymer regions

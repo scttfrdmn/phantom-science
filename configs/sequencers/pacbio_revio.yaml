@@ -28,14 +28,14 @@ specifications:
     max: 30000      # Up to 30 kb possible
     average: 17500  # 15-20 kb average, using 17.5 kb
     distribution: "log_normal"  # Long-read length distribution
-  
+
   # Quality specifications
   accuracy:
     consensus_accuracy: 0.999   # >99.9% HiFi accuracy
     median_quality: 30          # Q30 median
     q30_percentage: 90.0        # 90% of bases Q30+
     quality_encoding: "phred33"
-  
+
   # Throughput specifications
   throughput:
     zmw_count: 25000000         # 25M ZMWs per SMRT Cell
@@ -49,14 +49,14 @@ specifications:
 timing:
   run_time_hours: 24          # 24-hour run time typical
   max_run_time_hours: 48      # Extended runs possible
-  
+
   # Phases breakdown
   phases:
     initialization: 2.0       # System initialization
     sample_loading: 1.0       # SMRT Cell loading
     sequencing: 20.0         # Active sequencing
     data_processing: 1.0      # Initial processing
-  
+
   # Time compression support
   compression_factors: [1, 10, 100, 1000]
   default_compression: 100
@@ -78,11 +78,11 @@ economics:
 output:
   file_format: "fastq"
   compression: "gzip"
-  
+
   # File naming pattern for SMRT sequencing
   # Format: m{instrument}_{run_date}_{run_time}_{cell_position}
   file_pattern: "m{instrument_id}_{run_date}_{run_time}_{cell_pos}.fastq.gz"
-  
+
   # Read ID format for PacBio
   # Format: m{instrument}_{run_date}_{run_time}_{cell_pos}/{zmw}/{ccs_passes}
   read_id_pattern: "m{instrument_id}_{run_date}_{run_time}_{cell_pos}/{zmw}/ccs"
@@ -106,9 +106,9 @@ quality_decay:
 # Error patterns (for realistic simulation)
 error_patterns:
   insertion_rate: 0.001
-  deletion_rate: 0.001  
+  deletion_rate: 0.001
   substitution_rate: 0.001
-  
+
   # PacBio-specific error characteristics
   homopolymer_errors: true
   homopolymer_error_rate: 0.005  # Slightly higher in homopolymer regions
@@ -120,7 +120,7 @@ notes: |
   providing 15x higher throughput than previous generations while maintaining
   exceptional HiFi accuracy. The system uses circular consensus sequencing (CCS)
   to generate HiFi reads that are both long and highly accurate.
-  
+
   Key implementation considerations:
   - HiFi reads are consensus sequences, not raw reads
   - Quality scores reflect consensus confidence, not single-pass quality
