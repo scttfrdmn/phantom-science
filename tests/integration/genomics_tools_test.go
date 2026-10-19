@@ -1,3 +1,5 @@
+//go:build !release
+
 package integration
 
 import (
@@ -18,23 +20,14 @@ import (
 	pt "github.com/scttfrdmn/phantom-science/internal/testing"
 )
 
-// TestGATKWorkflowIntegration runs BWA-MEM and samtools on synthetic reads
-// and then GATK HaplotypeCaller; it skips when gatk is not on PATH.
-//
-// The checks are weaker than the name suggests: if HaplotypeCaller fails,
-// runGATKVariantCalling writes a mock VCF sized to the expected variant
-// count and the assertions run against that, so the test can pass without
-// GATK producing any calls. The duplicate rate and insert-size figures are
-// fixed placeholders, not Picard output.
+// TestGATKWorkflowIntegration tests integration with GATK (Genome Analysis Toolkit)
 func TestGATKWorkflowIntegration(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping GATK integration tests in short mode")
 	}
 
-	// Check if GATK is available
-	if !isToolAvailable("gatk") {
-		t.Skip("GATK not available - skipping integration tests")
-	}
+	// The pipeline runs bwa and samtools as well as GATK.
+	requireTools(t, "gatk", "bwa", "samtools")
 
 	framework := pt.NewE2EFramework()
 	require.NotNil(t, framework)
@@ -94,30 +87,21 @@ func testGATKPipeline(t *testing.T, framework *pt.E2EFramework, platform pt.Sequ
 	validateGATKResults(t, gatkResults, platform, population)
 
 	// Step 7: Run variant calling
-	variantResults := runGATKVariantCalling(t, workDir, gatkResults.AlignedBAM, refGenome, syntheticData)
+	variantResults := runGATKVariantCalling(t, workDir, gatkResults.AlignedBAM, refGenome)
 
 	// Step 8: Validate variant calling results
-	validateVariantCallingResults(t, variantResults, syntheticData, platform)
+	validateVariantCallingResults(t, variantResults)
 
 	t.Logf("✅ GATK pipeline completed successfully for %s %s", platform, population)
 }
 
-// TestBWAAlignmentIntegration aligns synthetic reads with bwa mem, bwa-mem2
-// or minimap2 (by platform) and checks the samtools flagstat mapping rate;
-// it skips when bwa is not on PATH.
-//
-// If the aligner fails (for example bwa-mem2 or minimap2 is missing),
-// runBWAAlignment returns fixed mock results and the assertions pass on
-// those. Average MAPQ, properly-paired rate and insert size are fixed
-// placeholders in every case.
+// TestBWAAlignmentIntegration tests integration with BWA aligner
 func TestBWAAlignmentIntegration(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping BWA integration tests in short mode")
 	}
 
-	if !isToolAvailable("bwa") {
-		t.Skip("BWA not available - skipping integration tests")
-	}
+	requireTools(t, "samtools")
 
 	framework := pt.NewE2EFramework()
 	require.NotNil(t, framework)
@@ -126,15 +110,17 @@ func TestBWAAlignmentIntegration(t *testing.T) {
 	alignmentTests := []struct {
 		platform pt.SequencingPlatform
 		aligner  string
+		binary   string
 	}{
-		{pt.IlluminaNovaSeq6000, "bwa-mem"},
-		{pt.IlluminaNextSeq2000, "bwa-mem"},
-		{pt.PacBioRevio, "bwa-mem2"},
-		{pt.ONTPromethION24, "minimap2"}, // Better for very long reads
+		{pt.IlluminaNovaSeq6000, "bwa-mem", "bwa"},
+		{pt.IlluminaNextSeq2000, "bwa-mem", "bwa"},
+		{pt.PacBioRevio, "bwa-mem2", "bwa-mem2"},
+		{pt.ONTPromethION24, "minimap2", "minimap2"}, // Better for very long reads
 	}
 
 	for _, test := range alignmentTests {
 		t.Run(fmt.Sprintf("%s_%s", test.platform, test.aligner), func(t *testing.T) {
+			requireTools(t, test.binary)
 			testBWAAlignment(t, framework, test.platform, test.aligner)
 		})
 	}
@@ -175,36 +161,19 @@ func testBWAAlignment(t *testing.T, framework *pt.E2EFramework, platform pt.Sequ
 		aligner, alignmentResult.MappingRate*100, alignmentResult.AverageMAPQ)
 }
 
-// TestBCFtoolsIntegration writes synthetic VCFs and runs bcftools merge; it
-// skips when bcftools is not on PATH.
-//
-// The statistics it checks are not measured: parseBCFtoolsStats returns
-// fixed values, and when the merge fails createMockBCFtoolsResults is used
-// instead. The population and cross-platform subtests only write VCFs and
-// log variant counts; they do not run bcftools.
+// TestBCFtoolsIntegration tests integration with BCFtools for variant processing
 func TestBCFtoolsIntegration(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping BCFtools integration tests in short mode")
 	}
 
-	if !isToolAvailable("bcftools") {
-		t.Skip("BCFtools not available - skipping integration tests")
-	}
+	requireTools(t, "bcftools")
 
 	framework := pt.NewE2EFramework()
 	require.NotNil(t, framework)
 
-	// Test variant processing workflow
 	t.Run("Variant Processing Workflow", func(t *testing.T) {
 		testBCFtoolsVariantProcessing(t, framework)
-	})
-
-	t.Run("Population Genetics Analysis", func(t *testing.T) {
-		testBCFtoolsPopulationAnalysis(t, framework)
-	})
-
-	t.Run("Cross-Platform Variant Consistency", func(t *testing.T) {
-		testCrossPlatformVariants(t, framework)
 	})
 }
 
@@ -223,6 +192,7 @@ func testBCFtoolsVariantProcessing(t *testing.T, framework *pt.E2EFramework) {
 	defer os.RemoveAll(workDir)
 
 	vcfFiles := make([]string, 0, len(platforms))
+	written := make([]int, 0, len(platforms))
 
 	for i, platform := range platforms {
 		config := framework.CreatePlatformConfig(platform, "CEU")
@@ -234,13 +204,16 @@ func testBCFtoolsVariantProcessing(t *testing.T, framework *pt.E2EFramework) {
 		err = framework.WriteVCF(syntheticData, vcfFile)
 		require.NoError(t, err)
 		vcfFiles = append(vcfFiles, vcfFile)
+		stats, err := parseVCFStatistics(vcfFile)
+		require.NoError(t, err)
+		written = append(written, stats.VariantCount)
 	}
 
 	// Run BCFtools operations
 	bcftoolsResult := runBCFtoolsOperations(t, workDir, vcfFiles)
 
-	// Validate BCFtools results
-	validateBCFtoolsResults(t, bcftoolsResult)
+	// Validate BCFtools results against what was written
+	validateBCFtoolsResults(t, bcftoolsResult, written)
 
 	t.Log("✅ BCFtools variant processing completed successfully")
 }
@@ -251,9 +224,7 @@ func TestSamtoolsIntegration(t *testing.T) {
 		t.Skip("Skipping Samtools integration tests in short mode")
 	}
 
-	if !isToolAvailable("samtools") {
-		t.Skip("Samtools not available - skipping integration tests")
-	}
+	requireTools(t, "samtools")
 
 	framework := pt.NewE2EFramework()
 
@@ -272,30 +243,21 @@ func TestPicardIntegration(t *testing.T) {
 		t.Skip("Skipping Picard integration tests in short mode")
 	}
 
-	if !isToolAvailable("picard") {
-		t.Skip("Picard not available - skipping integration tests")
-	}
+	requireTools(t, "picard")
 
 	framework := pt.NewE2EFramework()
 
 	t.Run("Quality Metrics", func(t *testing.T) {
 		testPicardQualityMetrics(t, framework)
 	})
-
-	t.Run("Duplicate Marking", func(t *testing.T) {
-		testPicardDuplicateMarking(t, framework)
-	})
 }
 
 // Data structures for results
 
 type GATKResults struct {
-	AlignedBAM       string
-	ProcessingTime   time.Duration
-	MappingRate      float64
-	DuplicateRate    float64
-	InsertSizeStdDev float64
-	QualityMetrics   map[string]float64
+	AlignedBAM     string
+	ProcessingTime time.Duration
+	MappingRate    float64
 }
 
 type VariantCallingResults struct {
@@ -308,24 +270,15 @@ type VariantCallingResults struct {
 }
 
 type AlignmentResults struct {
-	BAMFile        string
-	MappingRate    float64
-	AverageMAPQ    float64
-	ProperlyPaired float64
-	InsertSize     AlignmentInsertSizeStats
-}
-
-type AlignmentInsertSizeStats struct {
-	Mean   float64
-	StdDev float64
-	Median float64
+	BAMFile     string
+	MappingRate float64
+	AverageMAPQ float64
 }
 
 type BCFtoolsResults struct {
-	MergedVCF       string
-	VariantStats    VariantStatistics
-	PopulationStats PopulationStatistics
-	QualityMetrics  QualityMetrics
+	MergedVCF      string
+	VariantStats   VariantStatistics
+	MergedVCFStats VCFStatistics
 }
 
 type VariantStatistics struct {
@@ -334,21 +287,6 @@ type VariantStatistics struct {
 	IndelCount        int
 	TransitionCount   int
 	TransversionCount int
-	TiTvRatio         float64
-}
-
-type PopulationStatistics struct {
-	AlleleFrequencies map[string]float64
-	HardyWeinberg     float64
-	FIS               float64
-	Heterozygosity    float64
-}
-
-type QualityMetrics struct {
-	AverageQUAL    float64
-	AverageGQ      float64
-	AverageDP      float64
-	FilterPassRate float64
 }
 
 // Implementation functions
@@ -358,201 +296,133 @@ func isToolAvailable(tool string) bool {
 	return err == nil
 }
 
-func runGATKPreprocessing(t *testing.T, workDir, fastqR1, fastqR2, refGenome string) *GATKResults {
-	start := time.Now()
-
-	// Index reference genome
-	indexCmd := exec.Command("samtools", "faidx", refGenome)
-	indexCmd.Dir = workDir
-	err := indexCmd.Run()
-	require.NoError(t, err, "Failed to index reference genome")
-
-	// BWA index
-	bwaIndexCmd := exec.Command("bwa", "index", refGenome)
-	bwaIndexCmd.Dir = workDir
-	err = bwaIndexCmd.Run()
-	require.NoError(t, err, "Failed to create BWA index")
-
-	// Align with BWA
-	samFile := filepath.Join(workDir, "aligned.sam")
-	alignCmd := exec.Command("bwa", "mem", refGenome, fastqR1, fastqR2)
-	alignCmd.Dir = workDir
-
-	output, err := alignCmd.Output()
-	require.NoError(t, err, "BWA alignment failed")
-
-	err = os.WriteFile(samFile, output, 0644)
-	require.NoError(t, err, "Failed to write SAM file")
-
-	// Convert to BAM
-	bamFile := filepath.Join(workDir, "aligned.bam")
-	samViewCmd := exec.Command("samtools", "view", "-bS", samFile, "-o", bamFile)
-	samViewCmd.Dir = workDir
-	err = samViewCmd.Run()
-	require.NoError(t, err, "SAM to BAM conversion failed")
-
-	// Sort BAM
-	sortedBAM := filepath.Join(workDir, "aligned_sorted.bam")
-	sortCmd := exec.Command("samtools", "sort", bamFile, "-o", sortedBAM)
-	sortCmd.Dir = workDir
-	err = sortCmd.Run()
-	require.NoError(t, err, "BAM sorting failed")
-
-	// Index BAM
-	indexBAMCmd := exec.Command("samtools", "index", sortedBAM)
-	indexBAMCmd.Dir = workDir
-	err = indexBAMCmd.Run()
-	require.NoError(t, err, "BAM indexing failed")
-
-	// Get basic statistics
-	statsCmd := exec.Command("samtools", "flagstat", sortedBAM)
-	statsCmd.Dir = workDir
-	statsOutput, err := statsCmd.Output()
-	require.NoError(t, err, "Failed to get BAM statistics")
-
-	// Parse mapping rate from flagstat output
-	mappingRate := parseMappingRate(string(statsOutput))
-
-	processingTime := time.Since(start)
-
-	return &GATKResults{
-		AlignedBAM:       sortedBAM,
-		ProcessingTime:   processingTime,
-		MappingRate:      mappingRate,
-		DuplicateRate:    0.05, // Placeholder - would be calculated by Picard
-		InsertSizeStdDev: 50.0, // Placeholder
-		QualityMetrics: map[string]float64{
-			"MAPQ": 40.0, // Placeholder
-		},
+// requireTools skips the test unless every tool is on PATH. Once a tool is
+// present, its failures fail the test; results are never substituted.
+func requireTools(t *testing.T, tools ...string) {
+	t.Helper()
+	for _, tool := range tools {
+		if !isToolAvailable(tool) {
+			t.Skipf("%s not available - skipping", tool)
+		}
 	}
 }
 
-func runGATKVariantCalling(t *testing.T, workDir, bamFile, refGenome string, syntheticData *pt.SyntheticData) *VariantCallingResults {
-	// Create sequence dictionary
-	dictFile := strings.TrimSuffix(refGenome, ".fasta") + ".dict"
-	dictCmd := exec.Command("picard", "CreateSequenceDictionary",
-		fmt.Sprintf("R=%s", refGenome),
-		fmt.Sprintf("O=%s", dictFile))
-	dictCmd.Dir = workDir
-	_ = dictCmd.Run() // May fail if Picard not available
+// runTool runs name with args in dir and returns its stdout, failing the
+// test with the tool's stderr when it exits non-zero.
+func runTool(t *testing.T, dir, name string, args ...string) []byte {
+	t.Helper()
+	cmd := exec.Command(name, args...)
+	cmd.Dir = dir
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	require.NoError(t, err, "%s %s: %s", name, strings.Join(args, " "), tailLines(stderr.String(), 20))
+	return out
+}
 
-	// Call variants with GATK HaplotypeCaller
-	vcfFile := filepath.Join(workDir, "variants.vcf")
-	variantCmd := exec.Command("gatk", "HaplotypeCaller",
-		"-R", refGenome,
-		"-I", bamFile,
-		"-O", vcfFile)
-	variantCmd.Dir = workDir
+func runGATKPreprocessing(t *testing.T, workDir, fastqR1, fastqR2, refGenome string) *GATKResults {
+	start := time.Now()
 
-	err := variantCmd.Run()
-	if err != nil {
-		// If GATK fails, create a mock VCF with population-appropriate variant count.
-		t.Logf("GATK HaplotypeCaller failed, creating mock VCF: %v", err)
-		createMockVCF(vcfFile, syntheticData.VariantCount)
+	runTool(t, workDir, "samtools", "faidx", refGenome)
+	runTool(t, workDir, "bwa", "index", refGenome)
+
+	// Align with BWA; HaplotypeCaller needs a read group.
+	samFile := filepath.Join(workDir, "aligned.sam")
+	sam := runTool(t, workDir, "bwa", "mem", "-R", `@RG\tID:synthetic\tSM:synthetic\tPL:ILLUMINA`, refGenome, fastqR1, fastqR2)
+	require.NoError(t, os.WriteFile(samFile, sam, 0o600), "Failed to write SAM file")
+
+	bamFile := filepath.Join(workDir, "aligned.bam")
+	runTool(t, workDir, "samtools", "view", "-bS", samFile, "-o", bamFile)
+	sortedBAM := filepath.Join(workDir, "aligned_sorted.bam")
+	runTool(t, workDir, "samtools", "sort", bamFile, "-o", sortedBAM)
+	runTool(t, workDir, "samtools", "index", sortedBAM)
+
+	mappingRate, err := parseMappingRate(string(runTool(t, workDir, "samtools", "flagstat", sortedBAM)))
+	require.NoError(t, err)
+
+	return &GATKResults{
+		AlignedBAM:     sortedBAM,
+		ProcessingTime: time.Since(start),
+		MappingRate:    mappingRate,
 	}
+}
 
-	// Parse VCF to get statistics
-	variantStats := parseVCFStatistics(vcfFile)
+func runGATKVariantCalling(t *testing.T, workDir, bamFile, refGenome string) *VariantCallingResults {
+	dictFile := strings.TrimSuffix(refGenome, filepath.Ext(refGenome)) + ".dict"
+	runTool(t, workDir, "gatk", "CreateSequenceDictionary", "-R", refGenome, "-O", dictFile)
+
+	vcfFile := filepath.Join(workDir, "variants.vcf")
+	runTool(t, workDir, "gatk", "HaplotypeCaller", "-R", refGenome, "-I", bamFile, "-O", vcfFile)
+
+	stats, err := parseVCFStatistics(vcfFile)
+	require.NoError(t, err)
 
 	return &VariantCallingResults{
 		VCFFile:        vcfFile,
-		VariantCount:   variantStats.VariantCount,
-		SNPCount:       variantStats.SNPCount,
-		IndelCount:     variantStats.IndelCount,
-		QualityScore:   variantStats.QualityScore,
-		FilterPassRate: variantStats.FilterPassRate,
+		VariantCount:   stats.VariantCount,
+		SNPCount:       stats.SNPCount,
+		IndelCount:     stats.IndelCount,
+		QualityScore:   stats.QualityScore,
+		FilterPassRate: stats.FilterPassRate,
 	}
 }
 
 func runBWAAlignment(t *testing.T, workDir, fastqR1, fastqR2, refGenome, aligner string) *AlignmentResults {
-	// Index reference if needed
-	indexCmd := exec.Command("bwa", "index", refGenome)
-	indexCmd.Dir = workDir
-	_ = indexCmd.Run() // May already be indexed
-
-	// Run alignment
-	samFile := filepath.Join(workDir, "aligned.sam")
-	var alignCmd *exec.Cmd
-
+	var sam []byte
 	switch aligner {
 	case "bwa-mem":
-		alignCmd = exec.Command("bwa", "mem", refGenome, fastqR1, fastqR2)
+		runTool(t, workDir, "bwa", "index", refGenome)
+		sam = runTool(t, workDir, "bwa", "mem", refGenome, fastqR1, fastqR2)
 	case "bwa-mem2":
-		alignCmd = exec.Command("bwa-mem2", "mem", refGenome, fastqR1, fastqR2)
+		runTool(t, workDir, "bwa-mem2", "index", refGenome)
+		sam = runTool(t, workDir, "bwa-mem2", "mem", refGenome, fastqR1, fastqR2)
 	case "minimap2":
-		alignCmd = exec.Command("minimap2", "-ax", "map-ont", refGenome, fastqR1)
+		sam = runTool(t, workDir, "minimap2", "-ax", "map-ont", refGenome, fastqR1)
 	default:
-		alignCmd = exec.Command("bwa", "mem", refGenome, fastqR1, fastqR2)
+		t.Fatalf("unknown aligner %q", aligner)
 	}
 
-	alignCmd.Dir = workDir
-	output, err := alignCmd.Output()
-	if err != nil {
-		t.Logf("Alignment failed with %s, creating mock results: %v", aligner, err)
-		return createMockAlignmentResults(workDir)
-	}
+	samFile := filepath.Join(workDir, "aligned.sam")
+	require.NoError(t, os.WriteFile(samFile, sam, 0o600))
+	bamFile := filepath.Join(workDir, "aligned.bam")
+	runTool(t, workDir, "samtools", "view", "-bS", samFile, "-o", bamFile)
 
-	err = os.WriteFile(samFile, output, 0644)
+	mappingRate, err := parseMappingRate(string(runTool(t, workDir, "samtools", "flagstat", bamFile)))
+	require.NoError(t, err)
+	// Mean MAPQ over mapped primary alignments (-F 0x904: not unmapped,
+	// secondary or supplementary).
+	avgMAPQ, err := parseMeanMAPQ(string(runTool(t, workDir, "samtools", "view", "-F", "0x904", bamFile)))
 	require.NoError(t, err)
 
-	// Convert to BAM and get statistics
-	bamFile := filepath.Join(workDir, "aligned.bam")
-	convertCmd := exec.Command("samtools", "view", "-bS", samFile, "-o", bamFile)
-	convertCmd.Dir = workDir
-	_ = convertCmd.Run()
-
-	// Get alignment statistics
-	statsCmd := exec.Command("samtools", "flagstat", bamFile)
-	statsCmd.Dir = workDir
-	statsOutput, _ := statsCmd.Output()
-
-	mappingRate := parseMappingRate(string(statsOutput))
-
 	return &AlignmentResults{
-		BAMFile:        bamFile,
-		MappingRate:    mappingRate,
-		AverageMAPQ:    35.0, // Placeholder
-		ProperlyPaired: 0.95, // Placeholder
-		InsertSize: AlignmentInsertSizeStats{
-			Mean:   300.0,
-			StdDev: 50.0,
-			Median: 295.0,
-		},
+		BAMFile:     bamFile,
+		MappingRate: mappingRate,
+		AverageMAPQ: avgMAPQ,
 	}
 }
 
 func runBCFtoolsOperations(t *testing.T, workDir string, vcfFiles []string) *BCFtoolsResults {
-	// Merge VCF files
-	mergedVCF := filepath.Join(workDir, "merged.vcf")
-
-	args := append([]string{"merge", "-o", mergedVCF}, vcfFiles...)
-	mergeCmd := exec.Command("bcftools", args...)
-	mergeCmd.Dir = workDir
-
-	err := mergeCmd.Run()
-	if err != nil {
-		t.Logf("BCFtools merge failed, creating mock results: %v", err)
-		return createMockBCFtoolsResults(workDir)
+	// bcftools merge needs bgzipped, indexed inputs.
+	compressed := make([]string, 0, len(vcfFiles))
+	for _, vcf := range vcfFiles {
+		gz := vcf + ".gz"
+		runTool(t, workDir, "bcftools", "view", "-Oz", "-o", gz, vcf)
+		runTool(t, workDir, "bcftools", "index", gz)
+		compressed = append(compressed, gz)
 	}
 
-	// Get variant statistics
-	statsCmd := exec.Command("bcftools", "stats", mergedVCF)
-	statsCmd.Dir = workDir
-	statsOutput, _ := statsCmd.Output()
+	mergedVCF := filepath.Join(workDir, "merged.vcf")
+	runTool(t, workDir, "bcftools", append([]string{"merge", "-o", mergedVCF}, compressed...)...)
 
-	variantStats := parseBCFtoolsStats(string(statsOutput))
+	variantStats, err := parseBCFtoolsStats(string(runTool(t, workDir, "bcftools", "stats", mergedVCF)))
+	require.NoError(t, err)
+	vcfStats, err := parseVCFStatistics(mergedVCF)
+	require.NoError(t, err)
 
 	return &BCFtoolsResults{
-		MergedVCF:    mergedVCF,
-		VariantStats: variantStats,
-		PopulationStats: PopulationStatistics{
-			HardyWeinberg:  0.05,  // Placeholder
-			Heterozygosity: 0.001, // Placeholder
-		},
-		QualityMetrics: QualityMetrics{
-			AverageQUAL:    30.0, // Placeholder
-			FilterPassRate: 0.95, // Placeholder
-		},
+		MergedVCF:      mergedVCF,
+		VariantStats:   variantStats,
+		MergedVCFStats: vcfStats,
 	}
 }
 
@@ -589,7 +459,6 @@ func writeBAMOrSkip(t *testing.T, framework *pt.E2EFramework, syntheticData *pt.
 func validateGATKResults(t *testing.T, results *GATKResults, platform pt.SequencingPlatform, population string) {
 	assert.NotEmpty(t, results.AlignedBAM, "GATK should produce aligned BAM file")
 	assert.Greater(t, results.MappingRate, 0.8, "Mapping rate should be >80%")
-	assert.Less(t, results.DuplicateRate, 0.3, "Duplicate rate should be reasonable")
 	assert.Less(t, results.ProcessingTime, 30*time.Minute, "Processing should complete within 30 minutes")
 
 	// Platform-specific validations
@@ -602,21 +471,14 @@ func validateGATKResults(t *testing.T, results *GATKResults, platform pt.Sequenc
 		assert.Greater(t, results.MappingRate, 0.85, "ONT should have >85% mapping rate")
 	}
 
-	t.Logf("GATK Results - Mapping: %.1f%%, Duplicates: %.1f%%, Time: %v",
-		results.MappingRate*100, results.DuplicateRate*100, results.ProcessingTime)
+	t.Logf("GATK Results - Mapping: %.1f%%, Time: %v", results.MappingRate*100, results.ProcessingTime)
 }
 
-func validateVariantCallingResults(t *testing.T, results *VariantCallingResults, syntheticData *pt.SyntheticData, platform pt.SequencingPlatform) {
+// validateVariantCallingResults checks that HaplotypeCaller wrote a parseable
+// VCF. The reference is built from the reads themselves, so the reads carry
+// no variants relative to it and no variant count is expected.
+func validateVariantCallingResults(t *testing.T, results *VariantCallingResults) {
 	assert.NotEmpty(t, results.VCFFile, "Should produce VCF file")
-	assert.Greater(t, results.VariantCount, 0, "Should identify variants")
-	assert.Greater(t, results.FilterPassRate, 0.8, "Filter pass rate should be >80%")
-	assert.Greater(t, results.QualityScore, 20.0, "Average quality should be >Q20")
-
-	// Expected variant counts based on synthetic data complexity
-	expectedVariants := int(float64(syntheticData.VariantCount) * 0.8) // 80% sensitivity
-	assert.InDelta(t, expectedVariants, results.VariantCount, float64(expectedVariants)*0.3,
-		"Variant count should be within 30% of expected")
-
 	t.Logf("Variant Calling - Variants: %d, SNPs: %d, Indels: %d, Quality: %.1f",
 		results.VariantCount, results.SNPCount, results.IndelCount, results.QualityScore)
 }
@@ -625,13 +487,11 @@ func validateAlignmentResults(t *testing.T, results *AlignmentResults, synthetic
 	assert.NotEmpty(t, results.BAMFile, "Should produce BAM file")
 	assert.Greater(t, results.MappingRate, 0.8, "Mapping rate should be >80%")
 	assert.Greater(t, results.AverageMAPQ, 20.0, "Average MAPQ should be >20")
-	assert.Greater(t, results.ProperlyPaired, 0.8, "Properly paired rate should be >80%")
 
 	// Platform-specific expectations
 	switch platform {
 	case pt.IlluminaNovaSeq6000, pt.IlluminaNextSeq2000:
 		assert.GreaterOrEqual(t, results.MappingRate, 0.95, "Illumina should have high mapping rate")
-		assert.InDelta(t, 300.0, results.InsertSize.Mean, 100.0, "Illumina insert size should be ~300bp")
 	case pt.PacBioRevio:
 		assert.Greater(t, results.MappingRate, 0.90, "PacBio should have good mapping rate")
 		assert.Greater(t, results.AverageMAPQ, 30.0, "PacBio should have high MAPQ")
@@ -640,171 +500,180 @@ func validateAlignmentResults(t *testing.T, results *AlignmentResults, synthetic
 	}
 }
 
-func validateBCFtoolsResults(t *testing.T, results *BCFtoolsResults) {
+// validateBCFtoolsResults checks the merge against the inputs. WriteVCF
+// writes A>G SNVs at positions 1000, 2000, ..., so the merged file holds the
+// largest input's sites, all of them transitions.
+func validateBCFtoolsResults(t *testing.T, results *BCFtoolsResults, written []int) {
+	want := 0
+	for _, n := range written {
+		want = max(want, n)
+	}
+	require.Greater(t, want, 0, "inputs should contain variants")
 	assert.NotEmpty(t, results.MergedVCF, "Should produce merged VCF")
-	assert.Greater(t, results.VariantStats.TotalVariants, 0, "Should have variants")
-	assert.Greater(t, results.VariantStats.TiTvRatio, 1.5, "Ti/Tv ratio should be realistic (>1.5)")
-	assert.Less(t, results.VariantStats.TiTvRatio, 3.0, "Ti/Tv ratio should be realistic (<3.0)")
-	assert.Greater(t, results.QualityMetrics.FilterPassRate, 0.8, "Filter pass rate should be >80%")
+	assert.Equal(t, want, results.VariantStats.TotalVariants, "bcftools stats record count")
+	assert.Equal(t, want, results.VariantStats.SNPCount, "every input record is a SNP")
+	assert.Equal(t, 0, results.VariantStats.IndelCount)
+	assert.Equal(t, want, results.VariantStats.TransitionCount, "A>G is a transition")
+	assert.Equal(t, 0, results.VariantStats.TransversionCount)
+	assert.Equal(t, want, results.MergedVCFStats.VariantCount, "merged VCF record count")
+	assert.Equal(t, 1.0, results.MergedVCFStats.FilterPassRate, "all input records PASS")
 
-	t.Logf("BCFtools Results - Variants: %d, Ti/Tv: %.2f, Pass Rate: %.1f%%",
-		results.VariantStats.TotalVariants, results.VariantStats.TiTvRatio,
-		results.QualityMetrics.FilterPassRate*100)
+	t.Logf("BCFtools Results - Variants: %d, Ts: %d, Tv: %d",
+		results.VariantStats.TotalVariants, results.VariantStats.TransitionCount, results.VariantStats.TransversionCount)
 }
 
 // Helper functions for parsing tool outputs
 
-// parseMappingRate returns the mapped fraction from samtools flagstat
-// output. When no "mapped (" line parses it returns 0.95, which hides a
-// failed or empty flagstat from the mapping-rate assertions.
-func parseMappingRate(flagstatOutput string) float64 {
-	// Parse samtools flagstat output to extract mapping rate
-	lines := strings.Split(flagstatOutput, "\n")
-	for _, line := range lines {
-		if strings.Contains(line, "mapped (") {
-			// Extract percentage from format like "12345 + 0 mapped (98.50% : N/A)"
-			start := strings.Index(line, "(")
-			end := strings.Index(line, "%")
-			if start != -1 && end != -1 && end > start {
-				percentStr := line[start+1 : end]
-				var percent float64
-				fmt.Sscanf(percentStr, "%f", &percent)
-				return percent / 100.0
-			}
+// parseMappingRate extracts the mapped fraction from samtools flagstat
+// output (the "N + M mapped (98.50% : N/A)" line).
+func parseMappingRate(flagstatOutput string) (float64, error) {
+	for _, line := range strings.Split(flagstatOutput, "\n") {
+		if !strings.Contains(line, " mapped (") || strings.Contains(line, "primary mapped") {
+			continue
 		}
+		start := strings.Index(line, "(")
+		end := strings.Index(line, "%")
+		if start == -1 || end <= start {
+			continue
+		}
+		percent, err := strconv.ParseFloat(strings.TrimSpace(line[start+1:end]), 64)
+		if err != nil {
+			return 0, fmt.Errorf("parsing mapped percentage in %q: %w", line, err)
+		}
+		return percent / 100.0, nil
 	}
-	return 0.95 // Default fallback
+	return 0, fmt.Errorf("no mapped-percentage line in samtools flagstat output")
 }
 
-func parseVCFStatistics(vcfFile string) struct {
+// parseMeanMAPQ returns the mean MAPQ (column 5) of SAM records.
+func parseMeanMAPQ(samRecords string) (float64, error) {
+	var sum, n int
+	for _, line := range strings.Split(samRecords, "\n") {
+		if line == "" || strings.HasPrefix(line, "@") {
+			continue
+		}
+		fields := strings.Split(line, "\t")
+		if len(fields) < 5 {
+			return 0, fmt.Errorf("SAM record with %d fields: %q", len(fields), line)
+		}
+		q, err := strconv.Atoi(fields[4])
+		if err != nil {
+			return 0, fmt.Errorf("bad MAPQ %q: %w", fields[4], err)
+		}
+		sum += q
+		n++
+	}
+	if n == 0 {
+		return 0, fmt.Errorf("no SAM records")
+	}
+	return float64(sum) / float64(n), nil
+}
+
+// VCFStatistics summarises the records of a VCF file.
+type VCFStatistics struct {
 	VariantCount   int
 	SNPCount       int
 	IndelCount     int
-	QualityScore   float64
+	QualityScore   float64 // mean QUAL over records with a numeric QUAL
 	FilterPassRate float64
-} {
-	type result struct {
-		VariantCount   int
-		SNPCount       int
-		IndelCount     int
-		QualityScore   float64
-		FilterPassRate float64
-	}
+}
+
+// parseVCFStatistics counts the records of vcfFile. It fails if the file
+// cannot be read or has no #CHROM header; a VCF with no records gives zero
+// counts and rates.
+func parseVCFStatistics(vcfFile string) (VCFStatistics, error) {
 	f, err := os.Open(vcfFile)
 	if err != nil {
-		return result{QualityScore: 35.0, FilterPassRate: 0.92}
+		return VCFStatistics{}, err
 	}
 	defer f.Close()
 
-	var variantCount, snpCount, indelCount, passCount int
+	var st VCFStatistics
+	var passCount, qualCount int
 	var qualSum float64
+	header := false
 	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
 	for sc.Scan() {
 		line := sc.Text()
+		if strings.HasPrefix(line, "#CHROM") {
+			header = true
+			continue
+		}
 		if strings.HasPrefix(line, "#") || line == "" {
 			continue
 		}
 		fields := strings.Split(line, "\t")
-		variantCount++
-		if len(fields) >= 4 {
-			ref, alt := fields[3], fields[4]
-			if len(ref) == 1 && len(alt) == 1 {
-				snpCount++
-			} else {
-				indelCount++
-			}
+		if len(fields) < 8 {
+			return VCFStatistics{}, fmt.Errorf("%s: record with %d fields: %q", vcfFile, len(fields), line)
 		}
-		if len(fields) >= 6 {
-			if q, err := strconv.ParseFloat(fields[5], 64); err == nil {
-				qualSum += q
-			}
+		st.VariantCount++
+		if ref, alt := fields[3], fields[4]; len(ref) == 1 && len(alt) == 1 {
+			st.SNPCount++
+		} else {
+			st.IndelCount++
 		}
-		if len(fields) >= 7 && (fields[6] == "PASS" || fields[6] == ".") {
+		if q, err := strconv.ParseFloat(fields[5], 64); err == nil {
+			qualSum += q
+			qualCount++
+		}
+		if fields[6] == "PASS" || fields[6] == "." {
 			passCount++
 		}
 	}
-
-	avgQual := 35.0
-	if variantCount > 0 {
-		avgQual = qualSum / float64(variantCount)
+	if err := sc.Err(); err != nil {
+		return VCFStatistics{}, err
 	}
-	passRate := 0.92
-	if variantCount > 0 {
-		passRate = float64(passCount) / float64(variantCount)
+	if !header {
+		return VCFStatistics{}, fmt.Errorf("%s: no #CHROM header line", vcfFile)
 	}
-
-	return result{
-		VariantCount:   variantCount,
-		SNPCount:       snpCount,
-		IndelCount:     indelCount,
-		QualityScore:   avgQual,
-		FilterPassRate: passRate,
+	if qualCount > 0 {
+		st.QualityScore = qualSum / float64(qualCount)
 	}
+	if st.VariantCount > 0 {
+		st.FilterPassRate = float64(passCount) / float64(st.VariantCount)
+	}
+	return st, nil
 }
 
-// parseBCFtoolsStats ignores statsOutput and returns fixed counts; it does
-// not parse bcftools stats.
-func parseBCFtoolsStats(statsOutput string) VariantStatistics {
-	return VariantStatistics{
-		TotalVariants:     1500,
-		SNPCount:          1200,
-		IndelCount:        300,
-		TransitionCount:   800,
-		TransversionCount: 400,
-		TiTvRatio:         2.0,
+// parseBCFtoolsStats reads the summary-number (SN) and transition/
+// transversion (TSTV) sections of bcftools stats output.
+func parseBCFtoolsStats(statsOutput string) (VariantStatistics, error) {
+	var st VariantStatistics
+	sawRecords, sawTSTV := false, false
+	atoi := func(s string) (int, error) { return strconv.Atoi(strings.TrimSpace(s)) }
+	for _, line := range strings.Split(statsOutput, "\n") {
+		fields := strings.Split(line, "\t")
+		switch {
+		case len(fields) >= 4 && fields[0] == "SN":
+			n, err := atoi(fields[3])
+			if err != nil {
+				continue
+			}
+			switch fields[2] {
+			case "number of records:":
+				st.TotalVariants, sawRecords = n, true
+			case "number of SNPs:":
+				st.SNPCount = n
+			case "number of indels:":
+				st.IndelCount = n
+			}
+		case len(fields) >= 4 && fields[0] == "TSTV" && !sawTSTV:
+			ts, err1 := atoi(fields[2])
+			tv, err2 := atoi(fields[3])
+			if err1 != nil || err2 != nil {
+				return VariantStatistics{}, fmt.Errorf("bad TSTV line %q", line)
+			}
+			st.TransitionCount, st.TransversionCount, sawTSTV = ts, tv, true
+		}
 	}
-}
-
-// Mock results used when a tool run fails. The callers' assertions then run
-// against these fixed values, so a failing tool does not fail the test.
-
-func createMockVCF(vcfFile string, variantCount int) {
-	var sb strings.Builder
-	sb.WriteString("##fileformat=VCFv4.2\n##source=phantom-science-mock\n")
-	sb.WriteString("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n")
-	snpBases := [][2]string{{"A", "G"}, {"C", "T"}, {"G", "A"}, {"T", "C"}}
-	for i := 0; i < variantCount; i++ {
-		pair := snpBases[i%len(snpBases)]
-		sb.WriteString(fmt.Sprintf("chr1\t%d\t.\t%s\t%s\t40.0\tPASS\t.\n",
-			(i+1)*100, pair[0], pair[1]))
+	if !sawRecords {
+		return VariantStatistics{}, fmt.Errorf("no \"number of records\" line in bcftools stats output")
 	}
-	os.WriteFile(vcfFile, []byte(sb.String()), 0644) //nolint:errcheck
-}
-
-func createMockAlignmentResults(workDir string) *AlignmentResults {
-	return &AlignmentResults{
-		BAMFile:        filepath.Join(workDir, "mock.bam"),
-		MappingRate:    0.95,
-		AverageMAPQ:    35.0,
-		ProperlyPaired: 0.93,
-		InsertSize: AlignmentInsertSizeStats{
-			Mean:   300.0,
-			StdDev: 50.0,
-			Median: 295.0,
-		},
+	if !sawTSTV {
+		return VariantStatistics{}, fmt.Errorf("no TSTV line in bcftools stats output")
 	}
-}
-
-func createMockBCFtoolsResults(workDir string) *BCFtoolsResults {
-	return &BCFtoolsResults{
-		MergedVCF: filepath.Join(workDir, "mock_merged.vcf"),
-		VariantStats: VariantStatistics{
-			TotalVariants:     1500,
-			SNPCount:          1200,
-			IndelCount:        300,
-			TransitionCount:   800,
-			TransversionCount: 400,
-			TiTvRatio:         2.0,
-		},
-		PopulationStats: PopulationStatistics{
-			HardyWeinberg:  0.05,
-			Heterozygosity: 0.001,
-		},
-		QualityMetrics: QualityMetrics{
-			AverageQUAL:    30.0,
-			FilterPassRate: 0.95,
-		},
-	}
+	return st, nil
 }
 
 func testSamtoolsOperations(t *testing.T, workDir, bamFile string, wantReads int) {
@@ -845,18 +714,6 @@ func testPicardQualityMetrics(t *testing.T, framework *pt.E2EFramework) {
 	writeBAMOrSkip(t, framework, syntheticData, bamFile)
 
 	testPicardOperations(t, workDir, bamFile, len(syntheticData.Sequences))
-}
-
-func testPicardDuplicateMarking(t *testing.T, framework *pt.E2EFramework) {
-	t.Log("🔍 Testing Picard duplicate marking")
-
-	// Picard MarkDuplicates is not run: this only checks that enough reads
-	// are generated for duplicate analysis to be meaningful.
-	config := framework.CreatePlatformConfig(pt.IlluminaNovaSeq6000, "CEU")
-	syntheticData, err := framework.GenerateSyntheticData(config)
-	require.NoError(t, err)
-
-	assert.Greater(t, len(syntheticData.Sequences), 100, "Should have sufficient reads for duplicate analysis")
 }
 
 func testPicardOperations(t *testing.T, workDir, bamFile string, wantReads int) {
@@ -902,53 +759,6 @@ func tailLines(s string, n int) string {
 		lines = lines[len(lines)-n:]
 	}
 	return strings.Join(lines, "\n")
-}
-
-// testBCFtoolsPopulationAnalysis writes a YRI VCF and logs its variant
-// count. It runs no bcftools population analysis.
-func testBCFtoolsPopulationAnalysis(t *testing.T, framework *pt.E2EFramework) {
-	t.Log("🧬 Testing BCFtools population genetics analysis")
-
-	config := framework.CreatePlatformConfig(pt.IlluminaNovaSeq6000, "YRI")
-	syntheticData, err := framework.GenerateSyntheticData(config)
-	require.NoError(t, err)
-
-	workDir, err := os.MkdirTemp("", "bcftools_pop_test")
-	require.NoError(t, err)
-	defer os.RemoveAll(workDir)
-
-	vcfFile := filepath.Join(workDir, "population.vcf")
-	err = framework.WriteVCF(syntheticData, vcfFile)
-	require.NoError(t, err)
-
-	t.Logf("Population analysis prepared with %d variants", syntheticData.VariantCount)
-}
-
-// testCrossPlatformVariants writes one VCF per platform and logs the variant
-// counts. It does not compare the call sets.
-func testCrossPlatformVariants(t *testing.T, framework *pt.E2EFramework) {
-	t.Log("🔬 Testing cross-platform variant consistency")
-
-	platforms := []pt.SequencingPlatform{
-		pt.IlluminaNovaSeq6000,
-		pt.PacBioRevio,
-	}
-
-	workDir, err := os.MkdirTemp("", "crossplatform_test")
-	require.NoError(t, err)
-	defer os.RemoveAll(workDir)
-
-	for _, platform := range platforms {
-		config := framework.CreatePlatformConfig(platform, "CEU")
-		syntheticData, err := framework.GenerateSyntheticData(config)
-		require.NoError(t, err)
-
-		vcfFile := filepath.Join(workDir, fmt.Sprintf("%s.vcf", platform))
-		err = framework.WriteVCF(syntheticData, vcfFile)
-		require.NoError(t, err)
-
-		t.Logf("Platform %s: %d variants", platform, syntheticData.VariantCount)
-	}
 }
 
 // testSamtoolsStatistics tests Samtools statistics generation
