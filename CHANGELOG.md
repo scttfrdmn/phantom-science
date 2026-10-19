@@ -94,6 +94,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `examples/enterprise_fingerprinting.go` demonstrates encrypted, per-file fingerprinting with a key and verification, and its tests cover the failure cases (#20).
 - **BREAKING:** codon-usage ORF and `CodonChange` coordinates are forward-strand, and `Strand` is `"+"`/`"-"` (was `"0"`/`"1"`) (#20).
 - An unknown chromosome in VCF genomic context is now an error instead of returning generated bases (#20).
+- **BREAKING:** validation results never claim regulatory readiness (#20).
+  - `regulatory_ready` is always false. When regulatory settings are present, the summary says regulatory readiness was not assessed.
+  - `academic_ready` requires every test to pass and `peer_review_ready`.
+  - `compliance_level` is `none`, `tests_passed` or `academic`.
+- `scripts/release.sh X.Y.Z` prepares a release for this changelog layout (#20).
+  - It moves the [Unreleased] entries, updates the compare links, VERSION and `cmd/root.go`, and runs `validate-changelog` and `check-version`.
+  - `--dry-run` prints the diff. It commits, tags and pushes only with `--commit`, `--tag` and `--push`.
+- Genomics-tool integration tests skip when a tool is missing and fail when an installed tool fails. They no longer substitute mock results (#20).
+- `make validate-configs` uses a repository `.yamllint`, counts every error instead of stopping at the first, and loads the shipped sequencer configs (#20).
 
 ### Removed
 - Unused "business" Prometheus metrics in `internal/monitoring` (`phantom_customers_active`, `phantom_datasets_processed_total`, `phantom_revenue_generated_total`, `phantom_sla_compliance_percent`, `phantom_customer_satisfaction_score`). Nothing recorded values to them.
@@ -157,6 +166,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - fixed a panic in `quick_validation` with fewer than five chromosomes
   - `sequence_classifier` now returns a deterministic population instead of a random one
 - The Cromwell workflow's validation task hit SIGPIPE under `pipefail`, and `continueOnReturnCode 141` hid it, so the report stopped after the first file (#20).
+- `generate --stdout` with an inaccessible `hmm_model_path` wrote a warning line into the FASTQ stream. Config-loader diagnostics now go to stderr (#20).
+- `make version` did nothing on macOS, because the VERSION file satisfied the target. All Makefile targets are now `.PHONY` (#20).
+- `scripts/ci-status-monitor.sh` printed "null" as every workflow name (#20).
+- e2e `calculateVariance` returned the standard deviation (#20).
+
+### Security
+- Path validation (`ValidateFilePath`, `SecureWriteFile`, `SecureFileCreate`, `SecureMkdirAll`) checks containment by path component on symlink-resolved paths. Base `/data` no longer admits `/data2/x`, and a symlink inside the base cannot escape it (#20).
+- Ecosystem validator reports no longer contain cloud credentials: `CloudConfig.Credentials` is never serialized (#20).
+- `GenerateAuthenticFASTQFile` fails closed. If the fingerprint cannot be generated or embedded, the error is returned and the file is removed. Quality-score fingerprints are now actually embedded, one per file, when the `quality_scores` layer is configured; previously each read's quality string was rejected as too small (#20).
 
 ## [0.7.0] - 2026-10-17
 
