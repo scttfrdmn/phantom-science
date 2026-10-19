@@ -1,11 +1,11 @@
 // Package security has path-checked wrappers for creating files (mode 0600)
 // and directories (mode 0750).
 //
-// The checks are basic: a cleaned path containing ".." is rejected (which
-// also rejects names such as "a..b"), and with an allowed base directory the
-// absolute path must start with that directory's absolute path. The prefix
-// test does not require a path separator, so "/data2/x" passes for base
-// "/data", and symbolic links are not resolved.
+// A path is rejected if any of its components is "..", so names such as
+// "a..b" are allowed. With an allowed base directory, the path must lie
+// inside it by path components (base "/data" does not admit "/data2/x"),
+// compared after resolving symbolic links in the parts of both paths that
+// exist, so a link inside the base cannot point outside it.
 package security
 
 import (
