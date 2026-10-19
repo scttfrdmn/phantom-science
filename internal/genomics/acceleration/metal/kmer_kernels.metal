@@ -104,7 +104,30 @@ kernel void extract_kmers(
     }
 }
 
-// Optimized kernel for small k-mers (k <= 8) using shared memory
+// Threadgroup histogram size for extract_kmers_small_k: 4096 counters
+// (16 KB) cover every k-mer for k <= 6 and fit the 32 KB threadgroup memory
+// limit of Apple GPUs (MTLDevice.maxThreadgroupMemoryLength). A 4^8-entry
+// table (256 KB) cannot be allocated: the pipeline fails to build, and with
+// it the whole Metal device setup in metal_bridge_darwin.m.
+constant uint SMALL_K_LOCAL_BINS = 4096;
+
+// Count one k-mer, in the threadgroup histogram when the table fits there
+// and directly in device memory otherwise (k = 7, 8).
+inline void count_small_k(threadgroup atomic_uint* local_counts,
+                          device atomic_uint* kmer_counts,
+                          bool use_local, uint32_t kmer_hash, uint max_kmers) {
+    if (kmer_hash >= max_kmers) {
+        return;
+    }
+    if (use_local) {
+        atomic_fetch_add_explicit(&local_counts[kmer_hash], 1, memory_order_relaxed);
+    } else {
+        atomic_fetch_add_explicit(&kmer_counts[kmer_hash], 1, memory_order_relaxed);
+    }
+}
+
+// Kernel for small k-mers (k <= 8), one thread per sequence. For k <= 6 the
+// counts are accumulated per threadgroup and then added to device memory.
 kernel void extract_kmers_small_k(
     constant char* sequences [[buffer(0)]],
     constant SequenceInfo* seq_info [[buffer(1)]],
@@ -116,28 +139,29 @@ kernel void extract_kmers_small_k(
     uint thread_position_in_threadgroup [[thread_position_in_threadgroup]],
     uint threads_per_threadgroup [[threads_per_threadgroup]]
 ) {
-    // Use threadgroup memory for local accumulation
-    threadgroup uint local_counts[65536];  // 4^8 = 65536 max for k=8
-    
-    // Initialize local counts for this threadgroup
-    uint local_max = min(max_kmers, uint(65536));
+    threadgroup atomic_uint local_counts[SMALL_K_LOCAL_BINS];
+
+    // Uniform across the threadgroup, so the barriers below are reached by
+    // every thread.
+    bool use_local = max_kmers <= SMALL_K_LOCAL_BINS;
+    uint local_max = use_local ? max_kmers : 0;
     for (uint i = thread_position_in_threadgroup; i < local_max; i += threads_per_threadgroup) {
-        local_counts[i] = 0;
+        atomic_store_explicit(&local_counts[i], 0, memory_order_relaxed);
     }
-    
+
     threadgroup_barrier(mem_flags::mem_threadgroup);
-    
-    // Process sequences assigned to this thread
+
+    // Process the sequence assigned to this thread
     if (thread_position_in_grid < num_sequences) {
         uint32_t seq_idx = thread_position_in_grid;
         SequenceInfo info = seq_info[seq_idx];
-        
+
         if (info.length >= k) {
             constant char* seq = sequences + info.offset;
             uint32_t kmer_mask = (1u << (2 * k)) - 1;
             uint32_t kmer_hash = 0;
             uint32_t valid_bases = 0;
-            
+
             // Initialize sliding window
             for (uint32_t i = 0; i < k && i < info.length; i++) {
                 uint8_t base = BASE_ENCODING[uint8_t(seq[i])];
@@ -149,30 +173,22 @@ kernel void extract_kmers_small_k(
                     valid_bases = 0;
                 }
             }
-            
+
             // Count first k-mer
-            if (valid_bases >= k && kmer_hash < local_max) {
-                atomic_fetch_add_explicit(
-                    (threadgroup atomic_uint*)&local_counts[kmer_hash], 
-                    1, 
-                    memory_order_relaxed
-                );
+            if (valid_bases >= k) {
+                count_small_k(local_counts, kmer_counts, use_local, kmer_hash, max_kmers);
             }
-            
+
             // Slide through sequence
             for (uint32_t i = k; i < info.length; i++) {
                 uint8_t base = BASE_ENCODING[uint8_t(seq[i])];
-                
+
                 if (base < 4) {
                     kmer_hash = ((kmer_hash << 2) | base) & kmer_mask;
                     valid_bases = min(valid_bases + 1, k);
-                    
-                    if (valid_bases >= k && kmer_hash < local_max) {
-                        atomic_fetch_add_explicit(
-                            (threadgroup atomic_uint*)&local_counts[kmer_hash], 
-                            1, 
-                            memory_order_relaxed
-                        );
+
+                    if (valid_bases >= k) {
+                        count_small_k(local_counts, kmer_counts, use_local, kmer_hash, max_kmers);
                     }
                 } else {
                     kmer_hash = 0;
@@ -181,14 +197,15 @@ kernel void extract_kmers_small_k(
             }
         }
     }
-    
+
     // Synchronize threadgroup before writing to global memory
     threadgroup_barrier(mem_flags::mem_threadgroup);
-    
-    // Write local counts to global memory
+
+    // Add the threadgroup's counts to global memory
     for (uint i = thread_position_in_threadgroup; i < local_max; i += threads_per_threadgroup) {
-        if (local_counts[i] > 0) {
-            atomic_fetch_add_explicit(&kmer_counts[i], local_counts[i], memory_order_relaxed);
+        uint c = atomic_load_explicit(&local_counts[i], memory_order_relaxed);
+        if (c > 0) {
+            atomic_fetch_add_explicit(&kmer_counts[i], c, memory_order_relaxed);
         }
     }
 }
