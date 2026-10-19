@@ -4,8 +4,9 @@
 //
 // It is a one-off experiment, not part of the supported phantom-science CLI.
 // It cannot classify: every population has the same GC target (0.4982), so
-// all populations score equally and the one reported depends on Go's random
-// map iteration order.
+// all populations score equally. Populations are scored in sorted order and
+// ties go to the first, so the answer is deterministic but always CEU (or
+// Unknown below the score threshold) whatever the input.
 package main
 
 import (
@@ -13,6 +14,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"sort"
 	"strings"
 )
 
@@ -64,7 +66,16 @@ func (pc *PopulationClassifier) ClassifySequence(filepath string) (string, float
 	bestPopulation := "Unknown"
 	bestScore := 0.0
 
-	for population, targetGC := range pc.PopulationGCTargets {
+	// Sorted iteration with a strict > comparison: ties keep the first
+	// population, so the result does not depend on map iteration order.
+	populations := make([]string, 0, len(pc.PopulationGCTargets))
+	for population := range pc.PopulationGCTargets {
+		populations = append(populations, population)
+	}
+	sort.Strings(populations)
+
+	for _, population := range populations {
+		targetGC := pc.PopulationGCTargets[population]
 		// Score based on GC content proximity and complexity
 		gcDiff := abs(gcContent - targetGC)
 		gcScore := 1.0 - (gcDiff * 10) // Penalize GC deviation

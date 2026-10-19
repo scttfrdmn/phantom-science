@@ -222,3 +222,27 @@ func TestClassifySequence_ValidFasta(t *testing.T) {
 		t.Errorf("ClassifySequence returned score %f, want value in [0, 1]", score)
 	}
 }
+
+// TestClassifySequence_Deterministic: all GC targets are equal, so every
+// population ties; the reported population must not depend on map
+// iteration order.
+func TestClassifySequence_Deterministic(t *testing.T) {
+	p := t.TempDir() + "/seq.fasta"
+	seq := ">seq1\nACGTTGCAAGCTTCGAGGATCCATGCAAGTCCGATAGCTAGGCTAACGTTGCAAGCTTCGAGG\n"
+	if err := os.WriteFile(p, []byte(seq), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pc := NewPopulationClassifier()
+	first, _, err := pc.ClassifySequence(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == "Unknown" {
+		t.Fatal("fixture scored below the threshold; choose a sequence that scores")
+	}
+	for i := 0; i < 50; i++ {
+		if got, _, _ := pc.ClassifySequence(p); got != first {
+			t.Fatalf("call %d returned %s, first call %s", i, got, first)
+		}
+	}
+}
