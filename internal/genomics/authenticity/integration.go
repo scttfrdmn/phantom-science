@@ -1,7 +1,9 @@
 package authenticity
 
 import (
+	"bufio"
 	"fmt"
+	"os"
 
 	"github.com/scttfrdmn/phantom-science/internal/errors"
 	"github.com/scttfrdmn/phantom-science/internal/fingerprinting"
@@ -25,21 +27,69 @@ func NewIntegrationManager(authenticityEngine *Engine, fingerprintingEngine fing
 	}
 }
 
+// qualityLayer is the steganography layer that embeds a fingerprint in FASTQ
+// quality scores (the same name the genomics engine uses).
+const qualityLayer = "quality_scores"
+
+// qualityFingerprintingEnabled reports whether output files must carry a
+// quality-score fingerprint.
+func (im *IntegrationManager) qualityFingerprintingEnabled() bool {
+	if !im.config.Fingerprinting.Enable {
+		return false
+	}
+	for _, layer := range im.config.Fingerprinting.SteganographyLayers {
+		if layer == qualityLayer {
+			return true
+		}
+	}
+	return false
+}
+
 // GenerateAuthenticFASTQFile writes ReadsPerBatch reads whose bases come from
 // Engine.GenerateAuthenticSequence (see its limitations) and whose qualities
-// come from generateAuthenticQualityScores. Errors from the fingerprinting
-// engine are ignored, so reads may be written without a quality fingerprint.
-func (im *IntegrationManager) GenerateAuthenticFASTQFile(filename string, batch, read int) error {
+// come from generateAuthenticQualityScores.
+//
+// When fingerprinting is enabled, read IDs carry the configured read-ID
+// fingerprints, and if the quality_scores layer is configured the finished
+// file gets one quality-score fingerprint, embedded by a
+// fingerprinting.FileFingerprinter. Fingerprinting fails closed: if the
+// fingerprint cannot be generated or embedded (including when the engine
+// cannot embed into files), the error is returned and the file is removed,
+// so a requested fingerprint is never silently missing. The file is also
+// removed on any other error after it was created.
+func (im *IntegrationManager) GenerateAuthenticFASTQFile(filename string, batch, read int) (err error) {
 	// Validate file path against the configured output directory
 	if err := security.ValidateFilePath(filename, im.config.OutputDir); err != nil {
 		return errors.WrapError(err, errors.SecurityError, "integration_manager", "generate_authentic_fastq", "invalid file path")
+	}
+
+	wantQuality := im.qualityFingerprintingEnabled()
+	var ff fingerprinting.FileFingerprinter
+	if wantQuality {
+		var ok bool
+		if im.fingerprintingEngine != nil {
+			ff, ok = im.fingerprintingEngine.(fingerprinting.FileFingerprinter)
+		}
+		if !ok {
+			return errors.NewResourceError("integration_manager", "generate_authentic_fastq",
+				fmt.Sprintf("steganography layer %q needs a fingerprinting engine that embeds into FASTQ files (the stegano library)", qualityLayer))
+		}
 	}
 
 	file, err := security.SecureFileCreate(filename, im.config.OutputDir)
 	if err != nil {
 		return errors.WrapError(err, errors.ResourceError, "integration_manager", "generate_authentic_fastq", "failed to create secure file")
 	}
-	defer file.Close()
+	closed := false
+	defer func() {
+		if !closed {
+			file.Close() // #nosec G104 -- error path; the original error is returned
+		}
+		if err != nil {
+			os.Remove(filename) // #nosec G104 -- best effort; the original error is returned
+		}
+	}()
+	w := bufio.NewWriter(file)
 
 	for readNum := 1; readNum <= im.config.ReadsPerBatch; readNum++ {
 		// Generate read ID with batch and read info
@@ -69,20 +119,29 @@ func (im *IntegrationManager) GenerateAuthenticFASTQFile(filename string, batch,
 			return errors.WrapError(err, errors.BiologicalModelError, "integration_manager", "generate_authentic_fastq", "failed to generate authentic quality scores")
 		}
 
-		// Apply steganographic fingerprinting to quality scores if enabled
-		if im.config.Fingerprinting.Enable && im.fingerprintingEngine != nil {
-			// Generate fingerprint for this dataset
-			fingerprint, err := im.fingerprintingEngine.GenerateFingerprint(im.config.DatasetID)
-			if err == nil {
-				// Embed fingerprint in quality scores using stegano
-				if modifiedQualities, err := im.fingerprintingEngine.EmbedInQualities(qualities, fingerprint); err == nil {
-					qualities = modifiedQualities
-				}
-			}
-		}
-
 		// Write FASTQ record
-		fmt.Fprintf(file, "%s\n%s\n+\n%s\n", readID, string(sequence), string(qualities))
+		if _, err := fmt.Fprintf(w, "%s\n%s\n+\n%s\n", readID, string(sequence), string(qualities)); err != nil {
+			return errors.WrapError(err, errors.ResourceError, "integration_manager", "generate_authentic_fastq", "failed to write FASTQ record")
+		}
+	}
+
+	if err := w.Flush(); err != nil {
+		return errors.WrapError(err, errors.ResourceError, "integration_manager", "generate_authentic_fastq", "failed to write FASTQ file")
+	}
+	closed = true
+	if err := file.Close(); err != nil {
+		return errors.WrapError(err, errors.ResourceError, "integration_manager", "generate_authentic_fastq", "failed to close FASTQ file")
+	}
+
+	// Embed one quality-score fingerprint in the finished file.
+	if wantQuality {
+		fp, err := im.fingerprintingEngine.GenerateFingerprint(im.config.DatasetID)
+		if err != nil {
+			return errors.WrapError(err, errors.ResourceError, "integration_manager", "generate_authentic_fastq", "failed to generate fingerprint")
+		}
+		if err := ff.EmbedInFASTQFile(filename, filename, fp); err != nil {
+			return errors.WrapError(err, errors.ResourceError, "integration_manager", "generate_authentic_fastq", "failed to embed fingerprint")
+		}
 	}
 
 	return nil
