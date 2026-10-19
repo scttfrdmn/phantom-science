@@ -27,7 +27,7 @@ func NewConfigLoader(verbose bool) *ConfigLoader {
 // LoadSequencerConfig loads sequencer configuration from JSON or YAML
 func (cl *ConfigLoader) LoadSequencerConfig(configPath string) (*types.SequencerConfig, error) {
 	if cl.verbose {
-		fmt.Printf("Loading sequencer config from: %s\n", configPath)
+		fmt.Fprintf(os.Stderr, "Loading sequencer config from: %s\n", configPath)
 	}
 
 	// Validate file path for security
@@ -73,7 +73,7 @@ func (cl *ConfigLoader) LoadSequencerConfig(configPath string) (*types.Sequencer
 // LoadPhantomConfig loads Phantom Science configuration from JSON or YAML
 func (cl *ConfigLoader) LoadPhantomConfig(configPath string) (*types.PhantomConfig, error) {
 	if cl.verbose {
-		fmt.Printf("Loading phantom config from: %s\n", configPath)
+		fmt.Fprintf(os.Stderr, "Loading phantom config from: %s\n", configPath)
 	}
 
 	// Validate file path for security
@@ -144,7 +144,7 @@ func (cl *ConfigLoader) loadSequencerYAML(content []byte) (*types.SequencerConfi
 			return nil, fmt.Errorf("failed to parse v%s YAML config: %w", peek.SchemaVersion, err)
 		}
 		if cl.verbose {
-			fmt.Printf("Loaded v%s YAML sequencer config\n", configV1.SchemaVersion)
+			fmt.Fprintf(os.Stderr, "Loaded v%s YAML sequencer config\n", configV1.SchemaVersion)
 		}
 		// Convert v1 to legacy format for compatibility
 		return checkNonZero(configV1.ToLegacy())
@@ -163,7 +163,7 @@ func (cl *ConfigLoader) loadSequencerYAML(content []byte) (*types.SequencerConfi
 	}
 
 	if cl.verbose {
-		fmt.Println("Loaded legacy YAML sequencer config")
+		fmt.Fprintln(os.Stderr, "Loaded legacy YAML sequencer config")
 	}
 	return checkNonZero(&config)
 }
@@ -234,7 +234,7 @@ func (cl *ConfigLoader) loadSequencerJSON(content []byte) (*types.SequencerConfi
 	}
 
 	if cl.verbose {
-		fmt.Println("Loaded JSON sequencer config")
+		fmt.Fprintln(os.Stderr, "Loaded JSON sequencer config")
 	}
 	return checkNonZero(&config)
 }
@@ -263,7 +263,7 @@ func (cl *ConfigLoader) loadPhantomYAML(content []byte) (*types.PhantomConfig, e
 		// Check if it's a v1.0 config
 		if configV1.SchemaVersion != "" {
 			if cl.verbose {
-				fmt.Printf("Loaded v%s YAML phantom config\n", configV1.SchemaVersion)
+				fmt.Fprintf(os.Stderr, "Loaded v%s YAML phantom config\n", configV1.SchemaVersion)
 			}
 			// Convert v1 to legacy format for compatibility
 			return cl.convertPhantomV1ToLegacy(&configV1), nil
@@ -277,7 +277,7 @@ func (cl *ConfigLoader) loadPhantomYAML(content []byte) (*types.PhantomConfig, e
 	}
 
 	if cl.verbose {
-		fmt.Println("Loaded legacy YAML phantom config")
+		fmt.Fprintln(os.Stderr, "Loaded legacy YAML phantom config")
 	}
 	return &config, nil
 }
@@ -290,7 +290,7 @@ func (cl *ConfigLoader) loadPhantomJSON(content []byte) (*types.PhantomConfig, e
 	}
 
 	if cl.verbose {
-		fmt.Println("Loaded JSON phantom config")
+		fmt.Fprintln(os.Stderr, "Loaded JSON phantom config")
 	}
 	return &config, nil
 }
@@ -360,15 +360,15 @@ func (cl *ConfigLoader) convertPhantomV1ToLegacy(v1 *types.PhantomConfigV1) *typ
 	}
 }
 
-// warnIfHMMModelInvalid prints a warning when HMMModelPath is set but the file
-// is not accessible. The engine falls back to uniform random bases regardless;
-// this is an early pre-flight notice for the operator.
+// warnIfHMMModelInvalid prints a warning to stderr when HMMModelPath is set
+// but the file is not accessible. The engine falls back to uniform random
+// bases regardless; this is an early pre-flight notice for the operator.
 func (cl *ConfigLoader) warnIfHMMModelInvalid(path string) {
 	if path == "" {
 		return
 	}
 	if _, err := os.Stat(path); err != nil {
-		fmt.Printf("   [warn] hmm_model_path %q is not accessible: %v\n", path, err)
+		fmt.Fprintf(os.Stderr, "   [warn] hmm_model_path %q is not accessible: %v\n", path, err)
 	}
 }
 
@@ -549,9 +549,9 @@ func (cl *ConfigLoader) loadSequencerTemplateV2(content []byte, version string) 
 		return nil, fmt.Errorf("v%s template sets no read length: set specifications.read_length or run.read_length", version)
 	}
 	if cl.verbose {
-		fmt.Printf("Loaded v%s sequencer template %s %s\n", version, t.Vendor, t.Model)
+		fmt.Fprintf(os.Stderr, "Loaded v%s sequencer template %s %s\n", version, t.Vendor, t.Model)
 		if len(defaulted) > 0 {
-			fmt.Printf("   run defaults applied: %s\n", strings.Join(defaulted, ", "))
+			fmt.Fprintf(os.Stderr, "   run defaults applied: %s\n", strings.Join(defaulted, ", "))
 		}
 	}
 	return &c, nil

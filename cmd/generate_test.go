@@ -295,10 +295,10 @@ func TestParseAFFromInfo(t *testing.T) {
 	}{
 		{"AF=0.35;DP=100", 0.5, 0.35},
 		{"DP=100;AF=0.1", 0.5, 0.1},
-		{".", 0.5, 0.5},        // no AF field → default
-		{"AF=1.5", 0.5, 0.5},  // out-of-range → default
+		{".", 0.5, 0.5},          // no AF field → default
+		{"AF=1.5", 0.5, 0.5},     // out-of-range → default
 		{"AF=0.3,0.2", 0.5, 0.3}, // multi-allelic: use first value
-		{"AF=bad", 0.5, 0.5},  // unparseable → default
+		{"AF=bad", 0.5, 0.5},     // unparseable → default
 	}
 	for _, tc := range tests {
 		got := parseAFFromInfo(tc.info, tc.defFreq)
@@ -406,5 +406,59 @@ func TestGenerate_ValidatesWithPhantomConfig(t *testing.T) {
 	out.Reset()
 	if err := runGenerate(generateCmd, &out); err == nil || !strings.Contains(err.Error(), "failed validation") {
 		t.Errorf("failing validation not reported: err=%v\n%s", err, out.String())
+	}
+}
+
+// captureStdout runs fn with os.Stdout redirected to a pipe and returns what
+// was written to it. fn receives the redirected os.Stdout, as runGenerate
+// does when invoked by the generate command.
+func captureStdout(t *testing.T, fn func(stdout io.Writer) error) ([]byte, error) {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	orig := os.Stdout
+	os.Stdout = w
+	done := make(chan []byte)
+	go func() {
+		b, _ := io.ReadAll(r)
+		done <- b
+	}()
+	runErr := fn(w)
+	os.Stdout = orig
+	w.Close()
+	out := <-done
+	r.Close()
+	return out, runErr
+}
+
+// generate --stdout with an inaccessible hmm_model_path still writes pure
+// FASTQ to stdout: the config loader's warning must go to stderr, not into
+// the stream a pipeline is reading.
+func TestGenerateStdout_InvalidHMMModelPathKeepsStdoutClean(t *testing.T) {
+	const readLength, reads = 40, 20
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "seq.json")
+	cfg := fmt.Sprintf(`{"sample_name":"CLI","lane":1,"output_dir":%q,"read_length":%d,"reads_per_batch":%d,"total_batches":1,"base_quality":35,"quality_decay":0.1,"hmm_model_path":%q}`,
+		filepath.Join(dir, "out"), readLength, reads, filepath.Join(dir, "missing.hmm.json"))
+	if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	setGenerateFlags(t, map[string]string{"config": cfgPath, "stdout": "true", "seed": "5"})
+
+	out, err := captureStdout(t, func(stdout io.Writer) error { return runGenerate(generateCmd, stdout) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimRight(string(out), "\n"), "\n")
+	if len(lines) != reads*4 {
+		t.Fatalf("stdout has %d lines, want %d FASTQ lines; first line %q", len(lines), reads*4, lines[0])
+	}
+	for i := 0; i < len(lines); i += 4 {
+		if !strings.HasPrefix(lines[i], "@") || lines[i+2] != "+" ||
+			len(lines[i+1]) != readLength || len(lines[i+3]) != readLength {
+			t.Fatalf("non-FASTQ content on stdout at line %d: %q", i+1, lines[i:i+4])
+		}
 	}
 }

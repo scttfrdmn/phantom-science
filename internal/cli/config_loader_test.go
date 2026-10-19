@@ -1,10 +1,10 @@
 package cli
 
 import (
+	"github.com/scttfrdmn/phantom-science/pkg/types"
 	"os"
 	"path/filepath"
 	"testing"
-	"github.com/scttfrdmn/phantom-science/pkg/types"
 )
 
 func TestConfigLoaderYAML(t *testing.T) {
@@ -50,7 +50,7 @@ technology:
 
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "test_config.yaml")
-	
+
 	err := os.WriteFile(configPath, []byte(yamlContent), 0600)
 	if err != nil {
 		t.Fatalf("Failed to create test config: %v", err)
@@ -92,7 +92,7 @@ func TestConfigLoaderJSON(t *testing.T) {
 
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "test_config.json")
-	
+
 	err := os.WriteFile(configPath, []byte(jsonContent), 0600)
 	if err != nil {
 		t.Fatalf("Failed to create test config: %v", err)
@@ -154,7 +154,7 @@ validation:
 
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "phantom_config.yaml")
-	
+
 	err := os.WriteFile(configPath, []byte(yamlContent), 0600)
 	if err != nil {
 		t.Fatalf("Failed to create test config: %v", err)
@@ -205,7 +205,7 @@ quality:
 
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "auto_config.yaml")
-	
+
 	err := os.WriteFile(configPath, []byte(yamlContent), 0600)
 	if err != nil {
 		t.Fatalf("Failed to create test config: %v", err)
@@ -239,7 +239,7 @@ sequencer:
 
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "invalid.yaml")
-	
+
 	err := os.WriteFile(configPath, []byte(invalidYAML), 0600)
 	if err != nil {
 		t.Fatalf("Failed to create test config: %v", err)
@@ -260,7 +260,7 @@ func TestConfigLoaderInvalidJSON(t *testing.T) {
 
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "invalid.json")
-	
+
 	err := os.WriteFile(configPath, []byte(invalidJSON), 0600)
 	if err != nil {
 		t.Fatalf("Failed to create test config: %v", err)
@@ -275,13 +275,13 @@ func TestConfigLoaderInvalidJSON(t *testing.T) {
 
 func TestValidateConfigVersion(t *testing.T) {
 	loader := NewConfigLoader(false)
-	
+
 	// Test valid version
 	err := loader.ValidateConfigVersion("1.0")
 	if err != nil {
 		t.Errorf("Expected version 1.0 to be valid, got error: %v", err)
 	}
-	
+
 	// Test invalid version
 	err = loader.ValidateConfigVersion("2.0")
 	if err == nil {
@@ -291,7 +291,7 @@ func TestValidateConfigVersion(t *testing.T) {
 
 func TestConvertPhantomV1ToLegacy(t *testing.T) {
 	loader := NewConfigLoader(false)
-	
+
 	v1Config := &types.PhantomConfigV1{
 		Enterprise: types.EnterpriseConfigV1{
 			CustomerID:      "TEST_123",
@@ -308,14 +308,14 @@ func TestConvertPhantomV1ToLegacy(t *testing.T) {
 			TamperDetection:      true,
 		},
 		Validation: types.ValidationConfigV1{
-			Enable:          true,
-			ValidationLevel: "academic",
+			Enable:           true,
+			ValidationLevel:  "academic",
 			StatisticalTests: []string{"hardy_weinberg"},
 		},
 	}
-	
+
 	legacy := loader.convertPhantomV1ToLegacy(v1Config)
-	
+
 	if legacy.Enterprise.CustomerID != "TEST_123" {
 		t.Errorf("Expected customer ID TEST_123, got %s", legacy.Enterprise.CustomerID)
 	}
@@ -454,7 +454,7 @@ func TestConfigLoader_HMMModelPath_EmptyWhenAbsent(t *testing.T) {
 // does not return an error — it only prints a warning — when the path is missing.
 func TestWarnIfHMMModelInvalid_InaccessiblePath(t *testing.T) {
 	loader := NewConfigLoader(false)
-	// Must not panic; warning is printed to stdout (not captured here).
+	// Must not panic; the warning goes to stderr (not captured here).
 	loader.warnIfHMMModelInvalid("/nonexistent/model.hmm.json")
 }
 
