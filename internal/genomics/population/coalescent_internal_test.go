@@ -123,3 +123,101 @@ func TestGetPopulationAtTime_MostRecentEventWins(t *testing.T) {
 		t.Errorf("overlapping events: got %q, want \"RECENT\"", got)
 	}
 }
+
+// TestCalculateThetaPi_MeanPairwiseDifferences checks θ_π against its
+// definition (Tajima 1983): the mean number of pairwise differences,
+// Σ_i i(n−i)ξ_i / C(n,2). For n = 4 with one singleton and one doubleton the
+// singleton differs in 3 of the 6 pairs and the doubleton in 4, so
+// θ_π = 7/6. Fay & Wu's (2000) θ_H = Σ_i i²ξ_i / C(n,2) = 5/6, so
+// H = θ_π − θ_H = 2/6.
+func TestCalculateThetaPi_MeanPairwiseDifferences(t *testing.T) {
+	s := NewCoalescentSimulator(1000, 1e-8, 0)
+	n := 4
+	sfs := &AlleleFrequencySpectrum{
+		Frequencies: []float64{0.25, 0.5, 0.75, 1.0},
+		Counts:      []int{1, 1, 0, 0},
+	}
+	pi := s.calculateThetaPi(sfs, n)
+	if want := 7.0 / 6.0; math.Abs(pi-want) > 1e-12 {
+		t.Fatalf("θ_π = %v, want mean pairwise differences %v", pi, want)
+	}
+	sfs.ThetaPi = pi
+	if h, want := s.calculateFayWuH(sfs, n), 2.0/6.0; math.Abs(h-want) > 1e-12 {
+		t.Fatalf("Fay-Wu H = %v, want %v", h, want)
+	}
+}
+
+// TestComputeSiteFrequencySpectrum_BinsExactCounts guards the SFS binning: a
+// mutation carried by k of n leaves must land in bin k−1. For n = 22,
+// (15.0/22)*22 truncates to 14 in floating point.
+func TestComputeSiteFrequencySpectrum_BinsExactCounts(t *testing.T) {
+	s := NewCoalescentSimulator(1000, 1e-8, 0)
+	n := 22
+	g := &Genealogy{MutationEvents: []MutationEvent{{Mutation: Mutation{Frequency: 15.0 / 22.0}}}}
+	sfs := s.ComputeSiteFrequencySpectrum(g, n)
+	if sfs.Counts[14] != 1 {
+		t.Fatalf("15/22 mutation binned as %v, want bin 14", sfs.Counts)
+	}
+}
+
+// TestCoalescent_NeutralEstimatorsUnbiased checks the standard neutral
+// expectations for a constant-size population: E[θ_π] = E[θ_W] = E[θ_H] =
+// θ = 4Nμ·L (Tajima 1983; Watterson 1975; Fay & Wu 2000), so E[H] = 0 and
+// Tajima's D averages ≈ 0. Tolerances are 4 standard errors of the replicate
+// mean.
+func TestCoalescent_NeutralEstimatorsUnbiased(t *testing.T) {
+	const (
+		N    = 1000
+		mu   = 2.5e-6
+		L    = 1000
+		n    = 20
+		reps = 2000 // ~50 ms
+	)
+	theta := 4.0 * N * mu * L // 10
+
+	s := NewCoalescentSimulator(N, mu, 0)
+	s.SetSeed(20001)
+
+	var pi, tw, h, d []float64
+	for r := 0; r < reps; r++ {
+		g, err := s.SimulateGenealogy("rep", n, L)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sfs := s.ComputeSiteFrequencySpectrum(g, n)
+		pi = append(pi, sfs.ThetaPi)
+		tw = append(tw, sfs.ThetaWatterson)
+		h = append(h, sfs.FayWuH)
+		d = append(d, sfs.TajimaD)
+	}
+
+	check := func(name string, xs []float64, want, slack float64) {
+		mean, se := replicateMeanSE(xs)
+		tol := 4*se + slack
+		t.Logf("%s: mean %.3f, SE %.3f (want %.3f ± %.3f)", name, mean, se, want, tol)
+		if math.Abs(mean-want) > tol {
+			t.Errorf("%s mean = %.3f, want %.3f ± %.3f", name, mean, want, tol)
+		}
+	}
+	check("θ_π", pi, theta, 0)
+	check("θ_W", tw, theta, 0)
+	check("Fay-Wu H", h, 0, 0)
+	// D is a ratio, so E[D] is only approximately 0: at finite θ its mean
+	// is slightly negative (about −0.05 to −0.1 here). The 0.1 slack covers
+	// that; halving θ_π, the bug this guards, gives a mean D near −2.
+	check("Tajima D", d, 0, 0.1)
+}
+
+func replicateMeanSE(xs []float64) (float64, float64) {
+	m := 0.0
+	for _, x := range xs {
+		m += x
+	}
+	m /= float64(len(xs))
+	v := 0.0
+	for _, x := range xs {
+		v += (x - m) * (x - m)
+	}
+	v /= float64(len(xs) - 1)
+	return m, math.Sqrt(v / float64(len(xs)))
+}

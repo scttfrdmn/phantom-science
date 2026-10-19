@@ -533,7 +533,8 @@ func (s *CoalescentSimulator) ComputeSiteFrequencySpectrum(genealogy *Genealogy,
 	// Count mutations in each frequency bin
 	for _, mutationEvent := range genealogy.MutationEvents {
 		frequency := mutationEvent.Mutation.Frequency
-		binIndex := int(frequency*float64(sampleSize)) - 1
+		// Round, not truncate: k/n*n can fall just below k in floating point.
+		binIndex := int(math.Round(frequency*float64(sampleSize))) - 1
 		if binIndex < 0 {
 			binIndex = 0
 		}
@@ -570,15 +571,15 @@ func (s *CoalescentSimulator) calculateThetaWatterson(spectrum *AlleleFrequencyS
 	return float64(segregatingSites) / harmonicNumber
 }
 
-// calculateThetaPi returns Σ f(1−f)·ξ_f · n/(n−1) over the SFS. This is half
-// of Tajima's (1983) estimator θ_π = Σ i(n−i)ξ_i / C(n,2), so ThetaPi, and the
-// TajimaD and FayWuH values derived from it, are biased low.
+// calculateThetaPi returns Tajima's (1983) θ_π, the mean number of pairwise
+// differences: Σ_i i(n−i)ξ_i / C(n,2) = Σ 2f(1−f)ξ_f · n/(n−1) with f = i/n.
+// Under the constant-size neutral model E[θ_π] = θ.
 func (s *CoalescentSimulator) calculateThetaPi(spectrum *AlleleFrequencySpectrum, sampleSize int) float64 {
 	pi := 0.0
 
 	for i, count := range spectrum.Counts {
 		frequency := spectrum.Frequencies[i]
-		pi += frequency * (1 - frequency) * float64(count)
+		pi += 2 * frequency * (1 - frequency) * float64(count)
 	}
 
 	return pi * float64(sampleSize) / float64(sampleSize-1)
@@ -617,7 +618,8 @@ func (s *CoalescentSimulator) calculateTajimaD(thetaPi, thetaWatterson float64, 
 	return (thetaPi - thetaWatterson) / math.Sqrt(variance)
 }
 
-// calculateFayWuH calculates Fay and Wu's H statistic
+// calculateFayWuH returns Fay and Wu's (2000) unnormalized H = θ_π − θ_H, with
+// θ_H = Σ_i i²ξ_i / C(n,2) = Σ 2f²ξ_f · n/(n−1). E[H] = 0 under neutrality.
 func (s *CoalescentSimulator) calculateFayWuH(spectrum *AlleleFrequencySpectrum, sampleSize int) float64 {
 	thetaH := 0.0
 
