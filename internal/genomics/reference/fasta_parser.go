@@ -1,9 +1,9 @@
 // Package reference reads reference genome FASTA files and counts k-mers.
 //
 // FastaParser (plain or gzip FASTA), ReferenceGenomeParser and
-// SimpleReferenceGenome (plain FASTA) read real sequence. LazyReferenceLoader and ReferenceManager
-// are caches whose loader is a stub: they return placeholder sequence
-// generated from the coordinates, not the contents of the reference file.
+// SimpleReferenceGenome (plain FASTA) read sequence directly.
+// LazyReferenceLoader and ReferenceManager cache regions read through
+// FastaParser.
 package reference
 
 import (

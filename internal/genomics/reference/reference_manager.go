@@ -10,9 +10,7 @@ import (
 )
 
 // ReferenceManager routes requests to named LazyReferenceLoaders and
-// aggregates their cache statistics. Because LazyReferenceLoader does not
-// read its file, sequence from a ReferenceManager is placeholder sequence,
-// not reference sequence.
+// aggregates their cache statistics.
 type ReferenceManager struct {
 	defaultLoader *LazyReferenceLoader
 	customLoaders map[string]*LazyReferenceLoader

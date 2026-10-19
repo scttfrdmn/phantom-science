@@ -617,7 +617,14 @@ func makeDummyFastaFile(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	p := filepath.Join(dir, "ref.fasta")
-	require.NoError(t, os.WriteFile(p, []byte(">chr1\nATCG\n"), 0644))
+	// chr1 is 600 bp in 60-bp lines, long enough for the regions the
+	// loader and manager tests request.
+	var b strings.Builder
+	b.WriteString(">chr1\n")
+	for i := 0; i < 10; i++ {
+		b.WriteString(strings.Repeat("ATCG", 15) + "\n")
+	}
+	require.NoError(t, os.WriteFile(p, []byte(b.String()), 0644))
 	return p
 }
 

@@ -1,6 +1,7 @@
 package reference
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"sync"
@@ -11,11 +12,8 @@ import (
 	"github.com/scttfrdmn/phantom-science/internal/genomics/authenticity/kmer"
 )
 
-// LazyReferenceLoader is an LRU cache of reference regions. It does not read
-// the reference file: it only checks that the file exists, and every region
-// is placeholder sequence generated from the coordinates (see
-// loadRegionSequence). Use FastaParser or ReferenceGenomeParser for real
-// sequence.
+// LazyReferenceLoader is an LRU cache of reference regions read from a FASTA
+// file on demand (see loadRegionSequence).
 type LazyReferenceLoader struct {
 	referenceFile      string
 	maxCacheSize       int64
@@ -33,6 +31,13 @@ type LazyReferenceLoader struct {
 	cacheMisses      int64
 	loadingTime      int64 // nanoseconds
 	compressionRatio float64
+
+	// FASTA access, opened on first load
+	indexOnce sync.Once
+	parser    *FastaParser
+	index     *FastaIndex
+	indexErr  error
+	scanMutex sync.Mutex // serialises scans of compressed files
 }
 
 // CachedRegion represents a cached genomic region with lazy loading capabilities
@@ -105,9 +110,8 @@ func NewLazyReferenceLoader(config LazyLoaderConfig) (*LazyReferenceLoader, erro
 	return loader, nil
 }
 
-// GetSequence returns the cached sequence for the region, generating and
-// caching placeholder sequence on a miss. The result is not reference
-// sequence.
+// GetSequence returns the region's sequence from the cache, reading and
+// caching it from the reference FASTA on a miss.
 func (lrl *LazyReferenceLoader) GetSequence(chromosome string, start, end int64) ([]byte, error) {
 	regionKey := fmt.Sprintf("%s:%d-%d", chromosome, start, end)
 
@@ -136,8 +140,8 @@ func (lrl *LazyReferenceLoader) GetSequence(chromosome string, start, end int64)
 	return sequence, nil
 }
 
-// GetKmerProfile returns the k-mer profile of the region's (placeholder)
-// sequence, caching it with the region.
+// GetKmerProfile returns the k-mer profile of the region's sequence,
+// caching it with the region.
 func (lrl *LazyReferenceLoader) GetKmerProfile(chromosome string, start, end int64, kmerSize int) (*kmer.PackedFrequencyTable, error) {
 	regionKey := fmt.Sprintf("%s:%d-%d", chromosome, start, end)
 
@@ -178,53 +182,69 @@ func (lrl *LazyReferenceLoader) GetKmerProfile(chromosome string, start, end int
 	return kmerProfile, nil
 }
 
-// loadRegionSequence is a stub: it does not read the reference file. It
-// generates i.i.d. bases (A/T 0.30, G/C 0.20) from a linear congruential
-// generator seeded by start and len(chromosome), so chromosomes whose names
-// have the same length (chr1, chr2, ...) get identical sequence.
+// fastaIndex opens the reference with FastaParser on first use, loading
+// <file>.fai when present and otherwise building the index with one scan.
+func (lrl *LazyReferenceLoader) fastaIndex() (*FastaParser, *FastaIndex, error) {
+	lrl.indexOnce.Do(func() {
+		parser, err := NewFastaParser(lrl.referenceFile)
+		if err != nil {
+			lrl.indexErr = err
+			return
+		}
+		index, err := parser.LoadIndex()
+		if err != nil {
+			lrl.indexErr = err
+			return
+		}
+		lrl.parser, lrl.index = parser, index
+	})
+	return lrl.parser, lrl.index, lrl.indexErr
+}
+
+// loadRegionSequence reads [start, end) (0-based, half-open) of chromosome
+// from the reference FASTA, upper-cased. Plain files are read by seeking via
+// the index; gzip files are scanned. The region is clipped to the
+// chromosome, as samtools faidx does; a chromosome missing from the
+// reference is an error.
 func (lrl *LazyReferenceLoader) loadRegionSequence(chromosome string, start, end int64) ([]byte, error) {
 	startTime := time.Now()
 	defer func() {
 		atomic.AddInt64(&lrl.loadingTime, time.Since(startTime).Nanoseconds())
 	}()
 
-	// Placeholder sequence; no file access
 	sequenceLength := end - start
 	if sequenceLength <= 0 || sequenceLength > 100*1024*1024 { // Max 100MB regions
 		return nil, errors.NewValidationError("lazy_reference_loader", "load_region_sequence", fmt.Sprintf("invalid sequence length: %d", sequenceLength))
 	}
 
-	sequence := make([]byte, sequenceLength)
-	bases := []byte{'A', 'T', 'G', 'C'}
-
-	// Base composition close to the human genome (~41% GC); no other
-	// structure (no dinucleotide bias, repeats or CpG depletion)
-	baseProbs := []float64{0.30, 0.30, 0.20, 0.20} // A, T, G, C
-	cumProbs := make([]float64, 4)
-	cumProbs[0] = baseProbs[0]
-	for i := 1; i < 4; i++ {
-		cumProbs[i] = cumProbs[i-1] + baseProbs[i]
+	parser, index, err := lrl.fastaIndex()
+	if err != nil {
+		return nil, errors.WrapError(err, errors.ReferenceLoadError, "lazy_reference_loader", "load_region_sequence", "failed to index reference file")
+	}
+	info, ok := index.Chromosomes[chromosome]
+	if !ok {
+		return nil, errors.NewReferenceError("lazy_reference_loader", "load_region_sequence", fmt.Sprintf("chromosome %s not found in %s", chromosome, lrl.referenceFile))
+	}
+	if start < 0 {
+		start = 0
+	}
+	if end > info.Length {
+		end = info.Length
+	}
+	if start >= end {
+		return nil, errors.NewValidationError("lazy_reference_loader", "load_region_sequence", fmt.Sprintf("region %s:%d-%d is outside the chromosome (length %d)", chromosome, start, end, info.Length))
 	}
 
-	// Deterministic seed from start and the chromosome name's length
-	seed := uint64(start*31 + int64(len(chromosome))*17) // #nosec G115
-
-	for i := int64(0); i < sequenceLength; i++ {
-		// Simple linear congruential generator for deterministic random bases
-		seed = (seed*1103515245 + 12345) & 0x7fffffff
-		rand := float64(seed) / float64(0x7fffffff)
-
-		baseIndex := 0
-		for j := 0; j < 4; j++ {
-			if rand <= cumProbs[j] {
-				baseIndex = j
-				break
-			}
-		}
-		sequence[i] = bases[baseIndex]
+	if parser.compressionType != NoCompression {
+		// The linear scan shares the parser's reader state.
+		lrl.scanMutex.Lock()
+		defer lrl.scanMutex.Unlock()
 	}
-
-	return sequence, nil
+	sequence, err := parser.GetSequence(index, chromosome, start, end)
+	if err != nil {
+		return nil, err
+	}
+	return bytes.ToUpper(sequence), nil
 }
 
 // generateKmerProfile generates k-mer frequency profile from sequence
