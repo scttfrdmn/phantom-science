@@ -29,8 +29,8 @@ Features:
   when no model is given
 - Byte-reproducible output from --seed, and a phantom-manifest.json for each
   run written to files
-- Steganographic fingerprints in quality scores, encrypted with a key, and
-  their extraction (verify); needs a build with the stegano library
+- Keyed-seed fingerprints that leave the generated data unchanged, verified
+  by regenerating a run from its manifest and the key (verify)
 - Format, quality and composition checks on FASTQ files (validate)
 - ONT cDNA reads with expression and isoform ground truth (transcriptome) and
   raw signal as BLOW5 (signal)
@@ -117,11 +117,11 @@ func init() {
 	rootCmd.PersistentFlags().String("hmm-model-path", "", "Path to serialized HMM model (.hmm.json) — overrides hmm_model_path in config file")
 	rootCmd.PersistentFlags().String("population", "", "1000 Genomes population code (e.g. YRI, CEU, CHB) — used with --model-dir")
 	rootCmd.PersistentFlags().String("model-dir", "", "Directory containing <population>.hmm.json model files — used with --population")
-	
+
 	// Legacy flags for backward compatibility
 	rootCmd.Flags().String("command", "generate", "Command to execute (generate, validate, verify)")
 	rootCmd.Flags().Bool("version", false, "Print version information")
-	
+
 	// Handle version flag
 	rootCmd.PreRun = func(cmd *cobra.Command, args []string) {
 		version, _ := cmd.Flags().GetBool("version")

@@ -20,11 +20,12 @@ package genomics
 //     distribution and its substitution, insertion, deletion and
 //     homopolymer-deletion rates (package nanopore/errmodel). Without a
 //     tier, ONT reads get the linear decay and no errors.
-//   - Illumina, quality_model "binned" (the default): RTA3-binned per-cycle
-//     qualities (Q2/Q12/Q23/Q37) from package illumina, read 2 lower than
-//     read 1, and with errors "quality" (the default for binned) a
-//     substitution with probability 10^(−Q/10) per base and Q2 bases
-//     written as N. The binned model replaces HMM qualities.
+//   - Illumina, quality_model "binned" (the default): qualities in the
+//     NovaSeq 6000 bins (Q2/Q11/Q25/Q37) from package illumina, fitted to
+//     run DRR276626, and with errors "quality" (the default for binned)
+//     substitutions at the measured rate of each bin and cycle, with the
+//     measured spectrum, and Q2 bases written as N. The binned model
+//     replaces HMM qualities.
 //   - Illumina, quality_model "linear": the earlier model,
 //     BaseQuality − i·QualityDecay clamped to [2, 41], which draws nothing;
 //     errors default to "none". Single-end linear output is byte-identical

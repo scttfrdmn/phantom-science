@@ -281,6 +281,9 @@ func (m Model) renderFingerprintingPanel() string {
 	}
 
 	layers := "—"
+	if m.fingerprintingEnabled && len(m.fingerprintLayers) == 0 {
+		layers = "keyed_seed"
+	}
 	if len(m.fingerprintLayers) > 0 {
 		layers = strings.Join(m.fingerprintLayers, ",")
 	}

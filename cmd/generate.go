@@ -79,6 +79,7 @@ writes phantom-manifest.json (seed, sanitized config, size and sha256 of every o
 
 func init() {
 	rootCmd.AddCommand(generateCmd)
+	generateCmd.SilenceUsage = true
 	f := generateCmd.Flags()
 	f.Bool("stdout", false, "Stream FASTQ reads to stdout instead of writing files")
 	f.String("variants", "", "VCF file of variants to inject (plain or .gz); requires --stdout")
@@ -98,7 +99,7 @@ func init() {
 	f.Float64("read-length-mean", 0, "Mean read length")
 	f.Float64("read-length-sd", 0, "Read-length standard deviation")
 	f.String("basecaller-tier", "", "ONT basecaller tier for the error model: sup, hac or fast (platform ont only)")
-	f.String("quality-model", "", "Illumina quality model: binned (default; RTA3 bins Q2/Q12/Q23/Q37) or linear (base_quality - cycle*quality_decay)")
+	f.String("quality-model", "", "Illumina quality model: binned (default; NovaSeq 6000 bins Q2/Q11/Q25/Q37, fitted to run DRR276626) or linear (base_quality - cycle*quality_decay)")
 	f.String("illumina-errors", "", "Illumina sequencing errors: quality (default for binned; substitutions at 10^(-Q/10), Q2 as N) or none")
 	f.Float64("insert-size-mean", 0, "Mean paired-end insert (fragment) size in bases (default 350)")
 	f.Float64("insert-size-sd", 0, "Standard deviation of the paired-end insert size (default 50)")

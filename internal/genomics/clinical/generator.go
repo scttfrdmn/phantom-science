@@ -90,6 +90,14 @@ type output struct{ r1, r2 string }
 func (g *ScenarioGenerator) Run(ctx context.Context, scenario *ClinicalScenario) (*GroundTruthManifest, error) {
 	start := time.Now()
 
+	// Keyed-seed fingerprints derive the whole run from one seed and are
+	// verified by regenerating it; a scenario draws from several seeds
+	// (haplotype simulation and per-member engines), so it cannot be
+	// regenerated that way yet.
+	if g.config != nil && (g.config.Fingerprinting.Enable || g.config.Enterprise.Fingerprinting.Enable) {
+		return nil, fmt.Errorf("scenario does not support fingerprinting yet: disable fingerprinting in the sequencer config")
+	}
+
 	// 1. Resolve variant.
 	var spec *PlantedVariantSpec
 	var gene string

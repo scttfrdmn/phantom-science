@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -287,4 +288,23 @@ func TestRun_HPOResolvedManifest(t *testing.T) {
 	assert.Equal(t, "A", v.Alt)
 	assert.Equal(t, "inframe_deletion", v.Consequence)
 	assert.Contains(t, v.HGVS, "p.Phe508del")
+}
+
+// A fingerprinted scenario is rejected: it draws from several seeds, so it
+// could not be verified by regenerating it from one keyed seed.
+func TestScenario_FingerprintingRejected(t *testing.T) {
+	cfg := &types.SequencerConfig{SampleName: "fp", Lane: 1, ReadLength: 100, Seed: 1,
+		Fingerprinting: types.FingerprintConfig{Enable: true}}
+	sc := &ClinicalScenario{
+		Phenotype: PhenotypeSpec{PlantedVariant: &PlantedVariantSpec{Chrom: "chr1", Pos: 42929242, Ref: "C", Alt: "T", Zygosity: "heterozygous"}},
+		Sequencer: SequencerSpec{Coverage: 5, ReadLength: 100},
+		Output:    OutputSpec{ProbandFASTQ: filepath.Join(t.TempDir(), "p.fastq"), GroundTruth: filepath.Join(t.TempDir(), "t.json")},
+	}
+	_, err := NewScenarioGenerator(cfg).Run(context.Background(), sc)
+	if err == nil || !strings.Contains(err.Error(), "fingerprinting") {
+		t.Fatalf("err = %v, want a fingerprinting error", err)
+	}
+	if _, statErr := os.Stat(sc.Output.ProbandFASTQ); statErr == nil {
+		t.Error("FASTQ written despite the error")
+	}
 }

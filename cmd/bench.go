@@ -160,7 +160,7 @@ func runBench(cmd *cobra.Command, out io.Writer) error {
 	if config.Seed == 0 {
 		config.Seed = 1
 	}
-	config.Fingerprinting = types.FingerprintConfig{} // fingerprints embed a timestamp: runs would differ
+	config.Fingerprinting = types.FingerprintConfig{} // benchmark generation alone, without key handling
 	config.Enterprise.Fingerprinting = types.FingerprintConfig{}
 
 	report := BenchReport{

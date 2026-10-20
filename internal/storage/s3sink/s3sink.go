@@ -1,7 +1,7 @@
 // Package s3sink uploads finished output files to S3 (#16).
 //
 // The engine writes each output file to a local spool directory, finalizes
-// it there (fingerprint embedding, compression), then hands it to a Sink,
+// it there (compression), then hands it to a Sink,
 // which uploads it under the run's prefix (multipart for large files) and
 // deletes the spooled copy. Keys mirror the local file names: an output
 // that would be written as <dir>/<rel> is uploaded as <prefix><rel>.

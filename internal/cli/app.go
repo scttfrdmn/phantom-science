@@ -97,7 +97,9 @@ func (a *App) Validate(paths []string) error {
 	return ValidateFiles(os.Stdout, paths, cfg)
 }
 
-// Verify checks each FASTQ file in paths for a steganographic fingerprint.
+// Verify checks each FASTQ file in paths: by regenerating candidate runs
+// (keyed-seed fingerprints) when opts names manifests or candidates, else by
+// extracting a legacy (0.9.0 and earlier) quality-score fingerprint.
 func (a *App) Verify(paths []string, opts VerifyOptions) error {
 	fmt.Println("🔐 Running fingerprint verification...")
 	return VerifyFiles(os.Stdout, paths, opts)
