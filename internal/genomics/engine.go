@@ -22,6 +22,7 @@ import (
 	"github.com/scttfrdmn/phantom-science/internal/fingerprinting"
 	"github.com/scttfrdmn/phantom-science/internal/genomics/authenticity"
 	"github.com/scttfrdmn/phantom-science/internal/genomics/manifest"
+	"github.com/scttfrdmn/phantom-science/internal/genomics/reference"
 	"github.com/scttfrdmn/phantom-science/internal/security"
 	"github.com/scttfrdmn/phantom-science/internal/storage/s3sink"
 	"github.com/scttfrdmn/phantom-science/pkg/types"
@@ -48,6 +49,14 @@ type Engine struct {
 	// fragments, when set, supplies read and fragment bases (see
 	// FragmentSampler); nil uses the HMM model or uniform bases.
 	fragments FragmentSampler
+	// ref is the reference genome reads are sampled from (ReferencePath),
+	// shared read-only by every stream; refErr records a reference that
+	// could not be used. See engine_reference.go.
+	ref    *reference.Sampler
+	refErr error
+	// refMaxRead, when > 0, is the longest single-end read the reference
+	// can supply; longer sampled lengths are redrawn (see fitLengths).
+	refMaxRead int64
 
 	// modelErr records a configured HMM model that could not be loaded;
 	// generation fails with it rather than silently using uniform bases.
@@ -207,7 +216,10 @@ func NewEngineLog(config types.SequencerConfig, logw io.Writer) *Engine {
 		}
 	}
 	e.fingerprintingEngine = fingerprinting.New(customerID, fpOpts...)
-	if modelPath := resolveModelPath(config); modelPath != "" {
+	// The reference first: with both a reference and a model configured,
+	// the conflict is the error and neither is loaded.
+	e.loadReference()
+	if modelPath := resolveModelPath(config); modelPath != "" && config.ReferencePath == "" {
 		m, err := authenticity.LoadModel(modelPath)
 		switch {
 		case err != nil && config.HMMModelPath == "" && errors.Is(err, fs.ErrNotExist):
@@ -361,6 +373,9 @@ type fileJob struct {
 	obs                ReadObserver
 	tally              func(bases int) // told each written read's length
 	abort              *atomic.Bool    // stops the file with errAborted when set
+	// truth, when set, is the truth table written alongside (reference
+	// mode, mate 1).
+	truth string
 }
 
 // generateFASTQFile writes and finalizes one file and returns its final path.
@@ -380,10 +395,34 @@ func (e *Engine) generateFASTQFile(j fileJob) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := e.writeFileStream(file, j); err != nil {
+	var truth *os.File
+	if j.truth != "" {
+		if truth, err = security.SecureFileCreate(j.truth, e.config.OutputDir); err != nil {
+			file.Close()      // #nosec G104 -- the create error is returned
+			os.Remove(j.path) // #nosec G104
+			return "", err
+		}
+	}
+	fail := func(err error) (string, error) {
 		file.Close()      // #nosec G104 -- the write error is returned
 		os.Remove(j.path) // #nosec G104 -- best effort cleanup of a partial file
+		if truth != nil {
+			truth.Close() // #nosec G104
+		}
+		if j.truth != "" {
+			os.Remove(j.truth) // #nosec G104
+		}
 		return "", err
+	}
+	if err := e.writeFileStream(file, truth, j); err != nil {
+		return fail(err)
+	}
+	if truth != nil {
+		err := truth.Close()
+		truth = nil
+		if err != nil {
+			return fail(fmt.Errorf("closing %s: %w", filepath.Base(j.truth), err))
+		}
 	}
 	if err := file.Close(); err != nil {
 		return "", fmt.Errorf("closing %s: %w", filepath.Base(j.path), err)
@@ -406,9 +445,10 @@ func (e *Engine) SkippedVariantOverlaps() int64 {
 	return e.overlapSkips.Load()
 }
 
-// writeFileStream writes one file's batch of FASTQ records (one mate) to w.
-// The file gets its own HMM model instance, seeded from its stream.
-func (e *Engine) writeFileStream(w io.Writer, j fileJob) error {
+// writeFileStream writes one file's batch of FASTQ records (one mate) to w,
+// and, when truth is not nil, the batch's truth table to it. The file gets
+// its own HMM model instance, seeded from its stream.
+func (e *Engine) writeFileStream(w io.Writer, truth *os.File, j fileJob) error {
 	p, err := e.newPipeline(GenerateOpts{}, j.obs)
 	if err != nil {
 		return err
@@ -430,6 +470,10 @@ func (e *Engine) writeFileStream(w io.Writer, j fileJob) error {
 	}
 	reseed(p.model, shared)
 	bw := bufio.NewWriterSize(ww, 256*1024)
+	if truth != nil {
+		p.truth = bufio.NewWriterSize(truth, 64*1024)
+		p.truth.WriteString(truthHeader) // #nosec G104 -- bufio errors are sticky and surface at Flush
+	}
 	var serial int64
 	spec := batchSpec{batch: j.batch, reads: j.reads, mates: []int{j.mate}, file: j.path, shared: shared}
 	if _, err := p.writeBatch(bw, r, spec, &serial); err != nil {
@@ -437,6 +481,11 @@ func (e *Engine) writeFileStream(w io.Writer, j fileJob) error {
 	}
 	if err := bw.Flush(); err != nil {
 		return fmt.Errorf("writing FASTQ record: %w", err)
+	}
+	if p.truth != nil {
+		if err := p.truth.Flush(); err != nil {
+			return fmt.Errorf("writing truth table: %w", err)
+		}
 	}
 	return ww.Close()
 }
@@ -534,19 +583,26 @@ func (e *Engine) GenerateToWriter(w io.Writer, opts GenerateOpts) error {
 	if err != nil {
 		return err
 	}
+	refVars, err := e.referenceVariants(opts.Variants)
+	if err != nil {
+		closeObserver(obs) // #nosec G104 -- the variant error is returned
+		return err
+	}
 	before := e.SkippedVariantOverlaps()
-	if err := e.writeStreams(w, opts, obs); err != nil {
+	if err := e.writeStreams(w, opts, obs, refVars); err != nil {
 		closeObserver(obs) // #nosec G104 -- the generation error is returned
 		return err
 	}
 	if n := e.SkippedVariantOverlaps() - before; n > 0 {
 		fmt.Fprintf(e.logw, "   [warn] %d variant applications skipped: the variant overlapped another variant in the same read\n", n)
 	}
+	refVars.report(e)
 	return closeObserver(obs)
 }
 
-// writeStreams writes every batch to w, one RNG stream per batch.
-func (e *Engine) writeStreams(w io.Writer, opts GenerateOpts, obs ReadObserver) error {
+// writeStreams writes every batch to w, one RNG stream per batch. refVars
+// are the positioned variants of reference mode.
+func (e *Engine) writeStreams(w io.Writer, opts GenerateOpts, obs ReadObserver, refVars *refVariants) error {
 	ww, err := e.wrapOutput(w)
 	if err != nil {
 		return err
@@ -569,6 +625,9 @@ func (e *Engine) writeStreams(w io.Writer, opts GenerateOpts, obs ReadObserver) 
 			return err
 		}
 		p.model, p.admit = e.hmmModel, b.admit
+		if e.ref != nil {
+			p.refVars = refVars
+		}
 		r := newStream(e.seed, streamID(batch, 0))
 		e.reseedModel(r)
 		spec := batchSpec{batch: batch, reads: plan.reads(batch), mates: mates, shared: r}

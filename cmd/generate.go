@@ -33,11 +33,24 @@ interleaved) for piping into another tool:
 
 (controlled.vcf is your own VCF.)
 
+--reference genome.fa samples every read (paired-end: every fragment) from a reference
+genome, uniformly over its A/C/G/T positions and on either strand, so the reads align
+back to it. The FASTA must be uncompressed (gunzip or bgzip -d it); a samtools faidx
+.fai next to it is used when present. --region chr:start-end (1-based, inclusive) or
+--region chr22 restricts sampling to that part, and only that part is loaded: a whole
+GRCh38 takes about 3 GB of memory, a 1 Mb region about 1 MB. File output then also
+writes a <name>.truth.tsv per batch (read name, contig, 0-based fragment start, strand,
+fragment length), listed in the manifest with role "truth". --reference cannot be
+combined with an HMM model.
+
 --variants injects known variants at their allele frequencies (AF= from INFO; default 0.5).
-Variants with a CHROM/POS are written at their exact coordinates: reads are placed in
+With --reference, variants with a CHROM/POS are applied in reference coordinates to every
+fragment that covers them; a variant whose REF does not match the reference is skipped
+and counted in one warning (--strict-ref makes it an error). Without --reference,
+variants with a CHROM/POS are written at their exact coordinates: reads are placed in
 --region chr:start-end (1-based, inclusive), or, without --region, in the span of the
-variants plus one read length on each side (all variants must then be on one chromosome).
-Read bases are generated per read, not copied from a reference genome, so an aligner
+variants plus one read length on each side (all variants must then be on one chromosome);
+read bases are then generated per read, not copied from a reference genome, so an aligner
 will not place the reads at these coordinates in a real reference.
 --sample-id appends RG:Z:<id> to every read header; bwa mem -C copies this into the SAM RG tag.
 
@@ -64,7 +77,9 @@ func init() {
 	f.Bool("stdout", false, "Stream FASTQ reads to stdout instead of writing files")
 	f.String("variants", "", "VCF file of variants to inject (plain or .gz); requires --stdout")
 	f.String("sample-id", "", "Sample ID; appends RG:Z:<id> to each read header (use with BWA -C)")
-	f.String("region", "", "Place reads in chr:start-end (1-based, inclusive) for positioned variants; requires --stdout")
+	f.String("region", "", "With --reference: sample reads only from chr:start-end (1-based, inclusive) or a whole contig. Without: place reads in chr:start-end for positioned variants (requires --stdout)")
+	f.String("reference", "", "Sample reads from this uncompressed reference FASTA (reference_path)")
+	f.Bool("strict-ref", false, "With --reference, fail when a --variants REF does not match the reference (default: skip and warn)")
 	// --config here shadows the persistent root flag so it shows in the subcommand help.
 	f.String("config", "", "Sequencer configuration file path")
 
@@ -105,13 +120,8 @@ func runGenerate(cmd *cobra.Command, out io.Writer) error {
 	variantsFile, _ := flags.GetString("variants")
 	sampleID, _ := flags.GetString("sample-id")
 	regionFlag, _ := flags.GetString("region")
-	if !stdoutMode {
-		if variantsFile != "" {
-			return fmt.Errorf("--variants requires --stdout")
-		}
-		if regionFlag != "" {
-			return fmt.Errorf("--region requires --stdout")
-		}
+	if !stdoutMode && variantsFile != "" {
+		return fmt.Errorf("--variants requires --stdout")
 	}
 
 	// Persistent flags inherited from rootCmd.
@@ -137,6 +147,17 @@ func runGenerate(cmd *cobra.Command, out io.Writer) error {
 	if err := applyGenerateFlags(cmd, config); err != nil {
 		return err
 	}
+	// With a reference, --region restricts sampling (file or stream output);
+	// without one it places reads for positioned variants (stream only).
+	withReference := config.ReferencePath != ""
+	if regionFlag != "" {
+		switch {
+		case withReference:
+			config.ReferenceRegion = regionFlag
+		case !stdoutMode:
+			return fmt.Errorf("--region requires --stdout, or --reference to sample from a region")
+		}
+	}
 
 	var phantomConfig *types.PhantomConfig
 	if phantomPath, _ := cmd.InheritedFlags().GetString("phantom"); phantomPath != "" {
@@ -155,7 +176,7 @@ func runGenerate(cmd *cobra.Command, out io.Writer) error {
 		fmt.Fprintf(os.Stderr, "   [generate] loaded %d variants from %s\n", len(variants), variantsFile)
 	}
 	var region *genomics.GenomicRegion
-	if stdoutMode {
+	if stdoutMode && !withReference {
 		if region, err = resolveStreamRegion(variants, regionFlag, config.ReadLength); err != nil {
 			return err
 		}
@@ -265,6 +286,12 @@ func applyGenerateFlags(cmd *cobra.Command, config *types.SequencerConfig) error
 	}
 	if set("output") {
 		config.OutputDir, _ = flags.GetString("output")
+	}
+	if set("reference") {
+		config.ReferencePath, _ = flags.GetString("reference")
+	}
+	if set("strict-ref") {
+		config.StrictRef, _ = flags.GetBool("strict-ref")
 	}
 	return nil
 }

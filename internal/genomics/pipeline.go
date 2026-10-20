@@ -35,6 +35,12 @@ package genomics
 // stream for the same reason. Fragment HMM qualities are not used: each
 // mate's qualities come from the quality model.
 //
+// With a FragmentSampler (reference_path, see engine_reference.go) the bases
+// of every read (pair) come from it instead, drawn from the shared stream:
+// single-end, shared: L → sampled read of L bases (+ positioned variants),
+// then qualities and errors from r; paired-end, shared: L → F → sampled
+// fragment of F bases (+ variants), then the mates as above.
+//
 // Output-size targets, flow cells and parallel file generation (#16) are at
 // the end of this file (see generateRun).
 
@@ -47,7 +53,6 @@ import (
 	"math/rand/v2"
 	"os"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -106,6 +111,9 @@ func (e *Engine) checkExtensions() error {
 	if e.modelErr != nil {
 		return e.modelErr
 	}
+	if e.refErr != nil {
+		return e.refErr
+	}
 	if err := e.checkScale(); err != nil {
 		return err
 	}
@@ -152,11 +160,16 @@ type readPipeline struct {
 
 	sampleID string
 	region   *GenomicRegion
-	// positioned holds the variants applied by coordinate (region mode),
-	// sorted by descending position; spans are their reference spans.
-	positioned []VariantRecord
-	spans      []seqread.Span
-	maxSlack   int // total deletion length of all positioned variants
+	// positioned holds the variants applied by coordinate (region mode);
+	// nil for none.
+	positioned *posVariants
+	// refVars holds the positioned variants of reference mode, by contig
+	// (see engine_reference.go); nil for none.
+	refVars *refVariants
+	// origin is the last sampled fragment's position; truth, when set,
+	// receives one truth-table line per read (pair).
+	origin origin
+	truth  *bufio.Writer
 	// blind holds position-blind variants; blindSlack is their total
 	// deletion length.
 	blind      []VariantRecord
@@ -181,6 +194,7 @@ func (e *Engine) newPipeline(opts GenerateOpts, obs ReadObserver) (*readPipeline
 	if p.sampleLength, err = e.lengthSampler(); err != nil {
 		return nil, err
 	}
+	p.sampleLength = e.fitLengths(p.sampleLength)
 	if p.qualities, err = e.qualityModel(); err != nil {
 		return nil, err
 	}
@@ -195,6 +209,13 @@ func (e *Engine) newPipeline(opts GenerateOpts, obs ReadObserver) (*readPipeline
 			return nil, err
 		}
 	}
+	if e.ref != nil {
+		if p.region != nil {
+			return nil, fmt.Errorf("a reference region (RefRegion) cannot be combined with reference_path: set reference_region instead")
+		}
+		return p, nil // variants: see referenceVariants
+	}
+	var positioned []VariantRecord
 	for _, v := range opts.Variants {
 		if len(v.Ref) == 0 || len(v.Alt) == 0 {
 			continue
@@ -207,22 +228,12 @@ func (e *Engine) newPipeline(opts GenerateOpts, obs ReadObserver) (*readPipeline
 		if v.Chromosome == "" || v.Position <= 0 || !sameChromosome(v.Chromosome, p.region.Chromosome) {
 			continue // region mode applies only positioned variants on the region's chromosome
 		}
-		p.positioned = append(p.positioned, v)
+		positioned = append(positioned, v)
 	}
-	sort.SliceStable(p.positioned, func(i, j int) bool { return p.positioned[i].Position > p.positioned[j].Position })
-	for _, v := range p.positioned {
-		p.spans = append(p.spans, seqread.Span{Pos: v.Position - 1, RefLen: len(v.Ref), AltLen: len(v.Alt)})
-		p.maxSlack += max(0, len(v.Ref)-len(v.Alt))
+	if len(positioned) > 0 {
+		p.positioned = newPosVariants(positioned)
 	}
 	return p, nil
-}
-
-// window returns the positioned variants (and their spans) whose 0-based
-// start lies in [lo, hi), still in descending order.
-func (p *readPipeline) window(lo, hi int64) ([]VariantRecord, []seqread.Span) {
-	a := sort.Search(len(p.positioned), func(i int) bool { return p.positioned[i].Position-1 < hi })
-	b := sort.Search(len(p.positioned), func(i int) bool { return p.positioned[i].Position-1 < lo })
-	return p.positioned[a:b], p.spans[a:b]
 }
 
 // sameChromosome compares chromosome names, ignoring a "chr" prefix. An
@@ -268,7 +279,7 @@ func (p *readPipeline) writeBatch(bw *bufio.Writer, r *rand.Rand, s batchSpec, s
 		case p.inserts != nil:
 			frag, readStart, err = p.fragment(s.shared, length, &rec)
 		case p.fragments != nil:
-			frag, readStart, err = p.sampled(s.shared, length, &rec)
+			frag, readStart, err = p.sampled(s.shared, length, &rec, p.fixedLength)
 		case p.region != nil:
 			readStart, err = p.start(s.shared, length)
 		}
@@ -281,7 +292,11 @@ func (p *readPipeline) writeBatch(bw *bufio.Writer, r *rand.Rand, s batchSpec, s
 		for i, mate := range s.mates {
 			var seq, qual []byte
 			if frag != nil {
-				seq, qual = p.mate(r, frag, length, mate)
+				n := length
+				if p.inserts == nil {
+					n = len(frag) // single-end: the whole read, which an indel may resize
+				}
+				seq, qual = p.mate(r, frag, n, mate)
 			} else if seq, qual, err = p.read(r, length, readStart); err != nil {
 				return false, err
 			}
@@ -310,6 +325,9 @@ func (p *readPipeline) writeBatch(bw *bufio.Writer, r *rand.Rand, s batchSpec, s
 				}
 			}
 			*serial++
+		}
+		if p.truth != nil && frag != nil {
+			writeTruth(p.truth, &p.pending[0], p.origin)
 		}
 		if p.tally != nil {
 			p.tally(bases)
@@ -344,7 +362,7 @@ func (p *readPipeline) start(r *rand.Rand, n int) (int64, error) {
 func (p *readPipeline) fragment(r *rand.Rand, length int, rec *seqread.Record) ([]byte, int64, error) {
 	n := p.inserts.Sample(r, length)
 	if p.fragments != nil {
-		return p.sampled(r, n, rec)
+		return p.sampled(r, n, rec, true)
 	}
 	var start int64
 	if p.region != nil {
@@ -357,10 +375,11 @@ func (p *readPipeline) fragment(r *rand.Rand, length int, rec *seqread.Record) (
 	return seq, start, err
 }
 
-// sampled returns n bases from the FragmentSampler and records their
-// position on rec.
-func (p *readPipeline) sampled(r *rand.Rand, n int, rec *seqread.Record) ([]byte, int64, error) {
-	chrom, start, _, seq, err := p.fragments(r, n)
+// sampled returns n bases from the FragmentSampler, with the reference
+// mode's positioned variants applied (see applyReferenceVariants; trim keeps
+// the length at n), and records their position on rec and p.origin.
+func (p *readPipeline) sampled(r *rand.Rand, n int, rec *seqread.Record, trim bool) ([]byte, int64, error) {
+	chrom, start, minus, seq, err := p.fragments(r, n)
 	if err != nil {
 		return nil, 0, fmt.Errorf("sampling a fragment: %w", err)
 	}
@@ -368,6 +387,12 @@ func (p *readPipeline) sampled(r *rand.Rand, n int, rec *seqread.Record) ([]byte
 		return nil, 0, fmt.Errorf("fragment sampler returned %d bases, want %d", len(seq), n)
 	}
 	rec.Positioned, rec.Chromosome, rec.RefStart = true, chrom, start
+	p.origin = origin{chrom: chrom, start: start, minus: minus, length: n}
+	if p.refVars != nil {
+		if pv := p.refVars.byChrom[chromKey(chrom)]; pv != nil {
+			seq = p.applyReferenceVariants(r, pv, p.origin, seq, trim)
+		}
+	}
 	return seq, start, nil
 }
 
@@ -399,13 +424,13 @@ func (p *readPipeline) bases(r *rand.Rand, length int, start int64, trim bool, q
 	e := p.e
 	n := length
 	var local []VariantRecord // positioned variants that can touch this read
-	if len(p.positioned) > 0 {
+	if p.positioned != nil {
 		hi := start + int64(length)
 		if trim {
-			hi += int64(p.maxSlack)
+			hi += int64(p.positioned.maxSlack)
 		}
 		var spans []seqread.Span
-		local, spans = p.window(start, hi)
+		local, spans = p.positioned.window(start, hi)
 		if trim {
 			n += seqread.WindowSlack(start, length, spans)
 		}
@@ -819,7 +844,7 @@ func (e *Engine) flowCellEngine(k, n int, spool string, seen map[string]bool) (*
 		config: c, parent: e, logw: e.logw, seed: e.seed,
 		fingerprintingEngine: e.fingerprintingEngine, keyErr: e.keyErr, encrypted: e.encrypted,
 		hmmModel: e.hmmModel, modelPath: e.modelPath, modelErr: e.modelErr, toolVersion: e.toolVersion,
-		customerID: e.customerID, fragments: e.fragments,
+		customerID: e.customerID, fragments: e.fragments, ref: e.ref, refErr: e.refErr, refMaxRead: e.refMaxRead,
 	}
 	rel := ""
 	if n > 1 {
@@ -874,8 +899,9 @@ type unitFile struct {
 type unitResult struct {
 	unit    int
 	files   []unitFile
-	pairs   []int64 // total bases of each read (pair)
-	part    string  // sequencing-summary part file; "" for none
+	truth   *unitFile // the truth table (reference mode); nil for none
+	pairs   []int64   // total bases of each read (pair)
+	part    string    // sequencing-summary part file; "" for none
 	elapsed time.Duration
 	err     error
 }
@@ -892,10 +918,19 @@ func (e *Engine) generateUnit(unit, reads int, abort *atomic.Bool) unitResult {
 	}
 	for i, mate := range e.mates() {
 		lens := make([]int64, 0, reads)
-		final, err := e.generateFASTQFile(fileJob{
+		job := fileJob{
 			path: e.outputPath(unit, mate), batch: unit, mate: mate, reads: reads,
 			obs: obs, abort: abort, tally: func(n int) { lens = append(lens, int64(n)) },
-		})
+		}
+		if i == 0 && e.ref != nil {
+			job.truth = truthPath(job.path)
+		}
+		final, err := e.generateFASTQFile(job)
+		if err == nil && job.truth != "" {
+			t := unitFile{path: job.truth, reads: int64(len(lens))}
+			t.bytes, t.sha256, err = manifest.HashFile(job.truth)
+			res.truth = &t
+		}
 		if err == nil {
 			f := unitFile{path: final, reads: int64(len(lens))}
 			for _, n := range lens {
@@ -931,6 +966,9 @@ func (e *Engine) generateUnit(unit, reads int, abort *atomic.Bool) unitResult {
 func discardUnit(r unitResult) {
 	for _, f := range r.files {
 		os.Remove(f.path) // #nosec G104 -- best effort; the spool is removed at the end
+	}
+	if r.truth != nil {
+		os.Remove(r.truth.path) // #nosec G104
 	}
 	if r.part != "" {
 		os.Remove(r.part) // #nosec G104
@@ -1072,6 +1110,14 @@ func (e *Engine) commitUnit(fc *Engine, r unitResult, k int, rel string, dest de
 		e.filesMu.Lock()
 		e.files = append(e.files, final)
 		e.filesMu.Unlock()
+	}
+	if t := r.truth; t != nil {
+		relPath := joinRel(rel, filepath.Base(t.path))
+		_, key, err := dest.commit(t.path, relPath, fc.objectTags(t.bytes, r.elapsed))
+		if err != nil {
+			return err
+		}
+		m.Add(manifest.Output{Path: relPath, Key: key, Role: manifest.RoleTruth, FlowCell: k, Bytes: t.bytes, SHA256: t.sha256, Reads: t.reads})
 	}
 	return summary.add(r.part)
 }

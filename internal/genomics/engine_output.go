@@ -19,7 +19,9 @@ package genomics
 //     fingerprinting.ReadTags); the read name is never changed. The default
 //     writes Illumina headers "<sample>:<lane>:HXXXXXX:<batch>:1101:<x>:<y>"
 //     "<mate>:N:0:1"; x/y are read*1000/read*2000, or, for reads placed on a
-//     region, start%1e5 and (start/1e5)%1e5.
+//     region (GenerateOpts.RefRegion), start%1e5 and (start/1e5)%1e5. Reads
+//     sampled from a reference keep read*1000/read*2000, so names stay
+//     unique.
 //   - maxPhred caps Phred scores when they are encoded as ASCII (Phred+33).
 //   - outputPath returns the file written for one batch and mate (mate is 1,
 //     or 2 for the second file of a paired-end batch).
@@ -228,9 +230,13 @@ func (e *Engine) headerFormatter() (func(r *rand.Rand, rec *seqread.Record) (nam
 		return nanopore.NewHeaderFormatter(e.ontRunInfo(), e.config.ReadsPerBatch, e.slotBases()), nil
 	}
 	sample, lane := e.config.SampleName, e.config.Lane
+	// Reads sampled by a FragmentSampler (a reference genome) keep the
+	// per-index tile coordinates: their starts are not unique, and read names
+	// must be. Their origin is in the truth table.
+	byStart := e.fragments == nil
 	return func(_ *rand.Rand, rec *seqread.Record) (string, string) {
 		x, y := rec.Index*1000, rec.Index*2000
-		if rec.Positioned {
+		if rec.Positioned && byStart {
 			x, y = int(rec.RefStart%100000), int((rec.RefStart/100000)%100000)
 		}
 		return fmt.Sprintf("%s:%d:HXXXXXX:%d:1101:%d:%d", sample, lane, rec.Batch, x, y),
