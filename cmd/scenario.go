@@ -17,13 +17,21 @@ var scenarioCmd = &cobra.Command{
 	Short: "Generate clinical scenario FASTQ with planted variants and ground truth manifest",
 	Long: `Generate synthetic FASTQ reads for a clinical demonstration scenario.
 
-The scenario is a YAML file listing HPO terms, which a built-in catalog maps to a
-gene and variant (SLC2A1 for HP:0001250 + HP:0001253, PAH for HP:0001360, CFTR
-for HP:0002837; other terms fall back to a ClinVar web query), or an explicit
-phenotype.planted_variant. Reads are placed in a
-50 kb window around the variant at the requested coverage, and reads covering it
-carry the ALT allele at the expected VAF. Read bases are synthetic, not taken
-from a reference genome. A JSON ground-truth manifest records what was planted.
+The scenario is a YAML file listing HPO terms, which a built-in catalogue maps
+to a pathogenic ClinVar variant (GRCh38, VCF-normalised; no network lookup):
+
+  HP:0001250 Seizure + HP:0011972 Hypoglycorrhachia
+      SLC2A1 chr1:42929242 C>T p.Gly314Ser missense   (VCV000016113)
+  HP:0004923 Hyperphenylalaninemia
+      PAH    chr12:102840493 G>A p.Arg408Trp missense (VCV000000577)
+  HP:0012236 Elevated sweat chloride
+      CFTR   chr7:117559590 ATCT>A p.Phe508del inframe deletion (VCV000007105)
+
+Other terms are an error unless the spec gives phenotype.planted_variant
+explicitly. Reads are placed in a 50 kb window around the variant at the
+requested coverage, and reads covering it carry the ALT allele at the
+expected VAF. Read bases are synthetic, not taken from a reference genome. A
+JSON ground-truth manifest records what was planted.
 --population is used only by trio scenarios (trio.generate and trio.de_novo).
 
 Example, with glut1_scenario.yaml containing the spec below:
@@ -31,7 +39,7 @@ Example, with glut1_scenario.yaml containing the spec below:
 
 The YAML spec format:
   phenotype:
-    hpo_terms: [HP:0001250, HP:0001253]
+    hpo_terms: [HP:0001250, HP:0011972]
   sequencer:
     platform: NovaSeq6000
     coverage: 30
