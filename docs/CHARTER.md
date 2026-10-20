@@ -39,8 +39,11 @@ The same configuration and seed produce byte-identical output, whatever the
 number of workers or the CPU architecture. Randomness comes only from seeded
 streams, and floating-point products on the output path are explicitly
 rounded so the compiler cannot fuse them (`internal/fmacheck` enforces this).
-Known gap: the standard library's `math.Exp`/`Log` and `rand.NormFloat64` can
-differ in the last bit between CPUs (#33).
+Elementary functions and normal/exponential variates on the output path come
+from `internal/detmath`, a pure-Go port with every product rounded, instead of
+the standard library, whose `math.Exp` and `math.Log` are per-architecture
+assembly. `internal/fmacheck` enforces this and checks the compiled code for
+fused instructions, and CI compares pinned output hashes on amd64 and arm64.
 
 ## 5. Limitations are stated
 
