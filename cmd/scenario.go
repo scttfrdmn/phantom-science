@@ -17,21 +17,39 @@ var scenarioCmd = &cobra.Command{
 	Short: "Generate clinical scenario FASTQ with planted variants and ground truth manifest",
 	Long: `Generate synthetic FASTQ reads for a clinical demonstration scenario.
 
-The scenario is a YAML file listing HPO terms, which a built-in catalog maps to a
-gene and variant (SLC2A1 for HP:0001250 + HP:0001253, PAH for HP:0001360, CFTR
-for HP:0002837; other terms fall back to a ClinVar web query), or an explicit
-phenotype.planted_variant. Reads are placed in a
-50 kb window around the variant at the requested coverage, and reads covering it
-carry the ALT allele at the expected VAF. Read bases are synthetic, not taken
-from a reference genome. A JSON ground-truth manifest records what was planted.
---population is used only by trio scenarios (trio.generate and trio.de_novo).
+The scenario is a YAML file listing HPO terms, which a built-in catalogue maps
+to a pathogenic ClinVar variant (GRCh38, VCF-normalised; no network lookup):
+
+  HP:0001250 Seizure + HP:0011972 Hypoglycorrhachia
+      SLC2A1 chr1:42929242 C>T p.Gly314Ser missense   (VCV000016113)
+  HP:0004923 Hyperphenylalaninemia
+      PAH    chr12:102840493 G>A p.Arg408Trp missense (VCV000000577)
+  HP:0012236 Elevated sweat chloride
+      CFTR   chr7:117559590 ATCT>A p.Phe508del inframe deletion (VCV000007105)
+
+Other terms are an error unless the spec gives phenotype.planted_variant
+explicitly. Reads are placed in a 50 kb window around the variant at the
+requested coverage, and reads covering it carry the ALT allele at the
+expected VAF. Read bases are synthetic, not taken from a reference genome.
+With --reference genome.fa the planted REF allele is checked against the
+FASTA first (chromosome names with or without "chr"; a .fai index is used
+when present) and a mismatch is an error. A JSON ground-truth manifest
+records what was planted.
+Trio scenarios (trio: {generate: true, de_novo: true} with output.mother_fastq
+and output.father_fastq) simulate six phased haplotypes for the window with the
+Go structured coalescent (no Python): the parents get two each, the proband
+inherits one from each parent with Poisson crossovers, and the planted variant
+is a de novo on the proband only. --population selects the demographic model:
+YRI, CEU, CHB or MXL, or a 1000 Genomes code modelled by the closest of these
+(e.g. GBR, TSI, JPT, LWK); other codes are an error. It is used only by trio
+scenarios.
 
 Example, with glut1_scenario.yaml containing the spec below:
   phantom-science scenario --spec glut1_scenario.yaml --population CEU
 
 The YAML spec format:
   phenotype:
-    hpo_terms: [HP:0001250, HP:0001253]
+    hpo_terms: [HP:0001250, HP:0011972]
   sequencer:
     platform: NovaSeq6000
     coverage: 30
@@ -39,6 +57,8 @@ The YAML spec format:
   output:
     proband_fastq: proband.fastq
     ground_truth: manifest.json`,
+	// Run errors (e.g. a REF mismatch) are not usage errors.
+	SilenceUsage: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		specPath, _ := cmd.Flags().GetString("spec")
 		if specPath == "" {
@@ -78,8 +98,10 @@ The YAML spec format:
 			return fmt.Errorf("loading scenario: %w", err)
 		}
 
-		projectRoot, _ := os.Getwd()
-		gen := clinical.NewScenarioGenerator(sequencerCfg, projectRoot)
+		gen := clinical.NewScenarioGenerator(sequencerCfg)
+		if refPath, _ := cmd.Flags().GetString("reference"); refPath != "" {
+			gen.WithReference(refPath)
+		}
 		manifest, err := gen.Run(cmd.Context(), scenario)
 		if err != nil {
 			return fmt.Errorf("running scenario: %w", err)
@@ -109,5 +131,6 @@ The YAML spec format:
 func init() {
 	rootCmd.AddCommand(scenarioCmd)
 	scenarioCmd.Flags().String("spec", "", "Path to YAML scenario specification (required)")
-	scenarioCmd.Flags().String("population", "", "Override population code (default CEU)")
+	scenarioCmd.Flags().String("population", "", "Trio population: YRI, CEU, CHB, MXL or a 1000 Genomes alias of them (default CEU)")
+	scenarioCmd.Flags().String("reference", "", "Reference FASTA (GRCh38 for catalogue variants); the planted REF allele must match it or the run fails")
 }
