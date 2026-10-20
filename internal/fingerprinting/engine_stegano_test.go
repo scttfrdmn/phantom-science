@@ -83,14 +83,6 @@ func steganoModuleVersion(t *testing.T) string {
 	return string(m[1])
 }
 
-// With CGO, New must return the real engine. Falling back to the legacy engine
-// would silently produce output with no extractable fingerprint.
-func TestNew_UsesSteganoEngine(t *testing.T) {
-	e := New("customer-123")
-	defer e.Close()
-	assert.IsType(t, &SteganoEngine{}, e)
-}
-
 func TestSteganoEngine_GenerateFingerprint(t *testing.T) {
 	fp, err := newTestEngine(t).GenerateFingerprint("dataset-001")
 	require.NoError(t, err)

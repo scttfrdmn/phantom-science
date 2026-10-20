@@ -7,8 +7,13 @@
 // holds no wall-clock time, host name or absolute output path, and leaves
 // out settings that do not change the output (output_dir, workers), so two
 // runs with the same seed produce byte-identical manifests. It never holds
-// key material: the fingerprint key file path is removed and only whether
-// fingerprints were encrypted is recorded.
+// key material: the fingerprint key file path is removed.
+//
+// A fingerprinted (keyed-seed) run records its Fingerprint (scheme,
+// customer, dataset, salt) instead of its seed: Seed and the flow-cell seeds
+// are omitted, and Config.Seed holds the salt, so the configuration plus the
+// key reproduces the run, and nothing in the manifest reproduces it without
+// the key.
 package manifest
 
 import (
@@ -49,9 +54,9 @@ type Manifest struct {
 	Version int    `json:"version"`
 	Tool    Tool   `json:"tool"`
 	// Seed is the run seed: passing it (with Config) reproduces every
-	// output byte for byte (except quality-score fingerprints, which embed
-	// the time they were made).
-	Seed uint64 `json:"seed"`
+	// output byte for byte. It is omitted for a fingerprinted run, whose
+	// seed is derived from the key (see Fingerprint).
+	Seed uint64 `json:"seed,omitempty"`
 	// RunStart is the run's acquisition start, derived from the seed (it is
 	// the ONT start_time origin); it is not the wall-clock time of the run.
 	// A signal run takes it from its input reads' start times.
@@ -65,12 +70,28 @@ type Manifest struct {
 	// Signal holds the parameters of a raw-signal run (the signal
 	// command); nil for read generation.
 	Signal *Signal `json:"signal,omitempty"`
-	// Encrypted reports whether quality-score fingerprints were encrypted
-	// with a key (the key itself is never recorded).
+	// Fingerprint describes the run's keyed-seed fingerprint; nil for an
+	// unfingerprinted run.
+	Fingerprint *Fingerprint `json:"fingerprint,omitempty"`
+	// Encrypted is read from manifests of phantom-science 0.9.0 and earlier
+	// (encrypted quality-score fingerprints); it is no longer written.
 	Encrypted bool       `json:"fingerprint_encrypted,omitempty"`
 	FlowCells []FlowCell `json:"flow_cells"`
 	Outputs   []Output   `json:"outputs"`
 	Totals    Totals     `json:"totals"`
+}
+
+// Fingerprint records a keyed-seed fingerprint: with the key, the run's seed
+// is fingerprinting.DeriveSeed(key, Customer, Dataset, Salt). The derived
+// seed and the key are never recorded.
+type Fingerprint struct {
+	Scheme   string `json:"scheme"` // fingerprinting.KeyedSeedScheme
+	Customer string `json:"customer"`
+	Dataset  string `json:"dataset"`
+	// Salt is the configured seed, or the value drawn when none was set.
+	// It is written as a JSON string so that tools that read numbers as
+	// doubles keep all 64 bits.
+	Salt uint64 `json:"salt,string"`
 }
 
 // Signal describes a raw-signal run: with the manifest Seed and the inputs
@@ -109,8 +130,9 @@ type Tool struct {
 
 // FlowCell describes one independent run (flow cell) of the manifest.
 type FlowCell struct {
-	Index      int    `json:"index"` // 1-based
-	Seed       uint64 `json:"seed"`
+	Index int `json:"index"` // 1-based
+	// Seed is the flow cell's seed; omitted for a fingerprinted run.
+	Seed       uint64 `json:"seed,omitempty"`
 	RunID      string `json:"run_id,omitempty"`
 	FlowCellID string `json:"flow_cell_id,omitempty"`
 	// Dir is the flow cell's subdirectory ("" when the run has one flow

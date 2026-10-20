@@ -1,5 +1,5 @@
 // Package genomics provides the core FASTQ generation engine, including HMM model
-// integration, steganographic fingerprinting, and sequencer-realistic output.
+// integration, keyed-seed fingerprinting, and sequencer-realistic output.
 //
 // Generation runs through one shared per-read pipeline (pipeline.go) with
 // extension points for read lengths (engine_readlen.go), qualities and
@@ -19,7 +19,6 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/scttfrdmn/phantom-science/internal/fingerprinting"
 	"github.com/scttfrdmn/phantom-science/internal/genomics/authenticity"
 	"github.com/scttfrdmn/phantom-science/internal/genomics/manifest"
 	"github.com/scttfrdmn/phantom-science/internal/genomics/reference"
@@ -29,12 +28,13 @@ import (
 )
 
 type Engine struct {
-	config               types.SequencerConfig
-	fingerprintingEngine fingerprinting.Engine
-	hmmModel             authenticity.SequenceGenerator // nil = uniform random bases
+	config   types.SequencerConfig
+	hmmModel authenticity.SequenceGenerator // nil = uniform random bases
 
-	// seed is the run seed (SequencerConfig.Seed, or drawn when unset);
-	// seedDrawn reports a drawn seed, which is logged once to logw.
+	// seed is the run seed (SequencerConfig.Seed, or drawn when unset, or,
+	// with a keyed-seed fingerprint, derived from the key; see
+	// engine_fingerprint.go); seedDrawn reports a drawn seed, which is
+	// logged once to logw.
 	seed        uint64
 	seedDrawn   bool
 	seedErr     error
@@ -44,7 +44,7 @@ type Engine struct {
 	// stays clean.
 	logw io.Writer
 
-	// customerID is the customer written in read-ID fingerprint tags.
+	// customerID is the customer written in read-ID labels.
 	customerID string
 	// fragments, when set, supplies read and fragment bases (see
 	// FragmentSampler); nil uses the HMM model or uniform bases.
@@ -74,22 +74,17 @@ type Engine struct {
 	filesMu sync.Mutex
 	files   []string
 
-	// keyErr records a fingerprint key that could not be loaded; encrypted
-	// reports whether quality-score fingerprints are encrypted with a key.
-	keyErr    error
-	encrypted bool
-
-	// One fingerprint per engine, shared by every file it writes.
-	fingerprintOnce sync.Once
-	fingerprint     string
-	fingerprintErr  error
+	// fp is the run's keyed-seed fingerprint; fpErr records fingerprint
+	// settings that cannot be used (no key, quality_scores layer, ...).
+	fp    keyedSeed
+	fpErr error
 
 	// modelPath is the HMM model file hmmModel was loaded from; file output
 	// loads a fresh instance per file from it (models are not safe to share
 	// between parallel workers, and adaptive models carry state).
 	modelPath string
 	// parent is the run's engine when this one generates one flow cell of
-	// it; the run fingerprint is the parent's.
+	// it.
 	parent *Engine
 	// toolVersion is recorded in the manifest; uploader receives S3 output.
 	toolVersion string
@@ -108,80 +103,6 @@ func (e *Engine) SetUploader(u s3sink.Uploader) { e.uploader = u }
 // Manifest returns the manifest of the last completed Generate run, or nil.
 func (e *Engine) Manifest() *manifest.Manifest { return e.manifest }
 
-// qualityLayer is the steganography layer that embeds a fingerprint in FASTQ
-// quality scores.
-const qualityLayer = "quality_scores"
-
-// qualityFingerprintingEnabled reports whether output files must carry a
-// quality-score fingerprint.
-func (e *Engine) qualityFingerprintingEnabled() bool {
-	if !e.config.Fingerprinting.Enable {
-		return false
-	}
-	for _, layer := range e.config.Fingerprinting.SteganographyLayers {
-		if layer == qualityLayer {
-			return true
-		}
-	}
-	return false
-}
-
-// fileFingerprinter returns the engine's file-level fingerprinter, or an error
-// when the fingerprinting engine cannot embed into files (CGO disabled, release
-// build, or stegano library unavailable).
-func (e *Engine) fileFingerprinter() (fingerprinting.FileFingerprinter, error) {
-	if ff, ok := e.fingerprintingEngine.(fingerprinting.FileFingerprinter); ok {
-		return ff, nil
-	}
-	return nil, fmt.Errorf("steganography layer %q needs the stegano library: build with CGO after `make stegano`, or remove %q from steganography_layers", qualityLayer, qualityLayer)
-}
-
-// checkQualityFingerprinting reports why quality-score fingerprints cannot be
-// written, or nil when they can: the stegano library must be available, and
-// the fingerprint must be encrypted with a key unless plaintext is allowed.
-func (e *Engine) checkQualityFingerprinting() error {
-	if _, err := e.fileFingerprinter(); err != nil {
-		return err
-	}
-	if e.keyErr != nil {
-		return e.keyErr
-	}
-	if !e.encrypted && !e.config.Fingerprinting.Plaintext {
-		return fmt.Errorf("steganography layer %q needs an encryption key: set fingerprinting.key_file or %s, or set plaintext: true to embed readable fingerprints", qualityLayer, fingerprinting.KeyEnvVar)
-	}
-	return nil
-}
-
-// runFingerprint returns the fingerprint for this engine's run, generating it
-// on first use.
-func (e *Engine) runFingerprint() (string, error) {
-	if e.parent != nil {
-		return e.parent.runFingerprint()
-	}
-	e.fingerprintOnce.Do(func() {
-		e.fingerprint, e.fingerprintErr = e.fingerprintingEngine.GenerateFingerprint(e.config.DatasetID)
-	})
-	return e.fingerprint, e.fingerprintErr
-}
-
-// embedFileFingerprint embeds the run fingerprint into the finished FASTQ file
-// at filename. On failure the unmarked file is removed, so output never
-// silently lacks a requested fingerprint.
-func (e *Engine) embedFileFingerprint(filename string) error {
-	ff, err := e.fileFingerprinter()
-	if err == nil {
-		var fp string
-		if fp, err = e.runFingerprint(); err == nil {
-			err = ff.EmbedInFASTQFile(filename, filename, fp)
-		}
-	}
-	if err != nil {
-		os.Remove(filename) // #nosec G104 -- best effort; the embed error is returned
-		return fmt.Errorf("fingerprinting %s: %w", filepath.Base(filename), err)
-	}
-	return nil
-}
-
 // NewEngine creates an engine for config. It resolves the run seed (drawing
 // one when config.Seed is zero) and loads the HMM model when configured.
 // Diagnostics go to stderr (see NewEngineLog).
@@ -197,25 +118,14 @@ func NewEngineLog(config types.SequencerConfig, logw io.Writer) *Engine {
 	if logw == nil {
 		logw = io.Discard
 	}
-	// Initialize fingerprinting engine with customer ID from config
+	// The customer named by read-ID labels.
 	customerID := "phantom-science" // Default customer ID
 	if config.Enterprise.CustomerID != "" {
 		customerID = config.Enterprise.CustomerID
 	}
 
 	e := &Engine{config: config, logw: logw, customerID: customerID}
-	e.seed, e.seedDrawn, e.seedErr = ResolveSeed(config.Seed)
-	var fpOpts []fingerprinting.Option
-	if config.Fingerprinting.Enable {
-		key, err := fingerprinting.ResolveKey(config.Fingerprinting.KeyFile)
-		if err != nil {
-			e.keyErr = err
-		} else if key != nil {
-			fpOpts = append(fpOpts, fingerprinting.WithKey(key))
-			e.encrypted = true
-		}
-	}
-	e.fingerprintingEngine = fingerprinting.New(customerID, fpOpts...)
+	e.resolveSeed()
 	// The reference first: with both a reference and a model configured,
 	// the conflict is the error and neither is loaded.
 	e.loadReference()
@@ -275,11 +185,6 @@ func (e *Engine) Generate() error {
 	if err := e.checkExtensions(); err != nil {
 		return err
 	}
-	if e.qualityFingerprintingEnabled() {
-		if err := e.checkQualityFingerprinting(); err != nil {
-			return err
-		}
-	}
 	e.logSeed()
 
 	c := e.config
@@ -330,12 +235,9 @@ func closeObserver(obs ReadObserver) error {
 	return nil
 }
 
-// Close cleans up engine resources
-func (e *Engine) Close() {
-	if e.fingerprintingEngine != nil {
-		e.fingerprintingEngine.Close()
-	}
-}
+// Close cleans up engine resources. The engine holds none that need
+// releasing; Close is kept for callers that defer it.
+func (e *Engine) Close() {}
 
 // GenerateFASTQFile generates a single FASTQ file (public method for TUI).
 // read is the mate number (1, or 2 for the second file of a pair). The
@@ -376,6 +278,9 @@ type fileJob struct {
 	// truth, when set, is the truth table written alongside (reference
 	// mode, mate 1).
 	truth string
+	// plain writes the records uncompressed whatever the output
+	// compression (regeneration, which discards them).
+	plain bool
 }
 
 // generateFASTQFile writes and finalizes one file and returns its final path.
@@ -383,12 +288,6 @@ func (e *Engine) generateFASTQFile(j fileJob) (string, error) {
 	// Validate file path against the configured output directory
 	if err := security.ValidateFilePath(j.path, e.config.OutputDir); err != nil {
 		return "", fmt.Errorf("invalid file path: %w", err)
-	}
-
-	if e.qualityFingerprintingEnabled() {
-		if err := e.checkQualityFingerprinting(); err != nil {
-			return "", err
-		}
 	}
 
 	file, err := security.SecureFileCreate(j.path, e.config.OutputDir)
@@ -457,9 +356,11 @@ func (e *Engine) writeFileStream(w io.Writer, truth *os.File, j fileJob) error {
 	if p.model, err = e.streamModel(); err != nil {
 		return err
 	}
-	ww, err := e.wrapOutput(w)
-	if err != nil {
-		return err
+	var ww io.WriteCloser = nopWriteCloser{w}
+	if !j.plain {
+		if ww, err = e.wrapOutput(w); err != nil {
+			return err
+		}
 	}
 	r := newStream(e.seed, streamID(j.batch, j.mate))
 	shared := r
@@ -542,7 +443,7 @@ type GenerateOpts struct {
 	// Variants are injected into each read with probability Freq.
 	Variants []VariantRecord
 	// SampleID, when non-empty, appends "\tRG:Z:<id>" to every read header
-	// comment (before any fingerprint tags).
+	// comment (before any read-ID labels).
 	// BWA passes FASTQ comments to SAM when invoked with -C.
 	SampleID string
 	// RefRegion, when non-nil, enables coordinate-aware injection. Reads are
@@ -554,8 +455,8 @@ type GenerateOpts struct {
 
 // GenerateToWriter streams all synthetic FASTQ reads to w without writing local
 // files. Variant injection and per-read RG tagging are controlled via opts.
-// Config-level fingerprinting is applied when enabled. Each batch draws from
-// its own RNG stream, so output is reproducible from the seed. TotalReads,
+// A keyed-seed fingerprint applies as for file output: it is the seed. Each
+// batch draws from its own RNG stream, so output is reproducible from the seed. TotalReads,
 // TotalBases and the max-output cap apply as for Generate (one stream, so
 // Workers does not apply); flow cells need file output.
 func (e *Engine) GenerateToWriter(w io.Writer, opts GenerateOpts) error {
@@ -570,9 +471,6 @@ func (e *Engine) GenerateToWriter(w io.Writer, opts GenerateOpts) error {
 	}
 	if e.config.FlowCells > 1 {
 		return fmt.Errorf("flow_cells %d needs file output: each flow cell is written to its own directory", e.config.FlowCells)
-	}
-	if e.qualityFingerprintingEnabled() {
-		return fmt.Errorf("steganography layer %q needs file output: a fingerprint cannot be embedded in streamed output; write files instead, or remove %q from steganography_layers", qualityLayer, qualityLayer)
 	}
 	if err := e.checkExtensions(); err != nil {
 		return err

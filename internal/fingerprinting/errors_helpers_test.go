@@ -11,9 +11,9 @@ import (
 // empty, and malformed inputs.
 func TestIsValidFASTQData(t *testing.T) {
 	tests := []struct {
-		name  string
-		data  []byte
-		want  bool
+		name string
+		data []byte
+		want bool
 	}{
 		{
 			name: "valid single-record FASTQ",
@@ -31,19 +31,19 @@ func TestIsValidFASTQData(t *testing.T) {
 			want: true,
 		},
 		{
-			name:  "empty data",
-			data:  []byte{},
-			want:  false,
+			name: "empty data",
+			data: []byte{},
+			want: false,
 		},
 		{
-			name:  "nil data treated as empty",
-			data:  nil,
-			want:  false,
+			name: "nil data treated as empty",
+			data: nil,
+			want: false,
 		},
 		{
-			name:  "data shorter than MinDataLength",
-			data:  []byte("@s\nA\n+\nI\n"),
-			want:  false,
+			name: "data shorter than MinDataLength",
+			data: []byte("@s\nA\n+\nI\n"),
+			want: false,
 		},
 		{
 			name: "starts with @ but missing + separator",
@@ -247,4 +247,3 @@ func TestIsRecoverableError_AllDefinedCodes(t *testing.T) {
 		}
 	}
 }
-

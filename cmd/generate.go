@@ -58,6 +58,12 @@ will not place the reads at these coordinates in a real reference.
 Without --seed a random seed is drawn and logged to stderr. Diagnostics always go to
 stderr, so --stdout output is clean FASTQ.
 
+With fingerprinting enabled (a phantom config, -p, or the config's fingerprinting
+section) the seed is derived from the fingerprint key, the customer ID and the
+--dataset-id, with --seed (or a drawn, logged value) as the salt; the output is an
+ordinary run with that seed, unchanged by the fingerprint. "phantom-science verify
+--manifest" attributes files to the run with the key.
+
 Output size and scale (file output):
   --total-bases 140G   write files until the target is met (within one read of it)
   --total-reads N      exactly N reads (read pairs for paired-end); last file partial
@@ -84,6 +90,7 @@ func init() {
 	f.String("config", "", "Sequencer configuration file path")
 
 	f.Uint64("seed", 0, "Random seed for reproducible output (0 or unset: draw one and log it to stderr)")
+	f.String("dataset-id", "", "Dataset ID (dataset_id); with fingerprinting it names the dataset the keyed seed is derived for")
 	f.String("platform", "", "Sequencing platform: illumina (default) or ont")
 	f.String("read-length-dist", "", "Read-length distribution: fixed (default), lognormal, gamma or empirical")
 	f.Int("read-length-n50", 0, "Read-length N50 for the lognormal distribution")
@@ -228,6 +235,9 @@ func applyGenerateFlags(cmd *cobra.Command, config *types.SequencerConfig) error
 	set := func(name string) bool { return flags.Changed(name) }
 	if set("seed") {
 		config.Seed, _ = flags.GetUint64("seed")
+	}
+	if set("dataset-id") {
+		config.DatasetID, _ = flags.GetString("dataset-id")
 	}
 	if set("platform") {
 		config.Platform, _ = flags.GetString("platform")

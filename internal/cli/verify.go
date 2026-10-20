@@ -42,7 +42,7 @@ func VerifyFiles(w io.Writer, paths []string, opts VerifyOptions) error {
 	}
 	verifier, err := fingerprinting.NewVerifier(vopts...)
 	if err != nil {
-		return fmt.Errorf("fingerprint verification needs the stegano library (build with CGO after `make stegano`): %w", err)
+		return fmt.Errorf("legacy quality-score fingerprints (phantom-science 0.9.0 and earlier) need the stegano library (build with CGO after `make stegano`): %w", err)
 	}
 
 	failed := 0
@@ -59,7 +59,7 @@ func VerifyFiles(w io.Writer, paths []string, opts VerifyOptions) error {
 			fmt.Fprintf(w, "❌ %s: cannot verify: %v\n", path, err)
 			failed++
 		case !result.Found:
-			fmt.Fprintf(w, "❌ %s: no fingerprint\n", path)
+			fmt.Fprintf(w, "❌ %s: no quality-score fingerprint\n", path)
 			failed++
 		default:
 			if msg := checkFingerprint(result.Fingerprint, opts); msg != "" {
@@ -70,7 +70,7 @@ func VerifyFiles(w io.Writer, paths []string, opts VerifyOptions) error {
 				if result.Encrypted {
 					protection = "encrypted"
 				}
-				fmt.Fprintf(w, "✅ %s: %s (%s)\n", path, describeFingerprint(result.Fingerprint), protection)
+				fmt.Fprintf(w, "✅ %s: legacy quality-score fingerprint (phantom-science 0.9.0 and earlier): %s (%s)\n", path, describeFingerprint(result.Fingerprint), protection)
 			}
 		}
 	}
@@ -261,4 +261,3 @@ func verifyPossiblyGzipped(v fingerprinting.Verifier, path string) (fingerprinti
 	}
 	return v.Verify(tmp.Name())
 }
-
