@@ -21,6 +21,11 @@ package fingerprinting
 type Engine interface {
 	GenerateFingerprint(datasetID string) (string, error)
 	EmbedInQualities(qualities []byte, fingerprint string) ([]byte, error)
+	// EmbedCustomerID and EmbedDatasetFingerprint append a tag to a read ID.
+	//
+	// Deprecated: tags appended to the read ID corrupt the read name and the
+	// FASTQ comment; generation writes ReadTags fields in the header
+	// comment instead.
 	EmbedCustomerID(readID string) string
 	EmbedDatasetFingerprint(readID, datasetID string) string
 	VerifyFingerprint(qualities []byte) bool

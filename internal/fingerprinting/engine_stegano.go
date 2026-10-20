@@ -166,11 +166,15 @@ func (e *SteganoEngine) VerifyFingerprint(fastqData []byte) bool {
 }
 
 // EmbedCustomerID tags a read ID with the customer identifier.
+//
+// Deprecated: use ReadTags, which writes SAM-style comment fields.
 func (e *SteganoEngine) EmbedCustomerID(readID string) string {
 	return fmt.Sprintf("%s:cust:%s", readID, e.customerID)
 }
 
 // EmbedDatasetFingerprint tags a read ID with the dataset identifier.
+//
+// Deprecated: use ReadTags, which writes SAM-style comment fields.
 func (e *SteganoEngine) EmbedDatasetFingerprint(readID, datasetID string) string {
 	return fmt.Sprintf("%s:ds:%s", readID, datasetID)
 }

@@ -5,9 +5,9 @@ import (
 )
 
 // LegacyEngine is the pure-Go fallback used when the stegano library is not
-// linked. Only its read-ID tagging (EmbedCustomerID, EmbedDatasetFingerprint)
-// is meaningful: its quality-score methods are placeholders that cannot embed
-// a recoverable fingerprint, so generation refuses quality-score
+// linked. Only read-ID tagging (ReadTags, which needs no engine) works in
+// builds that use it: its quality-score methods are placeholders that cannot
+// embed a recoverable fingerprint, so generation refuses quality-score
 // fingerprinting in builds that use it.
 type LegacyEngine struct {
 	customerID string
@@ -53,12 +53,16 @@ func (e *LegacyEngine) EmbedInQualities(qualities []byte, fingerprint string) ([
 }
 
 // EmbedCustomerID appends ":<customer>" to readID.
+//
+// Deprecated: use ReadTags, which writes SAM-style comment fields.
 func (e *LegacyEngine) EmbedCustomerID(readID string) string {
 	// Simple demo implementation - append customer ID
 	return fmt.Sprintf("%s:%s", readID, e.customerID)
 }
 
 // EmbedDatasetFingerprint appends ":DS:<dataset>" to readID.
+//
+// Deprecated: use ReadTags, which writes SAM-style comment fields.
 func (e *LegacyEngine) EmbedDatasetFingerprint(readID, datasetID string) string {
 	// Simple demo implementation - append dataset ID
 	return fmt.Sprintf("%s:DS:%s", readID, datasetID)
