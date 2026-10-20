@@ -1,0 +1,37 @@
+# RNA004 signal calibration conditions (issue #28); run with
+#   run_conditions.sh --conditions conditions_rna.tsv --results results/rna.tsv
+# Columns as in conditions.tsv; $RNAARGS (run_conditions.sh) selects the
+# RNA004 SUP model, measure.py --rna with the RNA004 table at Dorado's
+# standardisation (17/80), and a sensitive minimap2 setting for the 100-nt
+# constructs (map-ont -k5 -w1 -m10 -s15 -n2; at -k10 -w5 only ~1% of
+# synthetic reads align).
+#
+# Inputs:
+#   rna.fa   200 copies of each of the 6 control constructs of
+#            ont-open-data rna-modbase-validation_2025.03
+#            references/sampled_context_strands.fa (100 nt incl. A10),
+#            interleaved (make_inputs.py copies --copies 200)
+#            sha256 95ed4f402f087649c7d5b189a275312f28040987f8c7558502bff437c248b470
+#   real     subset/control_rep1.pod5 of the same data set (RNA004,
+#            FLO-PRO004RA, 4 kHz, unmodified control; sha256 in TOOLS.lock),
+#            first 3000 reads
+#   $TABLES/squig_rna_pa.txt  squigulator's built-in RNA004 table recovered
+#            with squig_table.py --reverse (= ONT rna004 9mer_levels_v1 x
+#            17.57 + 84.04 pA, with a per-k-mer level_stdv, median 3.62 pA)
+#            sha256 347c43d79a72df0cf14741a8f59bb4b9b6f429ad1699caf2b5360ddeac1cdbfd
+# All conditions align to sampled_context_strands.fa.
+#
+# The ladder rna_base -> rna_l1 -> ... -> rna_cal adds one change at a
+# time; rna_cal is the calibrated rna004_130bps_4khz preset.
+#
+# condition	sim	input	args
+rna_real	real	-	--pod5 $PS/real/rna/control_rep1.pod5 --max-reads 3000 --ref $PS/real/rna/sampled_context_strands.fa $RNAARGS
+rna_squig	squigulator	rna.fa	--squig-profile rna004-prom --ref $PS/real/rna/sampled_context_strands.fa $RNAARGS
+rna_squig_prefix	squigulator	rna.fa	--squig-profile rna004-prom --squig-arg --prefix=yes --ref $PS/real/rna/sampled_context_strands.fa $RNAARGS
+rna_base	phantom	rna.fa	--profile rna004_130bps_4khz --pore-model $PS/models/rna004/9mer_levels_v1.txt --ref $PS/real/rna/sampled_context_strands.fa $RNAARGS
+rna_l1_adapter	phantom	rna.fa	--profile rna004_130bps_4khz --pore-model $PS/models/rna004/9mer_levels_v1.txt --ref $PS/real/rna/sampled_context_strands.fa $RNAARGS --set adapter_seconds=0.7 --set adapter_level_pa=62 --set adapter_noise_pa=1.5
+rna_l2_scale	phantom	rna.fa	--profile rna004_130bps_4khz --pore-model $PS/models/rna004/9mer_levels_v1.txt --ref $PS/real/rna/sampled_context_strands.fa $RNAARGS --set adapter_seconds=0.7 --set adapter_level_pa=62 --set adapter_noise_pa=1.5 --set model_scale=17 --set model_shift=80
+rna_l3_noise	phantom	rna.fa	--profile rna004_130bps_4khz --pore-model $PS/models/rna004/9mer_levels_v1.txt --ref $PS/real/rna/sampled_context_strands.fa $RNAARGS --set adapter_seconds=0.7 --set adapter_level_pa=62 --set adapter_noise_pa=1.5 --set model_scale=17 --set model_shift=80 --set white_noise_pa=0 --set drift_pa=0 --set level_noise_scale=2.2
+rna_cal	phantom	rna.fa	--profile rna004_130bps_4khz --pore-model $PS/models/rna004/9mer_levels_v1.txt --ref $PS/real/rna/sampled_context_strands.fa $RNAARGS --set adapter_seconds=0.7 --set adapter_level_pa=62 --set adapter_noise_pa=1.5 --set model_scale=17 --set model_shift=80 --set white_noise_pa=0 --set drift_pa=0 --set level_noise_scale=2.2 --set dwell_cv=0.31 --set skip_prob=0
+rna_cal_tau0.5	phantom	rna.fa	--profile rna004_130bps_4khz --pore-model $PS/models/rna004/9mer_levels_v1.txt --ref $PS/real/rna/sampled_context_strands.fa $RNAARGS --set adapter_seconds=0.7 --set adapter_level_pa=62 --set adapter_noise_pa=1.5 --set model_scale=17 --set model_shift=80 --set white_noise_pa=0 --set drift_pa=0 --set level_noise_scale=2.2 --set dwell_cv=0.31 --set skip_prob=0 --set level_tau=0.5
+rna_cal_squigtable	phantom	rna.fa	--profile rna004_130bps_4khz --pore-model $TABLES/squig_rna_pa.txt --ref $PS/real/rna/sampled_context_strands.fa $RNAARGS --set adapter_seconds=0.7 --set adapter_level_pa=62 --set adapter_noise_pa=1.5 --set white_noise_pa=0 --set drift_pa=0 --set dwell_cv=0.31 --set skip_prob=0

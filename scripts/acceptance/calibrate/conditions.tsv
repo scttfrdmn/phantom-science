@@ -1,0 +1,58 @@
+# Signal calibration conditions (issue #28), run by run_conditions.sh with
+# eval.sh. Columns: condition, sim (phantom|squigulator|real), input (file
+# name under $INPUTS, or "-" for real reads), extra eval.sh arguments
+# ($PS, $INPUTS and $TABLES are expanded). Rows were run in this order with
+# the profile of commit f1d26a0 (the pre-calibration presets); the DNA
+# preset is unchanged since. --keep keeps calls and pod5 for fit_table.py /
+# kmer_noise.py (delete $WORK/<condition> afterwards).
+#
+# Inputs (make_inputs.py; rebuild with run_conditions.sh --inputs):
+#   hg38.fa     2000 pseudo-reads, 10,016,863 bases, GC 0.4093, cut from
+#               UCSC hg38 at regions.tsv (seed 28, chr1-22/X, 2-8 kb,
+#               either strand, no N)
+#               sha256 d681b1504559a222d940b4570eb6d7c8982840b06583c23921c45fcb7644ca04
+#   uniform.fa  the same 2000 lengths cut from `phantom-science generate
+#               --platform ont --config configs/sequencers/ont_promethion24.yaml
+#               --total-bases 11M --seed 1 --stdout` (GC 0.5000)
+#               sha256 69318042982f209b05a9d4b8624712e4d18cd4ed29713ccfa4bf802600089bef
+#   real        ont-open-data pgx_as_2025.07 PBC88003_08351ad4_aada6c04_24.pod5
+#               (PromethION FLO-PRO114M, 5 kHz, 5325 reads; sha256 in TOOLS.lock)
+#
+# condition	sim	input	args
+dna_real	real	-	--pod5 $PS/real/dna_r10.pod5 --ref $PS/ref/hg38.map-ont.mmi --min-mapq 20 --keep
+dna_uniform_base	phantom	uniform.fa	--pore-model $PS/models/dna_r10.4.1_e8.2_400bps/9mer_levels_v1.txt
+dna_hg38_base	phantom	hg38.fa	--pore-model $PS/models/dna_r10.4.1_e8.2_400bps/9mer_levels_v1.txt
+dna_uniform_squig	squigulator	uniform.fa
+dna_hg38_squig	squigulator	hg38.fa
+dna_hg38_tau1	phantom	hg38.fa	--pore-model $PS/models/dna_r10.4.1_e8.2_400bps/9mer_levels_v1.txt --set level_tau=1
+dna_hg38_tau2	phantom	hg38.fa	--pore-model $PS/models/dna_r10.4.1_e8.2_400bps/9mer_levels_v1.txt --set level_tau=2
+dna_hg38_tau4	phantom	hg38.fa	--pore-model $PS/models/dna_r10.4.1_e8.2_400bps/9mer_levels_v1.txt --set level_tau=4
+dna_hg38_tau8	phantom	hg38.fa	--pore-model $PS/models/dna_r10.4.1_e8.2_400bps/9mer_levels_v1.txt --set level_tau=8
+dna_hg38_noise1.2	phantom	hg38.fa	--pore-model $PS/models/dna_r10.4.1_e8.2_400bps/9mer_levels_v1.txt --set level_noise_scale=1.2
+dna_hg38_noise0.5	phantom	hg38.fa	--pore-model $PS/models/dna_r10.4.1_e8.2_400bps/9mer_levels_v1.txt --set level_noise_scale=0.5
+#
+# Round 2: which part of squigulator's lead on hg38 is its table, its
+# per-k-mer stdv, its level offset or its dwell. $TABLES holds tables
+# derived with squig_table.py (squigulator's built-in R10 table, recovered
+# from --ideal / --ideal-time signal of a de Bruijn sequence) and the ONT
+# table in pA as an f5c-format model for squigulator --kmer-model:
+#   squig_dna_pa.txt            sha256 d90954db31544f24ce8419e5e252000c69b08811c54673e7156be117d85b1dbb
+#   squig_dna_pa_conststdv.txt  sha256 6661042d5eb9d94e90b3a389c58ba609a080eaed9b4e99965015858c1c779b61
+#   ont_pa_f5c.model            sha256 f15c9372c028e3292f08829fa793f5445b700053f75e5f722b27eb11e50fc6d1
+dna_hg38_base_rep	phantom	hg38.fa	--pore-model $PS/models/dna_r10.4.1_e8.2_400bps/9mer_levels_v1.txt --keep
+dna_hg38_tau0.5	phantom	hg38.fa	--pore-model $PS/models/dna_r10.4.1_e8.2_400bps/9mer_levels_v1.txt --set level_tau=0.5
+dna_hg38_nostall	phantom	hg38.fa	--pore-model $PS/models/dna_r10.4.1_e8.2_400bps/9mer_levels_v1.txt --set stall_prob=0
+dna_hg38_shift5.2	phantom	hg38.fa	--pore-model $PS/models/dna_r10.4.1_e8.2_400bps/9mer_levels_v1.txt --set model_shift=98.921
+dna_hg38_squigtable	phantom	hg38.fa	--pore-model $TABLES/squig_dna_pa.txt
+dna_hg38_squigtable_const	phantom	hg38.fa	--pore-model $TABLES/squig_dna_pa_conststdv.txt
+dna_hg38_squig_onttable	squigulator	hg38.fa	--squig-arg --kmer-model --squig-arg $TABLES/ont_pa_f5c.model
+# fitted_ont.txt: ONT's table refit to the real reads by fit_table.py
+# (dna_real vs dna_hg38_base_rep calls, --offset 6 --exclude-cpg)
+#   sha256 e4fe6d7d0ac83e97ad90d3881c34a0461707601ce2b764bd966095b8252717de
+dna_hg38_fittedtable	phantom	hg38.fa	--pore-model $TABLES/fitted_ont.txt
+#
+# Round 3: squigulator's levels (constant stdv) as the base for composition, noise
+# and a level refit against real reads (fit_table.py).
+dna_uniform_sqconst	phantom	uniform.fa	--pore-model $TABLES/squig_dna_pa_conststdv.txt
+dna_hg38_sqconst_noise1.27	phantom	hg38.fa	--pore-model $TABLES/squig_dna_pa_conststdv.txt --set level_noise_scale=1.27
+dna_hg38_sqconst_nostall	phantom	hg38.fa	--pore-model $TABLES/squig_dna_pa_conststdv.txt --set stall_prob=0 --keep

@@ -1,0 +1,79 @@
+# Raw output of the diagnostic scripts run alongside the conditions (issue #28,
+# 2026-10-20; tools as in TOOLS.lock). $W = /tmp/ps-accept/w2e, $M = /tmp/ps-accept/models.
+
+## squig_table.py: squigulator 0.5.0's built-in tables
+# squig_table.py debruijn --k 9 --out db9.fa   (262152 bases, sha256 d98b49fb...4f8256)
+# squigulator -x dna-r10-prom --full-contigs --ideal --seed 1 -o ideal.blow5 db9.fa
+# squigulator -x dna-r10-prom --full-contigs --ideal-time --seed 1 -o amp.blow5 db9.fa
+# squig_table.py levels --ideal ideal.blow5 --amp amp.blow5 --fasta db9.fa --k 9 \
+#   --out squig_dna_pa.txt --compare $M/dna_r10.4.1_e8.2_400bps/9mer_levels_v1.txt --scale 23.506 --shift 93.692
+ideal signal: 3407872 samples, 261610 runs, 262144 k-mers
+wrote squig_dna_pa.txt: level mean 96.56 SD 23.03 pA; stdv median 2.15 pA (5-95%: 1.23-3.91)
+vs 9mer_levels_v1.txt: r 0.99379; squigulator = 5.229 + 0.9748 x other; RMS difference 3.89 pA, after the linear fit 2.56 pA
+# same with -x rna004-prom and levels --reverse, against $M/rna004/9mer_levels_v1.txt --scale 17 --shift 80
+ideal signal: 8126464 samples, 261371 runs, 262144 k-mers
+wrote squig_rna_pa.txt: level mean 86.95 SD 15.57 pA; stdv median 3.62 pA (5-95%: 2.27-6.40)
+vs 9mer_levels_v1.txt: r 1.00000; squigulator = 1.359 + 1.0335 x other; RMS difference 4.16 pA, after the linear fit 0.04 pA
+# squig_dna_pa_conststdv.txt: squig_dna_pa.txt with every level_stdv set to 1.8805 (= 0.08 x 23.506)
+
+## fit_table.py: real (dna_real, 5316 reads) vs synthetic (dna_hg38_base_rep) per-k-mer levels
+# fit_table.py --real-sam dna_real/calls.sam --real-pod5 $PS/real/dna_r10.pod5 \
+#   --syn-sam dna_hg38_base_rep/calls.sam --syn-pod5 dna_hg38_base_rep/pod5/input.pod5 \
+#   --table $M/dna_r10.4.1_e8.2_400bps/9mer_levels_v1.txt --scale 23.506 --shift 93.692 \
+#   --out fitted_ont.txt --exclude-cpg --stdv-out ont_stdv_pa.txt
+per-sample noise SD by table level (pA; robust, within Dorado bases):
+  level       40     50     60     70     80     90    100    110    120    130    140
+  real      2.65   2.68   2.80   2.87   2.81   2.92   2.91   2.61   3.10   4.02   4.23
+  synth     2.10   2.12   2.15   2.18   2.24   2.30   2.26   2.17   2.37   2.81   3.24
+  overall real 2.85 synthetic 2.20
+reads real 5272 synthetic 2000; k-mers with >= 3 obs in both: 228942
+per-base residual SD around the table (pA, per-read fit): real 20.46 synthetic 13.06
+per-observation SD around the k-mer mean (pA): real 17.01 synthetic 11.01
+corr(E_real, table) 0.8966  corr(E_syn, table) 0.9496  corr(E_real, E_syn) 0.9593
+attenuation slope of E_syn on table 1.007
+SD of E_real - E_syn 7.36 pA; noise part 4.30; signal part (tau) 5.97 pA -> table error ~ 5.93 pA
+  CpG      k-mers  78733  mean E_real - E_syn -3.82 pA  SD 9.44
+  non-CpG  k-mers 150209  mean E_real - E_syn +0.04 pA  SD 5.55
+wrote fitted_ont.txt: mean |correction| 2.05 pA, 150209 k-mers changed
+wrote ont_stdv_pa.txt: stdv 2.27-2.68 pA (ratio by bin 1.26 1.27 1.30 1.32 1.25 1.27 1.29 1.21 1.31 1.43 1.30)
+# The real/synthetic noise ratio is flat across levels (1.21-1.43), so a
+# per-k-mer stdv by level reduces to level_noise_scale ~1.27
+# (dna_hg38_sqconst_noise1.27: -0.17 points). fitted_ont.txt: dna_hg38_fittedtable, 77.54%.
+
+## measure.py --table: real reads against squigulator's table (dna_real calls, MAPQ >= 20)
+table_r=0.716731
+table_resid_sd=13.5987
+table_offset=6
+# against ONT's table (results/dna.tsv, dna_real): table_r 0.697, table_resid_sd 13.95
+
+## kmer_noise.py: is per-sample noise k-mer specific?
+# real DNA (dna_real), --stdv-table squig_dna_pa.txt --offset 6
+reads 5276; k-mers with >= 20 bases: 187344
+per-k-mer noise (pA): median 2.62, 5-95% 1.62-4.20
+split-half reliability r 0.904 over 179476 k-mers
+corr(noise, level) 0.205
+corr(noise, table level_stdv) 0.521  (table stdv median 2.15 pA)
+noise = 1.62 + 0.474 x table stdv
+# synthetic DNA made with ONE constant stdv (dna_hg38_base_rep), --min-count 10
+reads 2000; k-mers with >= 10 bases: 170620
+per-k-mer noise (pA): median 2.35, 5-95% 1.51-4.06
+split-half reliability r 0.797 over 159380 k-mers
+corr(noise, level) 0.224
+corr(noise, table level_stdv) 0.512  (table stdv median 2.15 pA)
+noise = 1.42 + 0.460 x table stdv
+# The estimator finds the same k-mer-specific spread in signal made with a
+# constant stdv: within Dorado's bases it measures misplaced level steps, so
+# per-k-mer noise cannot be measured this way.
+# real RNA004 (rna_real), --stdv-table squig_rna_pa.txt --offset 2 --rna --min-count 10
+reads 2973; k-mers with >= 10 bases: 1260
+per-k-mer noise (pA): median 2.32, 5-95% 1.00-5.30
+split-half reliability r 0.961 over 1042 k-mers
+corr(noise, level) 0.596
+corr(noise, table level_stdv) 0.483  (table stdv median 3.62 pA)
+noise = 0.64 + 0.514 x table stdv
+
+## Real RNA004 pre-read segment (rna_real calls: samples before ts:i)
+# For each primary record: t = ts:i; x = pod5 signal_pa of the read;
+# mean(x[:t]) and median(|diff(x[:t])|)/0.954; (ns:i - t) / len(SEQ). Medians over reads.
+adapter samples median 2800 (p10/p90 2300/3350); mean 62.3 pA; robust noise 1.53 pA
+samples per called base after ts: median 35.3, mean 36.7
