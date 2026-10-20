@@ -3,6 +3,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -213,7 +214,7 @@ func TestAppendVCFAlleles(t *testing.T) {
 	}{
 		{"ATCG", "ATCC", "ATCGATCC"},
 		{"A", ".", "A"},
-		{"A", "T,C", "AT"},  // multi-allelic: only first ALT
+		{"A", "T,C", "AT"}, // multi-allelic: only first ALT
 		{"", "T", "T"},
 		{"A", "", "A"},
 	}
@@ -301,5 +302,78 @@ func TestVCFGenome(t *testing.T) {
 	_, err = genome.LoadChromosome("chrX")
 	if err == nil {
 		t.Error("expected error for missing chromosome")
+	}
+}
+
+// modelData returns the data section of a saved model file (the envelope's
+// serialized_at timestamp differs between saves).
+func modelData(t *testing.T, path string) string {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var env authenticity.ModelEnvelope
+	if err := json.Unmarshal(raw, &env); err != nil {
+		t.Fatal(err)
+	}
+	return string(env.Data)
+}
+
+// Streaming the VCF in 7-base chunks (with the k-1 carry) must give exactly
+// the model of one-shot training: no k-mer spanning a chunk boundary is lost.
+func TestStreamVCFToAdaptive_ChunkedEqualsOneShot(t *testing.T) {
+	vcf := makeSyntheticVCF(t, 300)
+	for _, k := range []int{2, 4, 8} {
+		t.Run(fmt.Sprintf("k=%d", k), func(t *testing.T) {
+			dir := t.TempDir()
+			paths := map[int]string{}
+			for _, chunk := range []int{7, 1 << 30} {
+				m := authenticity.NewAdaptiveHMMModel(k)
+				if err := streamVCFToAdaptive(vcf, m, chunk); err != nil {
+					t.Fatal(err)
+				}
+				paths[chunk] = filepath.Join(dir, fmt.Sprintf("%d.hmm.json", chunk))
+				if err := m.Save(paths[chunk]); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if modelData(t, paths[7]) != modelData(t, paths[1<<30]) {
+				t.Error("chunked training differs from one-shot training")
+			}
+		})
+	}
+}
+
+// A model trained by `train` on a tiny VCF (16 bases) generates every base
+// (it used to generate only C).
+func TestRunTrain_TinyVCFNotDegenerate(t *testing.T) {
+	for _, modelType := range []string{"adaptive", "kmer"} {
+		t.Run(modelType, func(t *testing.T) {
+			vcf := makeSyntheticVCF(t, 2)
+			out := filepath.Join(t.TempDir(), "m.hmm.json")
+			if err := runTrain([]string{vcf}, out, modelType, "", 4); err != nil {
+				t.Fatal(err)
+			}
+			m, err := authenticity.LoadModel(out)
+			if err != nil {
+				t.Fatal(err)
+			}
+			m.(interface{ SetSeed(int64) }).SetSeed(1)
+			res, err := m.GenerateSequence(10_000)
+			if err != nil {
+				t.Fatal(err)
+			}
+			counts := map[byte]int{}
+			for _, b := range res.Sequence {
+				counts[b]++
+			}
+			t.Logf("base counts: %v", counts)
+			for _, b := range []byte("ACGT") {
+				if counts[b] < 1000 {
+					t.Errorf("base %c: %d of 10000", b, counts[b])
+				}
+			}
+		})
 	}
 }

@@ -12,9 +12,10 @@ import (
 
 // HMMKmerModel is an order-(k-1) Markov chain for sequence generation. Each
 // state is the preceding k-1 bases and transitions give the next base, so no
-// state is hidden despite the name. Each state also has a quality
-// distribution, trained from simulateQuality's heuristic values rather than
-// real base qualities.
+// state is hidden despite the name. Transition and start probabilities are
+// estimated from k-mer counts with pseudocount PseudoCount (see markov.go).
+// Each state also has a quality distribution, trained from simulateQuality's
+// heuristic values rather than real base qualities.
 type HMMKmerModel struct {
 	k                  int
 	stateSpace         []string     // All possible (k-1)-mers
@@ -75,32 +76,17 @@ func NewHMMKmerModel(k int) *HMMKmerModel {
 	return model
 }
 
-// generateStateSpace generates all possible (k-1)-mers
+// generateStateSpace generates all possible (k-1)-mers in state-index order.
 func (m *HMMKmerModel) generateStateSpace() []string {
-	bases := []string{"A", "T", "G", "C"}
-	states := []string{""}
-
-	for i := 0; i < m.k-1; i++ {
-		var newStates []string
-		for _, state := range states {
-			for _, base := range bases {
-				newStates = append(newStates, state+base)
-			}
-		}
-		states = newStates
-	}
-
-	return states
+	return generateStateSpace(m.k)
 }
 
-// getStateIndex returns the index of a state in the state space
+// getStateIndex returns the index of a (k-1)-mer state, or -1 if it is not one.
 func (m *HMMKmerModel) getStateIndex(state string) int {
-	for i, s := range m.stateSpace {
-		if s == state {
-			return i
-		}
+	if len(state) != m.k-1 {
+		return -1
 	}
-	return -1 // Should never happen with valid input
+	return contextIndex([]byte(state))
 }
 
 // GenomeInterface defines the interface for genome data sources
@@ -116,151 +102,76 @@ type ChromosomeInterface interface {
 	GetLength() int
 }
 
-// TrainFromReferenceGenome trains the HMM model using reference genome k-mer frequencies
+// TrainFromReferenceGenome trains the model on every chromosome of refGenome,
+// replacing any earlier training. Each k-mer of A/C/G/T (case-insensitive)
+// within a chromosome counts one transition; k-mers spanning two chromosomes
+// are not formed. Transition and start probabilities are then estimated with
+// pseudocount PseudoCount (see markov.go), so every row sums to 1, unseen
+// contexts are uniform and the start distribution is the smoothed (k-1)-mer
+// frequency. Chromosomes that fail to load are skipped; it is an error if no
+// k-mer was counted.
 func (m *HMMKmerModel) TrainFromReferenceGenome(refGenome GenomeInterface) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// Initialize counters
-	transitionCounts := make([][]int, len(m.stateSpace))
-	emissionCounts := make([][]int, len(m.stateSpace))
-	startCounts := make([]int, len(m.stateSpace))
-
-	for i := 0; i < len(m.stateSpace); i++ {
-		transitionCounts[i] = make([]int, 4)
+	numStates := len(m.stateSpace)
+	transitionCounts := newCountMatrix(numStates, 4)
+	emissionCounts := make([][]int, numStates)
+	for i := range emissionCounts {
 		emissionCounts[i] = make([]int, 42)
 	}
 
-	// Train on each chromosome
+	var total uint64
 	for _, chrName := range refGenome.GetChromosomeNames() {
 		chr, err := refGenome.LoadChromosome(chrName)
 		if err != nil {
 			continue // Skip problematic chromosomes
 		}
-
-		err = m.trainOnChromosome(chr, transitionCounts, emissionCounts, startCounts)
-		if err != nil {
-			return errors.WrapError(err, errors.BiologicalModelError, "hmm_kmer_model", "train_from_reference", fmt.Sprintf("failed to train on chromosome %s", chrName))
-		}
+		total += m.trainOnChromosome(chr, transitionCounts, emissionCounts)
+	}
+	if total == 0 {
+		return errors.NewValidationError("hmm_kmer_model", "train_from_reference", fmt.Sprintf("no valid %d-mers in the reference", m.k))
 	}
 
-	// Convert counts to probabilities
-	m.normalizeProbabilities(transitionCounts, emissionCounts, startCounts)
+	estimateChain(transitionCounts, m.transitionMatrix, m.startProbabilities)
+	m.normalizeEmissions(emissionCounts)
+	m.totalKmers = total
 	m.trained = true
-
 	return nil
 }
 
-// trainOnChromosome trains the model on a single chromosome
-func (m *HMMKmerModel) trainOnChromosome(chr ChromosomeInterface,
-	transitionCounts, emissionCounts [][]int, startCounts []int) error {
-
+// trainOnChromosome counts the k-mers of one chromosome and returns how many
+// were counted.
+func (m *HMMKmerModel) trainOnChromosome(chr ChromosomeInterface, transitionCounts [][]float64, emissionCounts [][]int) uint64 {
 	sequence := chr.GetSequence()
-	if len(sequence) < m.k {
-		return nil // Skip very short sequences
-	}
-
-	// Process sequence with sliding window
-	for i := 0; i <= len(sequence)-m.k; i++ {
-		kmer := string(sequence[i : i+m.k])
-
-		// Skip k-mers with N bases
-		if containsN(kmer) {
-			continue
+	var n uint64
+	for i := 0; i+m.k <= len(sequence); i++ {
+		kmer := sequence[i : i+m.k]
+		stateIndex := contextIndex(kmer[:m.k-1])
+		baseIndex := baseIndex(kmer[m.k-1])
+		if stateIndex < 0 || baseIndex < 0 {
+			continue // k-mer with N or another non-ACGT byte
 		}
-
-		// Extract state (k-1 mer) and observation (next base)
-		state := kmer[:m.k-1]
-		nextBase := kmer[m.k-1]
-
-		stateIndex := m.getStateIndex(state)
-		if stateIndex == -1 {
-			continue // Invalid state
-		}
-
-		baseIndex := m.getBaseIndex(nextBase)
-		if baseIndex == -1 {
-			continue // Invalid base
-		}
-
-		// Update transition counts
 		transitionCounts[stateIndex][baseIndex]++
 
-		// Update start counts for first k-mer
-		if i == 0 {
-			startCounts[stateIndex]++
-		}
-
 		// No real quality data is used: qualities come from simulateQuality.
-		quality := m.simulateQuality(i, kmer)
-		qualityIndex := int(quality)
-		if qualityIndex >= 0 && qualityIndex < 42 {
-			emissionCounts[stateIndex][qualityIndex]++
-		}
-
-		m.totalKmers++
+		emissionCounts[stateIndex][m.simulateQuality(string(kmer))]++
+		n++
 	}
-
-	return nil
+	return n
 }
 
-// normalizeProbabilities converts counts to probabilities with smoothing
-func (m *HMMKmerModel) normalizeProbabilities(transitionCounts, emissionCounts [][]int, startCounts []int) {
-	const smoothingFactor = 0.1 // Laplace smoothing
-
-	// Normalize transition probabilities
-	for i := 0; i < len(m.stateSpace); i++ {
-		total := 0.0
-		for j := 0; j < 4; j++ {
-			total += float64(transitionCounts[i][j]) + smoothingFactor
-		}
-
-		if total > 0 {
-			for j := 0; j < 4; j++ {
-				m.transitionMatrix[i][j] = (float64(transitionCounts[i][j]) + smoothingFactor) / total
-			}
-		} else {
-			// Uniform distribution if no data
-			for j := 0; j < 4; j++ {
-				m.transitionMatrix[i][j] = 0.25
-			}
-		}
-	}
-
-	// Normalize emission probabilities
-	for i := 0; i < len(m.stateSpace); i++ {
+// normalizeEmissions converts quality counts to per-state distributions with
+// a pseudocount of 0.1 per quality value.
+func (m *HMMKmerModel) normalizeEmissions(emissionCounts [][]int) {
+	const smoothingFactor = 0.1
+	for i := range emissionCounts {
 		total := 0.0
 		for j := 0; j < 42; j++ {
 			total += float64(emissionCounts[i][j]) + smoothingFactor
 		}
-
-		if total > 0 {
-			for j := 0; j < 42; j++ {
-				m.emissionMatrix[i][j] = (float64(emissionCounts[i][j]) + smoothingFactor) / total
-			}
-		} else {
-			// Normal distribution centered at quality 20
-			for j := 0; j < 42; j++ {
-				m.emissionMatrix[i][j] = m.normalDistribution(float64(j), 20.0, 5.0)
-			}
-		}
-	}
-
-	// Normalize start probabilities
-	startTotal := 0.0
-	for i := 0; i < len(m.stateSpace); i++ {
-		startTotal += float64(startCounts[i]) + smoothingFactor
-	}
-
-	if startTotal > 0 {
-		for i := 0; i < len(m.stateSpace); i++ {
-			m.startProbabilities[i] = (float64(startCounts[i]) + smoothingFactor) / startTotal
-		}
-	} else {
-		// Uniform distribution
-		prob := 1.0 / float64(len(m.stateSpace))
-		for i := 0; i < len(m.stateSpace); i++ {
-			m.startProbabilities[i] = prob
+		for j := 0; j < 42; j++ {
+			m.emissionMatrix[i][j] = (float64(emissionCounts[i][j]) + smoothingFactor) / total
 		}
 	}
 }
@@ -269,8 +180,9 @@ func (m *HMMKmerModel) normalizeProbabilities(transitionCounts, emissionCounts [
 // transition probabilities, with a quality per base sampled from the state's
 // quality distribution.
 func (m *HMMKmerModel) GenerateSequence(length int) (*GenerationResult, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	// Generation advances m.rng, so it needs the write lock.
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	if !m.trained {
 		return nil, errors.NewValidationError("hmm_kmer_model", "generate_sequence", "model must be trained before generating sequences")
@@ -333,53 +245,19 @@ func (m *HMMKmerModel) GenerateSequence(length int) (*GenerationResult, error) {
 	}, nil
 }
 
-// chooseInitialState chooses the initial state based on start probabilities
+// chooseInitialState draws the initial state from the start probabilities.
 func (m *HMMKmerModel) chooseInitialState() int {
-	r := m.rng.Float64()
-	cumulative := 0.0
-
-	for i, prob := range m.startProbabilities {
-		cumulative += prob
-		if r <= cumulative {
-			return i
-		}
-	}
-
-	// Fallback to last state
-	return len(m.stateSpace) - 1
+	return sampleIndex(m.rng, m.startProbabilities)
 }
 
-// sampleNextBase samples the next base from transition probabilities
+// sampleNextBase draws the next base from the state's transition row.
 func (m *HMMKmerModel) sampleNextBase(stateIndex int) byte {
-	r := m.rng.Float64()
-	cumulative := 0.0
-	bases := []byte{'A', 'T', 'G', 'C'}
-
-	for i, prob := range m.transitionMatrix[stateIndex] {
-		cumulative += prob
-		if r <= cumulative {
-			return bases[i]
-		}
-	}
-
-	// Fallback to 'A'
-	return 'A'
+	return basesATGC[sampleIndex(m.rng, m.transitionMatrix[stateIndex])]
 }
 
-// sampleQuality samples a quality score from emission probabilities
+// sampleQuality draws a quality score from the state's emission row.
 func (m *HMMKmerModel) sampleQuality(stateIndex int) int {
-	r := m.rng.Float64()
-	cumulative := 0.0
-
-	for i, prob := range m.emissionMatrix[stateIndex] {
-		cumulative += prob
-		if r <= cumulative {
-			return i
-		}
-	}
-
-	// Fallback to quality 20
-	return 20
+	return sampleIndex(m.rng, m.emissionMatrix[stateIndex])
 }
 
 // getNextState determines the next state given current state and observed base
@@ -396,31 +274,17 @@ func (m *HMMKmerModel) getNextState(currentState int, observedBase byte) int {
 	return m.getStateIndex(nextKmer)
 }
 
-// getBaseIndex returns the index of a base (A=0, T=1, G=2, C=3)
+// getBaseIndex returns the index of a base (A=0, T=1, G=2, C=3), or -1.
 func (m *HMMKmerModel) getBaseIndex(base byte) int {
-	switch base {
-	case 'A':
-		return 0
-	case 'T':
-		return 1
-	case 'G':
-		return 2
-	case 'C':
-		return 3
-	default:
-		return -1
-	}
+	return baseIndex(base)
 }
 
-// simulateQuality returns a heuristic quality: 30 minus 0.01 per position,
-// a GC-deviation penalty and a homopolymer penalty, clamped to [0, 41].
-// position is the offset in the training sequence, so on long chromosomes
-// the value reaches 0 after about 3,000 bases.
-func (m *HMMKmerModel) simulateQuality(position int, kmer string) byte {
+// simulateQuality returns a heuristic quality: 30 minus a GC-deviation
+// penalty and a homopolymer penalty, clamped to [0, 41]. (An earlier version
+// also subtracted 0.01 per base of offset into the training chromosome, which
+// is not a read position: past about 3,000 bases every quality was 0.)
+func (m *HMMKmerModel) simulateQuality(kmer string) byte {
 	baseQuality := 30.0
-
-	// Quality degradation with position
-	positionDecay := float64(position) * 0.01
 
 	// GC bias effect
 	gcContent := m.calculateGCContent(kmer)
@@ -429,7 +293,7 @@ func (m *HMMKmerModel) simulateQuality(position int, kmer string) byte {
 	// Homopolymer effect
 	homopolymerPenalty := m.calculateHomopolymerPenalty(kmer)
 
-	finalQuality := baseQuality - positionDecay - gcBias - homopolymerPenalty
+	finalQuality := baseQuality - gcBias - homopolymerPenalty
 
 	// Clamp to valid range
 	if finalQuality < 0 {
@@ -479,21 +343,6 @@ func (m *HMMKmerModel) calculateHomopolymerPenalty(kmer string) float64 {
 	}
 
 	return 0.0
-}
-
-// normalDistribution calculates normal distribution probability
-func (m *HMMKmerModel) normalDistribution(x, mean, stddev float64) float64 {
-	return math.Exp(-0.5*math.Pow((x-mean)/stddev, 2)) / (stddev * math.Sqrt(2*math.Pi))
-}
-
-// containsN checks if a string contains 'N' bases
-func containsN(s string) bool {
-	for _, c := range s {
-		if c == 'N' {
-			return true
-		}
-	}
-	return false
 }
 
 // GetModelStats returns statistics about the trained model

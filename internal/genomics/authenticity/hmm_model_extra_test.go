@@ -149,49 +149,38 @@ func TestHMMKmerModel_GenerateSequence_k2(t *testing.T) {
 	}
 }
 
-// TestContainsN tests the containsN helper function.
-func TestContainsN(t *testing.T) {
-	assert.False(t, containsN("ATCG"))
-	assert.True(t, containsN("ATNCG"))
-	assert.True(t, containsN("NNNN"))
-	assert.False(t, containsN(""))
-}
-
-// TestHMMKmerModel_NormalDistribution tests the normal distribution calculation.
-func TestHMMKmerModel_NormalDistribution(t *testing.T) {
-	model := NewHMMKmerModel(4)
-	require.NotNil(t, model)
-
-	// Normal dist at mean should be highest.
-	atMean := model.normalDistribution(20.0, 20.0, 5.0)
-	above := model.normalDistribution(25.0, 20.0, 5.0)
-	below := model.normalDistribution(15.0, 20.0, 5.0)
-
-	assert.Greater(t, atMean, above)
-	assert.Greater(t, atMean, below)
-	assert.Greater(t, atMean, 0.0)
-}
-
-// TestHMMKmerModel_SimulateQuality tests quality simulation for various k-mers.
+// TestHMMKmerModel_SimulateQuality checks the heuristic quality exactly:
+// 30 - 10*|GC - 0.5| - 2*(longest run - 2 if >= 3). It does not depend on the
+// offset into the training sequence (an earlier version reached 0 after
+// about 3,000 bases of a chromosome).
 func TestHMMKmerModel_SimulateQuality(t *testing.T) {
 	model := NewHMMKmerModel(4)
 	require.NotNil(t, model)
 
-	tests := []struct {
-		kmer     string
-		position int
-	}{
-		{"ATCG", 0},
-		{"GGGG", 10},  // homopolymer
-		{"AAAA", 100}, // high position, homopolymer
-		{"GCGC", 50},  // high GC
+	for kmer, want := range map[string]byte{"ATCG": 30, "GGGG": 21, "AAAA": 21, "GCGC": 25, "AAAT": 23} {
+		assert.Equal(t, want, model.simulateQuality(kmer), kmer)
 	}
+}
 
-	for _, tt := range tests {
-		quality := model.simulateQuality(tt.position, tt.kmer)
-		assert.GreaterOrEqual(t, quality, byte(0))
-		assert.LessOrEqual(t, quality, byte(41))
+// Training qualities must not collapse on long chromosomes: on 20 kb of
+// balanced sequence the mean generated quality stays near the heuristic's
+// values (>= 20), not near 0.
+func TestHMMKmerModel_QualitiesNotDegenerateOnLongChromosome(t *testing.T) {
+	seq := makeAdaptiveTestSequence(20000)
+	genome := &MockReferenceGenome{chromosomes: map[string]*MockChromosome{
+		"chr1": {Name: "chr1", Sequence: seq, Length: len(seq)},
+	}}
+	model := NewHMMKmerModel(4)
+	require.NoError(t, model.TrainFromReferenceGenome(genome))
+	model.SetSeed(1)
+	res, err := model.GenerateSequence(5000)
+	require.NoError(t, err)
+	sum := 0
+	for _, q := range res.Qualities {
+		sum += int(q)
 	}
+	mean := float64(sum) / float64(len(res.Qualities))
+	assert.Greater(t, mean, 20.0)
 }
 
 // TestHMMKmerModel_CalculateGCContent tests GC content calculation.
@@ -269,57 +258,34 @@ func TestHMMKmerModel_GetStateIndex(t *testing.T) {
 	assert.Equal(t, -1, model.getStateIndex("XY")) // Invalid state
 }
 
-// TestHMMKmerModel_TrainOnChromosome tests the internal chromosome trainer.
+// TestHMMKmerModel_TrainOnChromosome checks the chromosome trainer counts
+// exactly the k-mers of A/C/G/T: "ACGTNACGTA" with k=3 has the valid 3-mers
+// ACG, CGT, ACG, CGT, GTA (those spanning N are skipped).
 func TestHMMKmerModel_TrainOnChromosome(t *testing.T) {
-	model := NewHMMKmerModel(4)
+	model := NewHMMKmerModel(3)
 	require.NotNil(t, model)
 
-	seq := makeAdaptiveTestSequence(500)
-	chr := &MockChromosome{Name: "chr1", Sequence: seq, Length: len(seq)}
-
-	transitionCounts := make([][]int, len(model.stateSpace))
+	chr := &MockChromosome{Name: "chr1", Sequence: []byte("ACGTNACGTA"), Length: 10}
+	transitionCounts := newCountMatrix(len(model.stateSpace), 4)
 	emissionCounts := make([][]int, len(model.stateSpace))
-	startCounts := make([]int, len(model.stateSpace))
-
-	for i := range transitionCounts {
-		transitionCounts[i] = make([]int, 4)
+	for i := range emissionCounts {
 		emissionCounts[i] = make([]int, 42)
 	}
 
-	err := model.trainOnChromosome(chr, transitionCounts, emissionCounts, startCounts)
-	require.NoError(t, err)
-
-	// Some transitions should have been counted.
-	total := 0
+	n := model.trainOnChromosome(chr, transitionCounts, emissionCounts)
+	assert.Equal(t, uint64(5), n)
+	ac, cg, gt := model.getStateIndex("AC"), model.getStateIndex("CG"), model.getStateIndex("GT")
+	assert.Equal(t, 2.0, transitionCounts[ac][baseIndex('G')])
+	assert.Equal(t, 2.0, transitionCounts[cg][baseIndex('T')])
+	assert.Equal(t, 1.0, transitionCounts[gt][baseIndex('A')])
+	total := 0.0
 	for _, row := range transitionCounts {
-		for _, count := range row {
-			total += count
+		for _, c := range row {
+			total += c
 		}
 	}
-	assert.Greater(t, total, 0)
-}
+	assert.Equal(t, 5.0, total)
 
-// TestHMMKmerModel_TrainOnChromosome_TooShort tests short chromosome skip in trainOnChromosome.
-func TestHMMKmerModel_TrainOnChromosome_TooShort(t *testing.T) {
-	model := NewHMMKmerModel(4)
-	require.NotNil(t, model)
-
-	chr := &MockChromosome{Name: "chrX", Sequence: []byte("AT"), Length: 2}
-	transitionCounts := make([][]int, len(model.stateSpace))
-	emissionCounts := make([][]int, len(model.stateSpace))
-	startCounts := make([]int, len(model.stateSpace))
-	for i := range transitionCounts {
-		transitionCounts[i] = make([]int, 4)
-		emissionCounts[i] = make([]int, 42)
-	}
-
-	err := model.trainOnChromosome(chr, transitionCounts, emissionCounts, startCounts)
-	require.NoError(t, err)
-
-	// No counts should have been added.
-	for _, row := range transitionCounts {
-		for _, count := range row {
-			assert.Equal(t, 0, count)
-		}
-	}
+	short := &MockChromosome{Name: "chrX", Sequence: []byte("AT"), Length: 2}
+	assert.Equal(t, uint64(0), model.trainOnChromosome(short, transitionCounts, emissionCounts))
 }

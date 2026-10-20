@@ -26,7 +26,9 @@ import (
 //     with a non-empty model_type field.
 //  4. Build a SequencerConfig pointing at the trained model and call engine.Generate().
 //  5. Assert: FASTQ file exists; every sequence line contains only ATGCN characters;
-//     quality line length equals ReadLength.
+//     quality line length equals ReadLength; the reads are not degenerate (every
+//     base is common, reads differ, no read is periodic). A model trained on a
+//     tiny VCF used to generate reads that were all C.
 func TestHMMTrainGeneratePipeline(t *testing.T) {
 	tmpDir := t.TempDir()
 	vcfPath := filepath.Join(tmpDir, "test.vcf")
@@ -63,8 +65,9 @@ func TestHMMTrainGeneratePipeline(t *testing.T) {
 		Lane:          1,
 		OutputDir:     outputDir,
 		ReadLength:    100,
-		ReadsPerBatch: 5,
+		ReadsPerBatch: 50,
 		TotalBatches:  1,
+		Seed:          25,
 		PairedEnd:     false,
 	}
 	engine := genomics.NewEngine(cfg)
@@ -81,6 +84,45 @@ func TestHMMTrainGeneratePipeline(t *testing.T) {
 		t.Fatalf("expected FASTQ file not found: %s", fastqPath)
 	}
 	verifyFASTQContent(t, fastqPath, cfg.ReadLength)
+	verifyNotDegenerate(t, fastqPath)
+}
+
+// verifyNotDegenerate checks the reads of a FASTQ file use every base at
+// >= 10% overall, are not all identical, and that no read is periodic with a
+// period of 10 or less.
+func verifyNotDegenerate(t *testing.T, path string) {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
+	counts := map[byte]int{}
+	distinct := map[string]bool{}
+	total := 0
+	for i := 1; i < len(lines); i += 4 {
+		read := lines[i]
+		distinct[read] = true
+		for j := 0; j < len(read); j++ {
+			counts[read[j]]++
+			total++
+		}
+		for p := 1; p <= 10; p++ {
+			if read[p:] == read[:len(read)-p] {
+				t.Errorf("read %d is periodic with period %d: %s", i/4, p, read)
+				break
+			}
+		}
+	}
+	t.Logf("base composition of %d bases: A %d, C %d, G %d, T %d", total, counts['A'], counts['C'], counts['G'], counts['T'])
+	for _, b := range []byte("ACGT") {
+		if f := float64(counts[b]) / float64(total); f < 0.10 {
+			t.Errorf("base %c is %.1f%% of generated bases", b, 100*f)
+		}
+	}
+	if len(distinct) < 2 {
+		t.Error("all reads are identical")
+	}
 }
 
 // writeSyntheticVCFForHMM creates a minimal plain-text VCF file with numVariants records.
@@ -120,7 +162,9 @@ func trainAdaptiveHMMFromVCF(t *testing.T, vcfPath, outPath string) error {
 	}
 	defer f.Close()
 
+	// Chunks carry the last k-1 bases into the next, as cmd/train does.
 	const chunkSize = 100 * 1024
+	carry := model.K() - 1
 	var buf []byte
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
@@ -140,10 +184,10 @@ func trainAdaptiveHMMFromVCF(t *testing.T, vcfPath, outPath string) error {
 			if err := model.TrainFromSequence(buf); err != nil {
 				return fmt.Errorf("TrainFromSequence: %w", err)
 			}
-			buf = buf[:0]
+			buf = append(buf[:0], buf[len(buf)-carry:]...)
 		}
 	}
-	if len(buf) > 0 {
+	if len(buf) > carry {
 		if err := model.TrainFromSequence(buf); err != nil {
 			return fmt.Errorf("TrainFromSequence (final): %w", err)
 		}
