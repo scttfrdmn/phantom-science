@@ -442,13 +442,17 @@ func TestSequencerConfig_MaxOutputBases(t *testing.T) {
 }
 
 // IlluminaSpec defaults: binned qualities with quality errors, linear with
-// none, and inserts of 350 ± 50; Validate rejects unknown names and
+// none, and lognormal inserts of 455 ± 100 (measured on DRR276626), or a
+// normal when only a mean or SD is given; Validate rejects unknown names and
 // impossible insert ranges.
 func TestIlluminaSpec_DefaultsAndValidate(t *testing.T) {
 	d := IlluminaSpec{}.WithDefaults()
 	if d.QualityModel != IlluminaQualityBinned || d.Errors != IlluminaErrorsQuality ||
-		d.InsertSize != (InsertSizeSpec{Dist: InsertSizeNormal, Mean: 350, SD: 50}) {
+		d.InsertSize != (InsertSizeSpec{Dist: InsertSizeLognormal, Mean: 455, SD: 100}) {
 		t.Errorf("defaults %+v", d)
+	}
+	if n := (IlluminaSpec{InsertSize: InsertSizeSpec{Mean: 300}}).WithDefaults(); n.InsertSize != (InsertSizeSpec{Dist: InsertSizeNormal, Mean: 300, SD: 100}) {
+		t.Errorf("mean only: %+v, want normal 300 ± 100", n.InsertSize)
 	}
 	if l := (IlluminaSpec{QualityModel: IlluminaQualityLinear}).WithDefaults(); l.Errors != IlluminaErrorsNone {
 		t.Errorf("linear defaults to errors %q, want none", l.Errors)

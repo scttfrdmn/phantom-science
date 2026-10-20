@@ -142,8 +142,9 @@ func TestKeyedSeed_BinnedQualitiesStayOnBins(t *testing.T) {
 	fp, _ := runTree(t, c)
 	plain, _ := runTree(t, binnedConfig(t.TempDir()))
 	got, want := qualityAlphabet(t, fp), qualityAlphabet(t, plain)
-	if got != want || got != binChars {
-		t.Errorf("quality alphabet %q, unfingerprinted %q, want the bins %q", got, want, binChars)
+	// Q2 no-calls are rare (about 1.8e-7 per base), so a small run may lack '#'.
+	if got != want || strings.Trim(got, binChars) != "" || !strings.Contains(got, "F") {
+		t.Errorf("quality alphabet %q, unfingerprinted %q, want the same subset of the bins %q", got, want, binChars)
 	}
 }
 

@@ -222,6 +222,7 @@ func TestIllumina_MatesOverlapConsistently(t *testing.T) {
 	c := binnedConfig(t.TempDir())
 	c.ReadLength, c.ReadsPerBatch, c.TotalBatches = 250, 500, 1
 	c.Illumina.Errors = types.IlluminaErrorsNone
+	c.Illumina.InsertSize = types.InsertSizeSpec{Mean: 350, SD: 50} // mostly overlapping mates
 	check := func(t *testing.T, r1, r2 []fastqRec) {
 		L := c.ReadLength
 		overlapped := 0
@@ -260,6 +261,7 @@ func TestIllumina_MatesShareVariantAllele(t *testing.T) {
 	c := binnedConfig(t.TempDir())
 	c.ReadLength, c.ReadsPerBatch, c.TotalBatches = 250, 2000, 1
 	c.Illumina.Errors = types.IlluminaErrorsNone
+	c.Illumina.InsertSize = types.InsertSizeSpec{Mean: 350, SD: 50} // fragments fit the test region
 	const ref, alt = "ACGTACGTAC", "TTTTTTTTTT"
 	opts := GenerateOpts{
 		RefRegion: &GenomicRegion{Chromosome: "chr1", Start: 1000, End: 1800},

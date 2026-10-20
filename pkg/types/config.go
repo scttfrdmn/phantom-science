@@ -211,26 +211,33 @@ type ErrorModelSpec struct {
 // Illumina quality-model, error-model and insert-size distribution names
 // for IlluminaSpec.
 const (
-	IlluminaQualityBinned  = "binned"
-	IlluminaQualityLinear  = "linear"
-	IlluminaErrorsQuality  = "quality"
-	IlluminaErrorsNone     = "none"
-	InsertSizeNormal       = "normal"
-	InsertSizeLognormal    = "lognormal"
-	DefaultInsertSizeMean  = 350.0
-	DefaultInsertSizeSD    = 50.0
+	IlluminaQualityBinned = "binned"
+	IlluminaQualityLinear = "linear"
+	IlluminaErrorsQuality = "quality"
+	IlluminaErrorsNone    = "none"
+	InsertSizeNormal      = "normal"
+	InsertSizeLognormal   = "lognormal"
+	// The default insert size is lognormal with the mean and SD measured on
+	// proper pairs of NovaSeq 6000 run DRR276626 aligned to GRCh38 (454.5 ±
+	// 99.8, right-skewed; scripts/acceptance/illumina_calibrate.sh). Insert
+	// size is a property of the library preparation, not the instrument: set
+	// illumina.insert_size for other libraries.
+	DefaultInsertSizeMean  = 455.0
+	DefaultInsertSizeSD    = 100.0
 	maxInsertSizeParameter = 1 << 20
 )
 
 // IlluminaSpec configures the Illumina read model.
 type IlluminaSpec struct {
-	// QualityModel is "binned" (the default when empty): per-cycle qualities
-	// in the four RTA3 bins Q2, Q12, Q23 and Q37, degrading with cycle and
-	// lower on read 2; Q2 marks a no-call. "linear" keeps the earlier model,
-	// BaseQuality − cycle·QualityDecay, and the earlier output.
+	// QualityModel is "binned" (the default when empty): qualities in the
+	// four values NovaSeq 6000 writes (Q2, Q11, Q25, Q37), from a model
+	// fitted to NovaSeq 6000 run DRR276626 (package illumina); Q2 marks a
+	// no-call. "linear" keeps the earlier model, BaseQuality −
+	// cycle·QualityDecay, and the earlier output.
 	QualityModel string `json:"quality_model,omitempty" yaml:"quality_model,omitempty"`
-	// Errors is "quality" or "none". "quality" substitutes each base with
-	// probability 10^(−Q/10) and writes Q2 bases as N; "none" leaves bases
+	// Errors is "quality" or "none". "quality" substitutes bases at the
+	// measured rate of their quality and cycle and writes Q2 bases as N
+	// (with the linear model, at 10^(−Q/10)); "none" leaves bases
 	// as generated. Empty means "quality" for the binned model and "none"
 	// for the linear one.
 	Errors string `json:"errors,omitempty" yaml:"errors,omitempty"`
@@ -239,8 +246,9 @@ type IlluminaSpec struct {
 }
 
 // InsertSizeSpec is the fragment (insert) length distribution of paired-end
-// reads: Dist "normal" (the default when empty) or "lognormal", with the
-// fragment length's Mean and SD (defaults 350 and 50). Draws outside
+// reads: Dist "normal" or "lognormal", with the fragment length's Mean and
+// SD. When nothing is set the default is lognormal 455 ± 100 (measured on
+// NovaSeq 6000 run DRR276626); a Mean or SD without Dist means normal. Draws outside
 // [max(Min, read length), Max] are redrawn (Max 0: no upper bound).
 type InsertSizeSpec struct {
 	Dist string  `json:"dist,omitempty" yaml:"dist,omitempty"`
@@ -262,7 +270,12 @@ func (s IlluminaSpec) WithDefaults() IlluminaSpec {
 		}
 	}
 	if s.InsertSize.Dist == "" {
-		s.InsertSize.Dist = InsertSizeNormal
+		// Unset: the measured lognormal default. A mean or SD given without
+		// a distribution keeps the earlier normal.
+		s.InsertSize.Dist = InsertSizeLognormal
+		if s.InsertSize.Mean != 0 || s.InsertSize.SD != 0 {
+			s.InsertSize.Dist = InsertSizeNormal
+		}
 	}
 	if s.InsertSize.Mean == 0 {
 		s.InsertSize.Mean = DefaultInsertSizeMean

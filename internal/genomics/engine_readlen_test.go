@@ -166,6 +166,11 @@ func TestReadLen_FixedModeUnchanged(t *testing.T) {
 		c := goldenConfig(t.TempDir())
 		c.Seed = 3
 		c.PairedEnd = tc.paired
+		if tc.paired {
+			// Pinned with inserts of 350 ± 50, the default before the
+			// DRR276626 measurement.
+			c.Illumina.InsertSize = types.InsertSizeSpec{Mean: 350, SD: 50}
+		}
 		for _, dist := range []string{"", types.ReadLengthFixed} {
 			c.ReadLengthDistribution.Dist = dist
 			if got := sum(streamOutput(t, c, blind)); got != tc.wantStream {

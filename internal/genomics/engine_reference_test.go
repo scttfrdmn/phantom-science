@@ -70,6 +70,9 @@ func refConfig(t *testing.T, ref testReference) types.SequencerConfig {
 	c := binnedConfig(t.TempDir())
 	c.ReadLength, c.ReadsPerBatch, c.TotalBatches = 100, 400, 3
 	c.Illumina.Errors = types.IlluminaErrorsNone
+	// The test reference is small: inserts of 350 ± 50 (not the 455 ± 100
+	// default) keep fragments inside its contigs and regions.
+	c.Illumina.InsertSize = types.InsertSizeSpec{Mean: 350, SD: 50}
 	c.ReferencePath = ref.path
 	return c
 }
