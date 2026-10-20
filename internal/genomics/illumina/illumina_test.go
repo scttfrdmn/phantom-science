@@ -16,181 +16,222 @@ func newRand(seed uint64) *rand.Rand { return rand.New(rand.NewPCG(seed, 0x111))
 // z99 is the two-sided 99 % normal quantile.
 const z99 = 2.5758
 
-func isBin(q byte) bool {
-	for _, b := range Bins {
+func binIndex(q byte) int {
+	for i, b := range Bins {
 		if q == b {
-			return true
+			return i
 		}
 	}
-	return false
+	return -1
 }
 
-// Only the four RTA3 bins appear; the cycle-0 bin frequencies match π(0)
-// within the 99 % binomial CI; the chain reproduces from the seed.
-func TestQualities_BinsAndCycleZero(t *testing.T) {
-	const reads, n = 20000, 150
+// The class weights sum to 1 and the weighted class factors average to 1,
+// so the class mixture has the mean per-cycle fractions.
+func TestQualityParams_ClassesNormalised(t *testing.T) {
+	for mate, p := range []QualityParams{Read1, Read2} {
+		var w, low, mid float64
+		for _, k := range p.Classes {
+			w += k.Weight
+			low += k.Weight * k.Low
+			mid += k.Weight * k.Mid
+		}
+		for name, v := range map[string]float64{"weights": w, "Q11 factors": low, "Q25 factors": mid} {
+			if math.Abs(v-1) > 1e-4 {
+				t.Errorf("read %d: %s sum to %.6f, want 1", mate+1, name, v)
+			}
+		}
+		if len(p.Low) != len(p.Knots) || len(p.Mid) != len(p.Knots) {
+			t.Errorf("read %d: %d knots, %d/%d values", mate+1, len(p.Knots), len(p.Low), len(p.Mid))
+		}
+	}
+}
+
+// Only the four NovaSeq values appear, for any read length; the chain
+// reproduces from the seed.
+func TestQualities_AlphabetAndDeterminism(t *testing.T) {
 	r := newRand(1)
-	var first [4]int
-	for range reads {
-		q := Read1.Qualities(r, n)
-		for _, v := range q {
-			if !isBin(v) {
-				t.Fatalf("quality %d is not an RTA3 bin", v)
+	for _, n := range []int{0, 1, 2, 50, 151, 250, 300} {
+		for range 2000 {
+			q := Read2.Qualities(r, n)
+			if len(q) != n {
+				t.Fatalf("n=%d: %d qualities", n, len(q))
 			}
-		}
-		for i, b := range Bins {
-			if q[0] == b {
-				first[i]++
-			}
-		}
-	}
-	for i, p := range Read1.Target(0) {
-		got := float64(first[i]) / reads
-		ci := z99*math.Sqrt(p*(1-p)/reads) + 1e-9
-		if math.Abs(got-p) > ci {
-			t.Errorf("cycle 0 P(Q%d) = %.4f, want %.4f ± %.4f", Bins[i], got, p, ci)
-		}
-	}
-	if !bytes.Equal(Read1.Qualities(newRand(7), n), Read1.Qualities(newRand(7), n)) {
-		t.Error("same seed gave different qualities")
-	}
-}
-
-// meanByCycle returns the mean Phred score per cycle over reads draws.
-func meanByCycle(p QualityParams, seed uint64, reads, n int) []float64 {
-	r := newRand(seed)
-	sum := make([]float64, n)
-	for range reads {
-		for c, v := range p.Qualities(r, n) {
-			sum[c] += float64(v)
-		}
-	}
-	for c := range sum {
-		sum[c] /= float64(reads)
-	}
-	return sum
-}
-
-func mean(v []float64) float64 {
-	s := 0.0
-	for _, x := range v {
-		s += x
-	}
-	return s / float64(len(v))
-}
-
-// Mean quality falls from early to late cycles, read 2 is worse than read 1,
-// and the per-cycle mean tracks the target distribution's mean. The ≥ Q30
-// fraction is logged (NovaSeq specifies ≥ 85 % at 2×150).
-func TestQualities_DegradeWithCycleAndRead2Lower(t *testing.T) {
-	const reads, n = 20000, 150
-	m1 := meanByCycle(Read1, 2, reads, n)
-	m2 := meanByCycle(Read2, 3, reads, n)
-	early, late := mean(m1[:20]), mean(m1[n-20:])
-	if !(early > late+1) {
-		t.Errorf("R1 mean quality: cycles 1-20 %.2f, last 20 %.2f; want a decrease", early, late)
-	}
-	if !(mean(m2) < mean(m1)-0.5) {
-		t.Errorf("R2 mean %.2f not below R1 mean %.2f", mean(m2), mean(m1))
-	}
-	for _, c := range []int{0, 75, 149} {
-		tg := Read1.Target(c)
-		want := 0.0
-		for i, b := range Bins {
-			want += tg[i] * float64(b)
-		}
-		// The chain lags π by about 1/(1−Persistence) cycles; π moves by
-		// < 0.1 Phred per cycle, so ±0.5 covers lag and sampling noise.
-		if math.Abs(m1[c]-want) > 0.5 {
-			t.Errorf("cycle %d mean %.2f, target mean %.2f", c, m1[c], want)
-		}
-	}
-	q30 := func(p QualityParams) float64 {
-		s := 0.0
-		for c := range n {
-			s += p.Target(c)[3]
-		}
-		return s / n
-	}
-	t.Logf("R1 mean %.2f (early %.2f, late %.2f), R2 mean %.2f; target >=Q30: R1 %.3f, R2 %.3f",
-		mean(m1), early, late, mean(m2), q30(Read1), q30(Read2))
-}
-
-// Low-quality calls come in runs: P(next is Q12 | Q12) is well above the
-// marginal P(Q12).
-func TestQualities_LowQualityRuns(t *testing.T) {
-	r := newRand(4)
-	var low, lowLow, pairs, lowFirst int
-	for range 5000 {
-		q := Read2.Qualities(r, 150)
-		for c := 1; c < len(q); c++ {
-			pairs++
-			if q[c] == QLow {
-				low++
-			}
-			if q[c-1] == QLow {
-				lowFirst++
-				if q[c] == QLow {
-					lowLow++
+			for _, v := range q {
+				if binIndex(v) < 0 {
+					t.Fatalf("quality %d is not a NovaSeq value", v)
 				}
 			}
 		}
 	}
-	marg, cond := float64(low)/float64(pairs), float64(lowLow)/float64(lowFirst)
-	if !(cond > 5*marg) {
-		t.Errorf("P(Q12|Q12) = %.3f, marginal %.3f: no runs", cond, marg)
+	if !bytes.Equal(Read1.Qualities(newRand(7), 151), Read1.Qualities(newRand(7), 151)) {
+		t.Error("same seed gave different qualities")
 	}
 }
 
-// The empirical substitution rate of each bin lies in the 99 % binomial CI
-// of 10^(−Q/10); substitutions never keep the base and pick the three other
-// bases uniformly; Q2 bases become N.
-func TestApplyErrors_RatePerBin(t *testing.T) {
-	r := newRand(5)
-	const acgt = "ACGT"
-	for _, q := range []byte{QLow, QMid, QHigh, 30, 40} {
-		n := 2_000_000
-		if q >= QHigh {
-			n = 10_000_000
-		}
-		truth := make([]byte, n)
-		for i := range truth {
-			truth[i] = acgt[r.IntN(4)]
-		}
-		seq := bytes.Clone(truth)
-		qual := bytes.Repeat([]byte{q}, n)
-		ApplyErrors(r, seq, qual)
-		var subs int
-		var to [4]int
-		for i := range seq {
-			if seq[i] != truth[i] {
-				subs++
-				to[bytes.IndexByte([]byte(acgt), seq[i])]++
+// genStats are statistics of generated quality strings.
+type genStats struct {
+	reads     int
+	perCycle  [][4]int // bin counts per cycle
+	lowCounts []int    // reads by number of bases below Q37
+	from      [4]int   // transitions out of each bin
+	same      [4]int   // transitions into the same bin
+	sum       float64  // sum of Phred values
+}
+
+func generate(p QualityParams, seed uint64, reads, n int) genStats {
+	r := newRand(seed)
+	s := genStats{reads: reads, perCycle: make([][4]int, n), lowCounts: make([]int, n+1)}
+	for range reads {
+		q := p.Qualities(r, n)
+		low := 0
+		for c, v := range q {
+			i := binIndex(v)
+			s.perCycle[c][i]++
+			s.sum += float64(v)
+			if v != QHigh {
+				low++
+			}
+			if c > 0 {
+				j := binIndex(q[c-1])
+				s.from[j]++
+				if j == i {
+					s.same[j]++
+				}
 			}
 		}
-		p := ErrorProb(q)
-		got := float64(subs) / float64(n)
-		ci := z99 * math.Sqrt(p*(1-p)/float64(n))
-		if math.Abs(got-p) > ci {
-			t.Errorf("Q%d: substitution rate %.6f, want %.6f ± %.6f", q, got, p, ci)
-		} else {
-			t.Logf("Q%d: substitution rate %.6f (expected %.6f ± %.6f, n=%d)", q, got, p, ci, n)
-		}
-		// Uniform target: each base receives about 1/4 of substitutions.
-		for i, k := range to {
-			e := float64(subs) / 4
-			if math.Abs(float64(k)-e) > 4*math.Sqrt(e)+1 {
-				t.Errorf("Q%d: %d substitutions to %c, want ≈ %.0f", q, k, acgt[i], e)
+		s.lowCounts[low]++
+	}
+	return s
+}
+
+// The generated per-cycle bin frequencies match Target(c, n) within the
+// binomial sampling error, for the measured read length and for longer
+// (extrapolated) reads; the stickiness does not shift the distribution.
+func TestQualities_FrequenciesMatchTarget(t *testing.T) {
+	const reads = 60000
+	for _, tc := range []struct {
+		p QualityParams
+		n int
+	}{{Read1, 151}, {Read2, 151}, {Read2, 251}} {
+		s := generate(tc.p, 2, reads, tc.n)
+		bad := 0
+		for c := range tc.n {
+			want := tc.p.Target(c, tc.n)
+			for i := 1; i < 4; i++ {
+				got := float64(s.perCycle[c][i]) / reads
+				// 4σ per cell (about 450-750 cells) plus 0.001 for the lag
+				// of the sticky chain behind a moving target.
+				if math.Abs(got-want[i]) > 4*math.Sqrt(want[i]*(1-want[i])/reads)+0.001 {
+					bad++
+					t.Errorf("n=%d cycle %d: P(Q%d) = %.4f, target %.4f", tc.n, c+1, Bins[i], got, want[i])
+				}
+			}
+			if s := want[0] + want[1] + want[2] + want[3]; math.Abs(s-1) > 1e-12 {
+				t.Errorf("cycle %d: target sums to %v", c+1, s)
+			}
+			if bad > 5 {
+				t.FailNow()
 			}
 		}
 	}
-	seq := []byte("ACGTACGT")
-	qual := []byte{2, 2, 37, 37, 2, 37, 37, 2}
+}
+
+// The substitution rate of each quality and cycle matches Rate(q, c) times
+// the base factor within the 99 % binomial CI; substituted bases follow
+// Matrix; Q2 bases become N; other qualities use the Phred rate.
+func TestApplyErrors_RateAndSpectrum(t *testing.T) {
+	e := NovaSeqErrors
+	r := newRand(5)
+	const n = 150
+	for _, q := range []byte{QLow, QMid, QHigh, 30} {
+		for x := range 4 {
+			reads := 20000
+			if q != QLow {
+				reads = 40000
+			}
+			var subs [n]int
+			var to [4]int
+			seq := make([]byte, n)
+			qual := bytes.Repeat([]byte{q}, n)
+			for range reads {
+				for i := range seq {
+					seq[i] = acgt[x]
+				}
+				ApplyErrors(r, seq, qual)
+				for i, b := range seq {
+					if b != acgt[x] {
+						subs[i]++
+						to[baseIndex[b]]++
+					}
+				}
+			}
+			// Rates per block of 30 cycles.
+			for lo := 0; lo < n; lo += 30 {
+				var k int
+				var p float64
+				for c := lo; c < lo+30; c++ {
+					k += subs[c]
+					p += e.Rate(q, c) * e.BaseFactor[x]
+				}
+				m := float64(30 * reads)
+				p /= 30
+				got := float64(k) / m
+				if ci := z99 * math.Sqrt(p*(1-p)/m); math.Abs(got-p) > ci {
+					t.Errorf("Q%d %c cycles %d-%d: rate %.6f, want %.6f ± %.6f", q, acgt[x], lo+1, lo+30, got, p, ci)
+				}
+			}
+			total := 0
+			for _, v := range to {
+				total += v
+			}
+			for y, v := range to {
+				w := e.Matrix[x][y] * float64(total)
+				if math.Abs(float64(v)-w) > 4*math.Sqrt(w+1)+1 {
+					t.Errorf("Q%d %c→%c: %d substitutions, want ≈ %.0f", q, acgt[x], acgt[y], v, w)
+				}
+			}
+		}
+	}
+	if got, want := e.Rate(30, 10), ErrorProb(30); got != want {
+		t.Errorf("Q30 rate %v, want Phred %v", got, want)
+	}
+	if got := SubstitutionRate(QHigh, 0); got != e.High {
+		t.Errorf("SubstitutionRate(Q37) = %v, want %v", got, e.High)
+	}
+	seq := []byte("ACGTACGN")
+	qual := []byte{2, 2, 37, 37, 2, 37, 37, 37}
 	ApplyErrors(newRand(6), seq, qual)
 	for i, q := range qual {
-		if (q == QNoCall) != (seq[i] == 'N') {
+		if (q == QNoCall) != (seq[i] == 'N') && i != 7 {
 			t.Errorf("base %d (Q%d) = %c", i, q, seq[i])
 		}
+	}
+	if seq[7] != 'N' {
+		t.Errorf("N base changed to %c", seq[7])
+	}
+}
+
+// The base factors average to 1 over the human base composition and each
+// row of the substitution matrix is a distribution over the other bases.
+func TestErrorParams_Normalised(t *testing.T) {
+	e := NovaSeqErrors
+	comp := [4]float64{0.295, 0.205, 0.205, 0.295}
+	m := 0.0
+	for x, f := range e.BaseFactor {
+		m += comp[x] * f
+		s := 0.0
+		for y, w := range e.Matrix[x] {
+			if y == x && w != 0 {
+				t.Errorf("Matrix[%c][%c] = %v, want 0", acgt[x], acgt[y], w)
+			}
+			s += w
+		}
+		if math.Abs(s-1) > 1e-4 {
+			t.Errorf("Matrix row %c sums to %v", acgt[x], s)
+		}
+	}
+	if math.Abs(m-1) > 1e-4 {
+		t.Errorf("base factors average to %v over the human composition", m)
 	}
 }
 
