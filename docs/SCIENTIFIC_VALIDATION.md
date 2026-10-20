@@ -46,7 +46,15 @@ CGO_ENABLED=0 go run ./cmd/run_e2e_tests -quick -platforms novaseq \
 
 One run on 2026-10-19 (full mode, 2000 held-out reads, band ±0.045) gave null
 accuracies of 0.489–0.502 and control accuracies of 0.993–1.000 across
-NovaSeq, NextSeq, MiSeq and ONT. These show that the classifier detects a known difference
+NovaSeq, NextSeq, MiSeq and ONT.
+
+Against real reads (2026-10-20, `-quick -real-fastq` with 2000 reads of
+NovaSeq 6000 run DRR276626, 2000 held out), the classifier separated real
+from generated reads with accuracy 0.94–0.95 for every platform. The
+harness generates uniform random bases, not `--reference` reads, so this
+measures composition: uniform-random sequence is easy to tell from human
+DNA by its 4-mer frequencies. Comparing against `--reference` output is not
+yet supported by the harness. These show that the classifier detects a known difference
 and reports chance on no difference. They say nothing about how close the
 output is to real sequencing data.
 
