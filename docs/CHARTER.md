@@ -44,6 +44,10 @@ from `internal/detmath`, a pure-Go port with every product rounded, instead of
 the standard library, whose `math.Exp` and `math.Log` are per-architecture
 assembly. `internal/fmacheck` enforces this and checks the compiled code for
 fused instructions, and CI compares pinned output hashes on amd64 and arm64.
+Compressed containers (gzip FASTQ, zlib BLOW5 records) are the exception:
+their bytes come from the Go standard library's compressor and can change
+between Go versions, while the decompressed content does not. Released
+binaries are built with the toolchain pinned in `go.mod`.
 
 ## 5. Limitations are stated
 

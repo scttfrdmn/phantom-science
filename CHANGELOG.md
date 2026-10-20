@@ -15,12 +15,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `internal/fmacheck` fails on CPU-specific math or random-variate calls on the output path, and on fused multiply-add instructions in the compiled output path for arm64, amd64 v3, ppc64le, s390x, riscv64 and loong64 (#33).
 - A CI test job on arm64 (`ubuntu-24.04-arm`), and a cross-architecture golden test pinning ten generation modes (#33).
 
+### Changed
+- The cross-architecture golden test pins uncompressed signal records. zlib output depends on the Go version's `compress/flate`, not on this code. The charter now says compressed container bytes can differ between Go versions, while decompressed content does not (#33).
+
 ### Fixed
 - Seeded output depended on the standard library's CPU-specific math (#33).
   - The affected functions are `math.Exp`, `Log`, `Pow`, `Log1p`, `Expm1`, `Lgamma`, `Erfc`, `Log2` and `Log10`, and `rand.NormFloat64`/`ExpFloat64`; `math.Exp` is assembly with an FMA path on FMA-capable amd64 CPUs.
   - The output path now uses `internal/detmath`, so output is byte-identical by construction on every CPU.
   - No pinned output changed on amd64 or arm64.
   - `detmath` also avoids two amd64 defects in the standard library: `math.Exp` returns +Inf for x in about (709.44, 709.78], and `math.Log` ignores the mantissa of subnormal inputs.
+- The fused-instruction scan also matches amd64 VEX FMA encodings, because go1.26.9's disassembler prints them as `MOVL`. Its control is now an `a*b + c` function compiled for each target (#33).
 
 ## [0.10.1] - 2026-10-20
 

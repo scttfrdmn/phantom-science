@@ -38,8 +38,8 @@ var goldenWant = map[string]string{
 	"illumina lognormal inserts and reads": "cf08b7f96f5bd71ad86be9db2f731e9436514a9bcb9572c0fead5e435a136150",
 	"ont hac lognormal":                    "be4106e6e7c7124f5bf7b9cb241f322e366c2c7b05f9c822828aa9713186e962",
 	"ont fast gamma":                       "d953196a6882cd0a44f4dcf8e6400204d178fe4857a0cedb85b1a228fda3aa31",
-	"signal dna":                           "3ba4105db252110bebf638a3bc18fc70c77b274c5ea1d3171a48f52c7cf1729b",
-	"signal rna":                           "8b887aa607e7122281438c6b65e6103b90272cb3df6e343d2ef6bc65e75585c5",
+	"signal dna":                           "682455f7f9c12b82beea715ea5c77482d68a82e319985039ba05410d0b7c26c0",
+	"signal rna":                           "975c142bf9974b7d2931885273c1b1e4a9000a3ab6d8521d38ae2826847c7002",
 	"transcriptome":                        "88585ae93756fa5a87a407761187024afc757fff36d0688f010d6e3af6bbe840",
 	"scenario trio":                        "e1fc2b5f3b7c53d4585e9a91f4c4f38f4d7c49ed5711e9c84428da08f686be17",
 	"hmm train and generate":               "324aee7b5f6caf72a035fd9a89b0a7bbf8398b91e343d0fc076f78ec5cfdd537",
@@ -221,13 +221,16 @@ func TestCrossArchGolden(t *testing.T) {
 		}},
 		{"signal dna", func(t *testing.T) string {
 			out := filepath.Join(f.dir, "sig-dna")
-			run(t, "signal", "--input", ontReads, "--pore-model", f.poreModel, "--out", out, "--seed", "7")
+			// Uncompressed records: zlib output depends on the Go version's
+			// compress/flate, not on this repository's code.
+			run(t, "signal", "--input", ontReads, "--pore-model", f.poreModel, "--out", out, "--seed", "7",
+				"--compression", "none")
 			return hashTree(t, out, manifests...)
 		}},
 		{"signal rna", func(t *testing.T) string {
 			out := filepath.Join(f.dir, "sig-rna")
 			run(t, "signal", "--input", ontReads, "--pore-model", f.poreModel, "--out", out, "--seed", "7",
-				"--profile", "rna004_130bps_4khz")
+				"--profile", "rna004_130bps_4khz", "--compression", "none")
 			return hashTree(t, out, manifests...)
 		}},
 		{"transcriptome", func(t *testing.T) string {
