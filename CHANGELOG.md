@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-10-20
+
 ### Added
 - `scenario --reference genome.fa` checks each planted REF allele against the FASTA before any reads are written (#24).
 - Scenario manifests record each planted variant's `build`, `clinvar_id` and `hgvs`, plus the `reference` path (#24).
@@ -522,7 +524,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Basic FASTQ file generation with a flag-based command-line interface and sequencer configuration files.
 
-[Unreleased]: https://github.com/scttfrdmn/phantom-science/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/scttfrdmn/phantom-science/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/scttfrdmn/phantom-science/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/scttfrdmn/phantom-science/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/scttfrdmn/phantom-science/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/scttfrdmn/phantom-science/releases/tag/v0.7.0
