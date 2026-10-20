@@ -36,7 +36,11 @@ measurements. Unimplemented features are not described as working.
 ## 4. Output is reproducible
 
 The same configuration and seed produce byte-identical output, whatever the
-number of workers. Randomness comes only from seeded streams.
+number of workers or the CPU architecture. Randomness comes only from seeded
+streams, and floating-point products on the output path are explicitly
+rounded so the compiler cannot fuse them (`internal/fmacheck` enforces this).
+Known gap: the standard library's `math.Exp`/`Log` and `rand.NormFloat64` can
+differ in the last bit between CPUs (#33).
 
 ## 5. Limitations are stated
 

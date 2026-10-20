@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Seeded output was not byte-identical across CPU architectures (#28).
+  - The compiler fused floating-point multiply-adds on arm64, ppc64le, s390x and riscv64, and on amd64 with GOAMD64=v3 or later.
+  - 112 products on the output path are now explicitly rounded. arm64 output changes to match amd64; amd64 output is unchanged.
+  - `internal/fmacheck` fails on any new fusable product.
+  - The standard library's `math.Exp`/`Log` and `rand.NormFloat64` can still differ in the last bit across CPUs (#33).
+
 ## [0.10.0] - 2026-10-20
 
 ### Added
