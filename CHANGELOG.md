@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `scenario --reference genome.fa` checks each planted REF allele against the FASTA before any reads are written (#24).
+- Scenario manifests record each planted variant's `build`, `clinvar_id` and `hgvs`, plus the `reference` path (#24).
+- Trio manifests record `population`, `demographic_model` and `background_variants` (#27).
+- `reference.Sampler` draws fragments from an uncompressed FASTA (#27).
+  - It uses a samtools `.fai` index when present and loads the genome or one region into memory once.
+  - Contigs are picked in proportion to their non-N length; windows containing N are skipped.
+  - Draw order is fixed and documented (contig, position, strand), and the sampler is safe for concurrent use.
+- `JointSite.Carriers`, the derived-allele carriers of each simulated haplotype (#27).
+
 ### Changed
 - **BREAKING:** `sequence_validator` takes input paths as arguments (it read only `sequences/validation`) and exits 2 when any sequence fails (#27).
 - `run_e2e_tests` and the e2e test suites generate reads with the real engine and report only measured values: read statistics, wall and CPU time, allocations, bases/s and classifier accuracies (#23).
@@ -19,6 +29,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - files, bytes and MB/s written
   - the running version in the header
   - Left and Right select the time speedup.
+- **BREAKING (HMM output):** models trained with `phantom-science train` produce different, non-degenerate output (#25).
+  - Training uses the correct (k−1)-base context, keeps raw counts, and smooths with a pseudocount of 1.
+  - Start states are drawn from the smoothed (k−1)-mer frequencies.
+  - `train` carries k−1 bases across its 100 kB chunks.
+- **BREAKING (model files):** the model file format is version 2 (#25).
+  - Version 1 adaptive models, the `train` default, are rejected with a message to retrain.
+  - Version 1 k-mer models still load.
+- **BREAKING:** adaptive training no longer applies GC and CpG filters or training-time reweighting, and those fields are gone from the model and its files (#25).
+- The k-mer HMM uses a pseudocount of 1 (was 0.1) and start probabilities from all (k−1)-mer frequencies (#25).
+- **BREAKING (trio):** `scenario` trio mode simulates haplotypes in Go with the structured coalescent instead of msprime in Python, and needs no virtualenv (#27).
+  - Trio populations are YRI, CEU, CHB and MXL, plus the 1000 Genomes codes these presets model. Other codes, such as FIN, are an error.
+  - `trio.generate` now requires `trio.de_novo: true`.
+- **BREAKING (catalogue):** the HPO catalogue terms changed (#24). GLUT1 deficiency is HP:0001250 + HP:0011972, PKU is HP:0004923 and cystic fibrosis is HP:0012236.
+- **BREAKING (API):** `clinical.ResolveHPO` returns `(*PlantedVariantSpec, *CatalogEntry, error)`, and `clinical.NewScenarioGenerator` no longer takes a project root (#24, #27).
+- `PopulationPanel` holds `Ne`, `MutationRate` and a `SetSeed` method instead of a `Simulator` (#25).
 
 ### Removed
 - **Subsystems that reported fabricated constants**, none of which any supported command used (#22, #26):
@@ -46,6 +71,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - the sample-sheet editing mode, which trapped Tab
   - the demo sample rows
   - the Load Config, Save Config, Help, Quit, Add Sample, Import CSV and Clear All buttons, which did nothing (`q` still quits)
+- The unused authenticity `Engine`, `IntegrationManager`, `AuthenticityConfig`, `authenticity/validation` and `authenticity/reference` (#25).
+- `ParallelHMMModel`, the demographic HMM wrappers and the old `CoalescentSimulator` (#25).
+- The Python simulators in `internal/population` (11 `.py` files), plus `DemographicSimulator`, `HaplotypeSimulator` and the privacy-preserving genetics mock (#27).
 
 ### Fixed
 - `CreatePlatformConfig` returned configs that shared one map, so changing one changed the others (#23).
@@ -67,6 +95,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - it read extra FASTA records as bases
 - `Makefile.memory` and `Makefile.reference` test targets passed package paths without `./` and ran tests that do not exist (#27).
 - `tests/integration/workflow_engines_test.go` failed `go vet -tags release` (#23).
+- Models trained with `train` on small inputs generated reads of a single base (#25). Training never normalised its counts, left the start probabilities at zero, and used a context shifted by one base. The same 27-base VCF now generates balanced bases.
+- HMM models and `PopulationPanel` seeded from the clock. They now default to seed 0, and `SetSeed` is unchanged (#25).
+- `HMMKmerModel` (#25):
+  - a data race in `GenerateSequence`
+  - training qualities that decayed to 0 along long chromosomes
+- The HPO catalogue's terms and variants were wrong (#24):
+  - HP:0001253 is Ataxia, HP:0001360 Holoprosencephaly and HP:0002837 Recurrent bronchitis.
+  - The SLC2A1 position was GRCh37, and the PAH position lay outside the gene.
+  - The CFTR "CTT>C frameshift" was not F508del.
+  - Every entry is now verified against HPO 2026-09-01 and ClinVar on GRCh38.
+- Trio transmission (#27):
+  - With no crossover, the proband always inherited each parent's first haplotype.
+  - Crossovers were drawn outside the variant span.
+  - A 0 cM genetic map became 100 cM.
+- The `.gitignore` pattern `GRCh38*` also ignored source files such as `grch38_test.go` on case-insensitive filesystems.
 
 ## [0.9.0] - 2026-10-19
 

@@ -328,8 +328,8 @@ what was planted. The variant comes from HPO terms or is given explicitly:
 
 ```yaml
 phenotype:
-  hpo_terms: [HP:0001250, HP:0001253]   # resolves to SLC2A1 chr1:43393429 C>T
-  # or: planted_variant: {chrom: chr1, pos: 43393429, ref: C, alt: T,
+  hpo_terms: [HP:0001250, HP:0011972]   # resolves to SLC2A1 chr1:42929242 C>T
+  # or: planted_variant: {chrom: chr1, pos: 42929242, ref: C, alt: T,
   #                      zygosity: heterozygous, acmg_class: pathogenic}
 sequencer:
   platform: NovaSeq6000
@@ -341,24 +341,34 @@ output:
 ```
 
 ```bash
-phantom-science scenario --spec glut1.yaml --population CEU
+phantom-science scenario --spec glut1.yaml --population CEU [--reference GRCh38.fa]
 ```
 
-HPO resolution uses a built-in catalogue of three entries:
+HPO resolution uses a built-in catalogue of three entries. Each was checked on
+2026-10-19 against HPO (release 2026-09-01) and ClinVar, with GRCh38
+coordinates in VCF form:
 
-| HPO terms | Gene | Variant | Consequence |
-|---|---|---|---|
-| HP:0001250 + HP:0001253 | SLC2A1 | chr1:43393429 C>T | missense |
-| HP:0001360 | PAH | chr12:102836819 G>A | missense |
-| HP:0002837 | CFTR | chr7:117559590 CTT>C | frameshift |
+| HPO terms | Condition | Variant (GRCh38) | ClinVar | Consequence |
+|---|---|---|---|---|
+| HP:0001250 Seizure + HP:0011972 Hypoglycorrhachia | GLUT1 deficiency | SLC2A1 c.940G>A p.Gly314Ser, chr1:42929242 C>T | VCV000016113, Pathogenic | missense |
+| HP:0004923 Hyperphenylalaninemia | PKU | PAH c.1222C>T p.Arg408Trp, chr12:102840493 G>A | VCV000000577, Pathogenic | missense |
+| HP:0012236 Elevated sweat chloride | Cystic fibrosis | CFTR c.1521_1523del p.Phe508del, chr7:117559590 ATCT>A | VCV000007105, Pathogenic | in-frame deletion |
+
+Unmatched terms are an error; set `planted_variant` instead. With
+`--reference`, each planted REF allele is checked against that FASTA before
+any reads are written. The manifest records the build, ClinVar ID and HGVS.
 
 Reads cover a 50 kb window around the variant at the given coverage, and the
 manifest records the variant, expected VAF, region and read count. As with
 `generate`, the surrounding sequence is synthetic. Trio generation
 (`trio: {generate: true, de_novo: true}` with `mother_fastq` and
-`father_fastq`) runs an msprime haplotype simulation in Python. It needs a
-virtualenv at `./phantom_science_env` with `msprime`, `tskit` and `numpy`, and
-must be run from the repository root. Without it the trio path fails.
+`father_fastq`) simulates the parents' haplotypes in Go with the structured
+coalescent (`internal/genomics/population`), seeded from the scenario seed.
+It needs no Python. Trio populations are YRI, CEU, CHB and MXL, plus the 1000
+Genomes codes those presets model (GBR, TSI, EUR → CEU; JPT, CHS, EAS, ASN →
+CHB; LWK, GWD, AFR → YRI; PUR, AMR → MXL); other codes are an error. The
+region is one non-recombining locus, so crossovers come only from the genetic
+map length of the region.
 
 ## TUI
 

@@ -72,30 +72,29 @@ Training is a single counting pass, not iterative EM.
   concatenates them. It does not read a reference genome, so the sequence
   context around variants is not learned.
 - The adaptive model (`--model-type adaptive`, the default) streams that
-  sequence in 100 KB chunks and adds 1 to T[s][b] for every observed
-  transition. There is no smoothing, so unobserved transitions keep
-  probability 0.
+  sequence in 100 KB chunks. Each chunk is prefixed with the last k−1 bases
+  of the previous one, so chunked training equals training on the whole
+  sequence. It counts each (k−1)-mer context followed by its next base.
+- Both models estimate P(b | s) = (c(s,b) + 1) / (c(s) + 4), a pseudocount of
+  1 per base, so unseen transitions keep a small probability. The start
+  state is drawn from the smoothed (k−1)-mer frequencies. `markov_test.go`
+  checks every cell against a direct tally.
 - The k-mer model (`--model-type kmer`, k from 2 to 8) holds the sequence in
   memory and trains with `TrainFromReferenceGenome`.
 - A VCF carries no base qualities, so emissions are not learned from it.
 
-A model trained on little data produces degenerate output. For example, a
-model trained on three short alleles generated reads of a single repeated
-base.
+A model trained on little data mostly reproduces the smoothed counts. Before
+0.10.0, missing normalisation and an off-by-one context made a model trained
+on three short alleles generate reads of a single repeated base; now the same
+input gives balanced bases (A 14890, C 14775, G 15186, T 15149 of 60,000).
 
-### Constraints in the adaptive model
+### Generation-time reweighting in the adaptive model
 
-`NewAdaptiveHMMModel` (`internal/genomics/authenticity/adaptive_hmm_model.go`)
-reweights transitions during generation towards these targets:
-
-| Constraint | Value | Source of the value |
-|---|---|---|
-| GC content | 42% ± 1.5% | Lander et al. 2001 (human genome average) |
-| CpG depletion | transition weight × 0.25 | Bird 1980 |
-| Homopolymer limit | runs of at most 8 bases | modelling choice |
-
-These are generation-time targets. No test compares their effect with real
-data.
+`AdaptiveHMMModel` (`internal/genomics/authenticity/adaptive_hmm_model.go`)
+still reweights transitions during generation for sequence complexity and
+against homopolymer runs of 5 or more. These are modelling choices; no test
+compares their effect with real data. The GC-content and CpG targets of
+earlier versions were removed.
 
 ---
 
@@ -141,7 +140,7 @@ loci of 10 kb). From one run on 2026-10-18:
 | Two samples of one population: F_ST < 0.02 | `TestPresets_SamePopulationNullFST` | 0.000 |
 
 The literature ranges are the ones recorded in
-`internal/population/fst_analysis.py`. Split times and bottleneck durations
+`internal/population/fst_analysis.py` (removed after v0.9.0). Split times and bottleneck durations
 were calibrated to fall inside them, so these checks confirm the calibration
 rather than test it independently.
 
@@ -150,9 +149,10 @@ rather than test it independently.
 `NewPopulationPanel` and `NewJointPanels` build variant panels (sites,
 frequencies, genotypes) from one seeded simulation. `generate` and `train` do
 not use the coalescent. Their `--population` flag only names a model file.
-Trio generation in `scenario` uses a separate msprime simulation in Python
-(`internal/population/haplotypes.py`), which needs a local virtualenv (see the
-README).
+Trio generation in `scenario` uses it: `internal/population` runs
+`SimulateJointPanel` with the scenario population's preset over one locus
+spanning the scenario region and reads each haplotype's derived alleles from
+`JointSite.Carriers`.
 
 ---
 
