@@ -293,10 +293,48 @@ with Dorado 2.1.2:
 The DNA profile's dwell, stall, skip and noise values were chosen in these
 runs: short dwells and skips cost accuracy, and the real dwell tail is
 reproduced by stalls on a low-variance gamma dwell (mean dwell 13.0
-samples/base, CV 0.89; real 13.1, CV 1.08). The remaining ~7-point gap to
-real reads is shared with squigulator and comes from the step-function
-level model, so the script passes signal within one point of squigulator
-rather than at a fixed identity. The RNA004 profile is not calibrated.
+samples/base, CV 0.89; real 13.1, CV 1.08). `dorado_identity.sh` therefore
+passes signal within one point of squigulator on the same truth rather than
+at a fixed identity.
+
+**Where the gap comes from** (#28; `scripts/acceptance/calibrate/`, 2000
+reads per condition, bootstrap 95% CIs; results in
+`scripts/acceptance/calibrate/results/dna.tsv`, measured 2026-10-20):
+
+| Condition | Median identity [95% CI] |
+|---|---|
+| Real reads (4120 aligned to GRCh38) | 98.54 [98.52, 98.58] |
+| `signal`, uniform random input | 90.80 [90.76, 90.82] |
+| `signal`, GRCh38 pseudo-reads | 91.75 [91.67, 91.82] |
+| squigulator, GRCh38 | 93.74 [93.68, 93.80] |
+| squigulator with ONT's `9mer_levels_v1`, GRCh38 | 91.63 [91.52, 91.76] |
+| `signal` with squigulator's levels, GRCh38 | 93.81 [93.74, 93.87] |
+| `level_tau` 0.5 / 1 / 2 / 4 | 91.49 / 91.29 / 87.77 / 72.90 |
+
+- **Composition, +1.0 point:** real-genome input against uniform random
+  bases.
+- **The level table, +2.1 points:** squigulator's R10 levels instead of
+  ONT's `9mer_levels_v1`; squigulator loses the same with ONT's table. This
+  was all of squigulator's lead over `signal`.
+- **Ruled out:** level smoothing between k-mers (`level_tau`, worse at every
+  τ, so it is 0 by default), per-sample noise matched to real reads, a level
+  shift, and a per-k-mer stdv.
+- **Remaining ~4.6 points:** the k-mer level model itself, which squigulator
+  shares. Real per-base levels fit either table at r 0.70–0.72, against 0.85
+  for synthetic signal; CpG k-mers sit 3.8 pA lower in native (methylated)
+  DNA. Closing this needs a level table fitted by a resquiggler; refitting
+  ONT's table from Dorado's move boundaries made identity worse (77.5%).
+
+**RNA004** (`rna004_130bps_4khz`, Dorado `rna004_130bps_sup@v5.3.0`, the six
+100-nt control constructs of `ont-open-data/rna-modbase-validation_2025.03`,
+`results/rna.tsv`): the profile is calibrated against the real reads
+(adapter 0.7 s at 62 pA, scaling 17/80 pA from Dorado's model config, 3.0 pA
+noise through `model_stdv`, no white noise, drift or skips). Real reads
+reach 97.67% median identity; calibrated `signal` 72.92% [72.09, 73.75]
+(72% of reads align), up from 63.41% (62%); squigulator 82.86%. The main
+missing piece is a per-k-mer stdv, which ONT's RNA004 table does not carry:
+with squigulator's per-k-mer-stdv table, 97% of reads align and identity is
+77.8%. Synthetic RNA004 signal is not yet basecalled like real signal.
 
 ### 5.4 cDNA transcriptome
 
@@ -321,7 +359,7 @@ their gene's reads.
 | Structured coalescent presets | yes | literature F_ST ranges, π ordering (calibrated) | LD, admixture, other populations |
 | Illumina qualities and errors | fixed quality ramp, no errors | — | everything |
 | ONT error and quality model | yes | parameter round trip | real basecalls |
-| Raw signal | yes | BLOW5 format (slow5tools, blue-crab); Dorado identity against squigulator | identity of real signal (~7 points lower) |
+| Raw signal | yes | BLOW5 format (slow5tools, blue-crab); Dorado identity against squigulator; gap to real reads attributed (composition, level table, level model) | DNA identity ~6.8 points below real; RNA004 ~25 points below real |
 | cDNA transcriptome | yes | Bambu counts and novel-isoform discovery | real cDNA libraries |
 
 ---

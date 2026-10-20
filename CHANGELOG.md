@@ -36,6 +36,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `--max-reads`, `--max-files`, `--max-regen-reads` and `--decoy`
 - `generate --dataset-id` (#27).
 - `Engine.Regenerate` reproduces any file of a run from its manifest without writing it (#27).
+- `signal --profile-set level_tau=N`, level smoothing between k-mers. The default is 0 (a step function); every τ > 0 lowered Dorado identity (#28).
+- Profile `model_stdv`, the per-sample level stdv used for pore tables without a `level_stdv` column (#28).
+- `scripts/acceptance/calibrate/`, a reproducible Dorado identity ablation with bootstrap CIs, pinned inputs and committed results for DNA and RNA004 (#28).
 
 ### Changed
 - **BREAKING:** `sequence_validator` takes input paths as arguments (it read only `sequences/validation`) and exits 2 when any sequence fails (#27).
@@ -89,6 +92,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Insert size depends on the library preparation, so set `illumina.insert_size` for other libraries.
   - A mean or SD given without a distribution keeps the normal.
 - `generate` errors no longer print the usage text.
+- **BREAKING (RNA signal output):** the `rna004_130bps_4khz` profile is calibrated against real RNA004 reads (#28).
+  - Adapter 0.7 s at 62 pA; scaling 17/80 pA from Dorado's model config.
+  - 3.0 pA noise; no white noise, drift or skips; dwell CV 0.31.
+  - Median identity rose from 63.4% to 72.9%, against 97.7% for real reads.
+  - DNA signal output is unchanged.
 
 ### Removed
 - **Subsystems that reported fabricated constants**, none of which any supported command used (#22, #26):
