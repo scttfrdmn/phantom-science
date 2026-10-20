@@ -32,8 +32,8 @@ func binnedConfig(dir string) types.SequencerConfig {
 	return c
 }
 
-// binChars are the RTA3 bins in Phred+33.
-const binChars = "#-8F"
+// binChars are the NovaSeq 6000 quality values (Q2, Q11, Q25, Q37) in Phred+33.
+const binChars = "#,:F"
 
 // mateFiles generates c to files and returns the R1 and R2 records.
 func mateFiles(t *testing.T, c types.SequencerConfig) (r1, r2 []fastqRec) {
@@ -79,7 +79,7 @@ func TestIllumina_DefaultBinnedQualities(t *testing.T) {
 				for _, r := range recs {
 					for i := range r.qual {
 						if strings.IndexByte(binChars, r.qual[i]) < 0 {
-							t.Fatalf("quality %q is not an RTA3 bin", r.qual[i])
+							t.Fatalf("quality %q is not a NovaSeq 6000 bin", r.qual[i])
 						}
 						if (r.qual[i] == '#') != (r.seq[i] == 'N') {
 							t.Fatalf("base %c with quality %c: Q2 must be exactly the N calls", r.seq[i], r.qual[i])
@@ -90,26 +90,31 @@ func TestIllumina_DefaultBinnedQualities(t *testing.T) {
 					t.Errorf("mean quality cycles 1-30 %.2f, 121-150 %.2f: want a decrease", early, late)
 				}
 			}
+			// DRR276626 (NovaSeq 6000) measured R1 36.22 and R2 36.08.
 			m1, m2 := meanQ(r1, 0, 150), meanQ(r2, 0, 150)
-			if !(m2 < m1-0.3) {
-				t.Errorf("R2 mean quality %.2f not below R1 %.2f", m2, m1)
+			if math.Abs(m1-36.22) > 0.15 || math.Abs(m2-36.08) > 0.15 || !(m2 < m1) {
+				t.Errorf("mean quality R1 %.2f, R2 %.2f; want 36.22 and 36.08 (±0.15), R2 below R1", m1, m2)
 			}
 			t.Logf("mean quality R1 %.2f, R2 %.2f", m1, m2)
 		})
 	}
 }
 
-// The empirical substitution rate per bin is within the 99 % binomial CI of
-// 10^(−Q/10). Truth is the error-free run with the same seed: paired file
-// output draws each fragment from the pair stream, so turning errors off
-// changes only the mate streams (qualities and errors), not the fragments.
+// The empirical substitution count per quality bin matches the model's
+// fitted, cycle-dependent rates (illumina.SubstitutionRate × BaseFactor of
+// the true base), within 99 % of a Poisson-binomial. Truth is the error-free
+// run with the same seed: paired file output draws each fragment from the
+// pair stream, so turning errors off changes only the mate streams
+// (qualities and errors), not the fragments.
 func TestIllumina_ErrorRateMatchesQuality(t *testing.T) {
 	c := binnedConfig(t.TempDir())
 	c.ReadsPerBatch, c.TotalBatches = 20000, 1
 	o1, o2 := mateFiles(t, c)
 	c.Illumina.Errors = types.IlluminaErrorsNone
 	t1, t2 := mateFiles(t, c)
+	baseIdx := map[byte]int{'A': 0, 'C': 1, 'G': 2, 'T': 3}
 	var bases, subs [256]int
+	var mean, variance [256]float64
 	for mate, pair := range [][2][]fastqRec{{o1, t1}, {o2, t2}} {
 		obs, truth := pair[0], pair[1]
 		for i := range obs {
@@ -117,10 +122,15 @@ func TestIllumina_ErrorRateMatchesQuality(t *testing.T) {
 				t.Fatalf("mate %d: error-free read has N", mate+1)
 			}
 			for j := range obs[i].seq {
-				q := obs[i].qual[j]
-				bases[q]++
+				qc := obs[i].qual[j]
+				bases[qc]++
 				if obs[i].seq[j] != truth[i].seq[j] {
-					subs[q]++
+					subs[qc]++
+				}
+				if q := qc - '!'; q != illumina.QNoCall {
+					p := illumina.SubstitutionRate(q, j) * illumina.NovaSeqErrors.BaseFactor[baseIdx[truth[i].seq[j]]]
+					mean[qc] += p
+					variance[qc] += p * (1 - p)
 				}
 			}
 		}
@@ -138,15 +148,13 @@ func TestIllumina_ErrorRateMatchesQuality(t *testing.T) {
 			continue
 		}
 		totalSubs += k
-		p := illumina.ErrorProb(q)
-		got := float64(k) / float64(n)
-		ci := 2.5758 * math.Sqrt(p*(1-p)/float64(n))
-		if math.Abs(got-p) > ci {
-			t.Errorf("Q%d: substitution rate %.5f over %d bases, want %.5f ± %.5f", q, got, n, p, ci)
+		ci := 2.5758 * math.Sqrt(variance[b])
+		if math.Abs(float64(k)-mean[b]) > ci {
+			t.Errorf("Q%d: %d substitutions over %d bases, want %.1f ± %.1f", q, k, n, mean[b], ci)
 		}
-		t.Logf("Q%d: %d bases (%.2f%%), substitution rate %.5f (expected %.5f ± %.5f)", q, n, 100*float64(n)/float64(len(o1)*2*c.ReadLength), got, p, ci)
+		t.Logf("Q%d: %d bases, %d substitutions (expected %.1f ± %.1f)", q, n, k, mean[b], ci)
 	}
-	t.Logf("overall: substitutions %.4f%%, N calls %.4f%% of %d bases", 100*float64(totalSubs)/float64(total), 100*float64(noCalls)/float64(total), total)
+	t.Logf("overall: substitutions %.4f%%, N calls %.5f%% of %d bases", 100*float64(totalSubs)/float64(total), 100*float64(noCalls)/float64(total), total)
 }
 
 // recordingSampler is a FragmentSampler over uniform bases that records the
