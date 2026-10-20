@@ -115,6 +115,28 @@ func Splice(seq, qual []byte, off, refLen int, allele []byte) ([]byte, []byte) {
 	return out, q
 }
 
+// complement maps a base to its complement; bytes other than ACGT (either
+// case) map to N.
+var complement = func() (t [256]byte) {
+	for i := range t {
+		t[i] = 'N'
+	}
+	for _, p := range []string{"AT", "CG", "GC", "TA", "at", "cg", "gc", "ta"} {
+		t[p[0]] = p[1]
+	}
+	return t
+}()
+
+// ReverseComplement returns the reverse complement of seq in a new slice.
+// N (and any byte that is not a base) becomes N.
+func ReverseComplement(seq []byte) []byte {
+	out := make([]byte, len(seq))
+	for i, b := range seq {
+		out[len(seq)-1-i] = complement[b]
+	}
+	return out
+}
+
 // Span is a reference interval [Pos, Pos+RefLen) (0-based) that a variant
 // replaces with an allele of AltLen bases.
 type Span struct {

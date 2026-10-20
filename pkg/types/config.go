@@ -8,7 +8,10 @@
 // configuration files keep loading.
 package types
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 // SequencerConfig describes one sequencing run to generate: instrument and
 // run identity, read structure, quality model and output settings.
@@ -25,7 +28,9 @@ type SequencerConfig struct {
 
 	// Basic Sequencer Parameters. BatchInterval is parsed but not used by
 	// generation, which writes files as fast as it can. BaseQuality and
-	// QualityDecay set the Illumina quality model.
+	// QualityDecay set the linear quality model: Illumina with
+	// illumina.quality_model "linear", and ONT reads without a basecaller
+	// tier. The default Illumina model (binned) does not use them.
 	SampleName    string  `json:"sample_name"`
 	Lane          int     `json:"lane"`
 	OutputDir     string  `json:"output_dir"`
@@ -93,12 +98,19 @@ type SequencerConfig struct {
 	// value (or Dist "fixed") gives every read exactly ReadLength bases.
 	ReadLengthDistribution ReadLengthSpec `json:"read_length_distribution,omitzero" yaml:"read_length_distribution,omitempty"`
 
-	// ErrorModel configures sequencing errors applied to generated reads.
-	// The zero value applies no errors (#11).
+	// ErrorModel configures the ONT sequencing error model (platform ont
+	// only). The zero value applies no ONT errors (#11); Illumina errors
+	// are configured in Illumina.
 	ErrorModel ErrorModelSpec `json:"error_model,omitzero" yaml:"error_model,omitempty"`
 
 	// ONT holds Oxford Nanopore run metadata used when Platform is "ont".
 	ONT ONTSpec `json:"ont,omitzero" yaml:"ont,omitempty"`
+
+	// Illumina configures the Illumina read model: qualities, sequencing
+	// errors and, for paired-end reads, the insert size. The zero value is
+	// the realistic default (binned qualities, quality-matched errors,
+	// inserts of 350 ± 50 bases). Rejected when Platform is "ont".
+	Illumina IlluminaSpec `json:"illumina,omitzero" yaml:"illumina,omitempty"`
 
 	// Output controls file naming, compression and run summary files.
 	Output OutputSpec `json:"output,omitzero" yaml:"output,omitempty"`
@@ -169,11 +181,114 @@ type ReadLengthSpec struct {
 	EmpiricalPath string  `json:"empirical_path,omitempty" yaml:"empirical_path,omitempty"`
 }
 
-// ErrorModelSpec configures the sequencing error model (#11).
+// ErrorModelSpec configures the ONT sequencing error model (#11).
 type ErrorModelSpec struct {
 	// Tier is the ONT basecaller tier: "sup", "hac" or "fast". Empty means
-	// no error model.
+	// no ONT error model. A tier needs platform "ont"; Illumina errors are
+	// set in IlluminaSpec.
 	Tier string `json:"tier,omitempty" yaml:"tier,omitempty"`
+}
+
+// Illumina quality-model, error-model and insert-size distribution names
+// for IlluminaSpec.
+const (
+	IlluminaQualityBinned  = "binned"
+	IlluminaQualityLinear  = "linear"
+	IlluminaErrorsQuality  = "quality"
+	IlluminaErrorsNone     = "none"
+	InsertSizeNormal       = "normal"
+	InsertSizeLognormal    = "lognormal"
+	DefaultInsertSizeMean  = 350.0
+	DefaultInsertSizeSD    = 50.0
+	maxInsertSizeParameter = 1 << 20
+)
+
+// IlluminaSpec configures the Illumina read model.
+type IlluminaSpec struct {
+	// QualityModel is "binned" (the default when empty): per-cycle qualities
+	// in the four RTA3 bins Q2, Q12, Q23 and Q37, degrading with cycle and
+	// lower on read 2; Q2 marks a no-call. "linear" keeps the earlier model,
+	// BaseQuality − cycle·QualityDecay, and the earlier output.
+	QualityModel string `json:"quality_model,omitempty" yaml:"quality_model,omitempty"`
+	// Errors is "quality" or "none". "quality" substitutes each base with
+	// probability 10^(−Q/10) and writes Q2 bases as N; "none" leaves bases
+	// as generated. Empty means "quality" for the binned model and "none"
+	// for the linear one.
+	Errors string `json:"errors,omitempty" yaml:"errors,omitempty"`
+	// InsertSize is the fragment-length distribution of paired-end reads.
+	InsertSize InsertSizeSpec `json:"insert_size,omitzero" yaml:"insert_size,omitempty"`
+}
+
+// InsertSizeSpec is the fragment (insert) length distribution of paired-end
+// reads: Dist "normal" (the default when empty) or "lognormal", with the
+// fragment length's Mean and SD (defaults 350 and 50). Draws outside
+// [max(Min, read length), Max] are redrawn (Max 0: no upper bound).
+type InsertSizeSpec struct {
+	Dist string  `json:"dist,omitempty" yaml:"dist,omitempty"`
+	Mean float64 `json:"mean,omitempty" yaml:"mean,omitempty"`
+	SD   float64 `json:"sd,omitempty" yaml:"sd,omitempty"`
+	Min  int     `json:"min,omitempty" yaml:"min,omitempty"`
+	Max  int     `json:"max,omitempty" yaml:"max,omitempty"`
+}
+
+// WithDefaults returns s with empty fields set to their defaults.
+func (s IlluminaSpec) WithDefaults() IlluminaSpec {
+	if s.QualityModel == "" {
+		s.QualityModel = IlluminaQualityBinned
+	}
+	if s.Errors == "" {
+		s.Errors = IlluminaErrorsQuality
+		if s.QualityModel == IlluminaQualityLinear {
+			s.Errors = IlluminaErrorsNone
+		}
+	}
+	if s.InsertSize.Dist == "" {
+		s.InsertSize.Dist = InsertSizeNormal
+	}
+	if s.InsertSize.Mean == 0 {
+		s.InsertSize.Mean = DefaultInsertSizeMean
+	}
+	if s.InsertSize.SD == 0 {
+		s.InsertSize.SD = DefaultInsertSizeSD
+	}
+	return s
+}
+
+// Validate reports an unknown model name or an invalid insert-size
+// distribution.
+func (s IlluminaSpec) Validate() error {
+	s = s.WithDefaults()
+	switch s.QualityModel {
+	case IlluminaQualityBinned, IlluminaQualityLinear:
+	default:
+		return fmt.Errorf("unknown illumina quality_model %q: want binned or linear", s.QualityModel)
+	}
+	switch s.Errors {
+	case IlluminaErrorsQuality, IlluminaErrorsNone:
+	default:
+		return fmt.Errorf("unknown illumina errors %q: want quality or none", s.Errors)
+	}
+	is := s.InsertSize
+	switch is.Dist {
+	case InsertSizeNormal, InsertSizeLognormal:
+	default:
+		return fmt.Errorf("unknown illumina insert_size dist %q: want normal or lognormal", is.Dist)
+	}
+	switch {
+	case !(is.Mean > 0) || is.Mean > maxInsertSizeParameter:
+		return fmt.Errorf("illumina insert_size mean %g: want 0 < mean <= %d", is.Mean, maxInsertSizeParameter)
+	case !(is.SD > 0) || is.SD > maxInsertSizeParameter:
+		return fmt.Errorf("illumina insert_size sd %g: want 0 < sd <= %d", is.SD, maxInsertSizeParameter)
+	case is.Min < 0 || is.Max < 0:
+		return fmt.Errorf("illumina insert_size min %d / max %d must not be negative", is.Min, is.Max)
+	case is.Max > 0 && is.Max < is.Min:
+		return fmt.Errorf("illumina insert_size max %d is below min %d", is.Max, is.Min)
+	case is.Max > 0 && float64(is.Max) < is.Mean-3*is.SD:
+		return fmt.Errorf("illumina insert_size max %d is far below the mean %g: almost every draw would be rejected", is.Max, is.Mean)
+	case is.Min > 0 && float64(is.Min) > is.Mean+3*is.SD:
+		return fmt.Errorf("illumina insert_size min %d is far above the mean %g: almost every draw would be rejected", is.Min, is.Mean)
+	}
+	return nil
 }
 
 // ONTSpec holds Oxford Nanopore run metadata written to read headers and the

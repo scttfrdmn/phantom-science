@@ -22,5 +22,8 @@
   "loading_concentration_pm": 12.0,
   "phix_spike_in_percent": 1.0,
   "max_cycles": 625,
-  "four_channel_chemistry": true
+  "four_channel_chemistry": true,
+  "illumina": {
+    "insert_size": {"dist": "normal", "mean": 550, "sd": 100}
+  }
 }

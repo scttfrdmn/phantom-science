@@ -16,5 +16,8 @@
     "fingerprinting": {
       "enable": false
     }
+  },
+  "illumina": {
+    "insert_size": {"dist": "normal", "mean": 550, "sd": 100}
   }
 }

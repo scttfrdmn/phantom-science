@@ -7,6 +7,18 @@ import (
 	"testing"
 )
 
+func TestReverseComplement(t *testing.T) {
+	for in, want := range map[string]string{"": "", "A": "T", "ACGTN": "NACGT", "AACG": "CGTT", "acgX": "Ncgt"} {
+		if got := string(ReverseComplement([]byte(in))); got != want {
+			t.Errorf("ReverseComplement(%q) = %q, want %q", in, got, want)
+		}
+	}
+	s := []byte("GATTACA")
+	if got := ReverseComplement(ReverseComplement(s)); !bytes.Equal(got, s) {
+		t.Errorf("double reverse complement %q, want %q", got, s)
+	}
+}
+
 func TestSplice(t *testing.T) {
 	seq := []byte("ACGTACGT")
 	qual := []byte{10, 11, 12, 13, 14, 15, 16, 17}

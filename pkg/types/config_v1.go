@@ -45,6 +45,10 @@ type SequencerConfigV1 struct {
 
 	// ModelDir is a directory containing <Population>.hmm.json model files.
 	ModelDir string `yaml:"model_dir,omitempty" json:"model_dir,omitempty"`
+
+	// Illumina is the Illumina read model (qualities, errors, insert size),
+	// with the same keys as the illumina section of JSON configs.
+	Illumina IlluminaSpec `yaml:"illumina,omitempty" json:"illumina,omitzero"`
 }
 
 type SequencerHardware struct {
@@ -63,18 +67,18 @@ type SampleConfig struct {
 }
 
 type ReadConfig struct {
-	Length         int    `yaml:"length" json:"length"`
-	PairedEnd      bool   `yaml:"paired_end" json:"paired_end"`
-	ReadsPerBatch  int    `yaml:"reads_per_batch" json:"reads_per_batch"`
-	TotalBatches   int    `yaml:"total_batches" json:"total_batches"`
-	BatchInterval  string `yaml:"batch_interval" json:"batch_interval"`
+	Length        int    `yaml:"length" json:"length"`
+	PairedEnd     bool   `yaml:"paired_end" json:"paired_end"`
+	ReadsPerBatch int    `yaml:"reads_per_batch" json:"reads_per_batch"`
+	TotalBatches  int    `yaml:"total_batches" json:"total_batches"`
+	BatchInterval string `yaml:"batch_interval" json:"batch_interval"`
 }
 
 type QualityConfig struct {
-	BaseQuality              int     `yaml:"base_quality" json:"base_quality"`
-	QualityDecay             float64 `yaml:"quality_decay" json:"quality_decay"`
-	Q30Percentage            float64 `yaml:"q30_percentage" json:"q30_percentage"`
-	ClusterDensityKPerMM2    int     `yaml:"cluster_density_k_per_mm2,omitempty" json:"cluster_density_k_per_mm2,omitempty"`
+	BaseQuality           int     `yaml:"base_quality" json:"base_quality"`
+	QualityDecay          float64 `yaml:"quality_decay" json:"quality_decay"`
+	Q30Percentage         float64 `yaml:"q30_percentage" json:"q30_percentage"`
+	ClusterDensityKPerMM2 int     `yaml:"cluster_density_k_per_mm2,omitempty" json:"cluster_density_k_per_mm2,omitempty"`
 }
 
 type PerformanceConfig struct {
@@ -87,22 +91,22 @@ type PerformanceConfig struct {
 }
 
 type TechnologyConfig struct {
-	SBSVersion              string   `yaml:"sbs_version,omitempty" json:"sbs_version,omitempty"`
-	PatternedFlowCell       bool     `yaml:"patterned_flow_cell,omitempty" json:"patterned_flow_cell,omitempty"`
-	DualFlowCellCapable     bool     `yaml:"dual_flow_cell_capable,omitempty" json:"dual_flow_cell_capable,omitempty"`
-	TwoChannelChemistry     bool     `yaml:"two_channel_chemistry,omitempty" json:"two_channel_chemistry,omitempty"`
-	FourChannelChemistry    bool     `yaml:"four_channel_chemistry,omitempty" json:"four_channel_chemistry,omitempty"`
-	LowDiversitySensitive   bool     `yaml:"low_diversity_sensitive,omitempty" json:"low_diversity_sensitive,omitempty"`
-	BenchtopFormat          bool     `yaml:"benchtop_format,omitempty" json:"benchtop_format,omitempty"`
-	XLEAPImprovements       []string `yaml:"xleap_improvements,omitempty" json:"xleap_improvements,omitempty"`
-	ReagentImprovements     []string `yaml:"reagent_improvements,omitempty" json:"reagent_improvements,omitempty"`
-	ClusterGeneration       string   `yaml:"cluster_generation,omitempty" json:"cluster_generation,omitempty"`
-	FlowCellDesign          string   `yaml:"flow_cell_design,omitempty" json:"flow_cell_design,omitempty"`
+	SBSVersion            string   `yaml:"sbs_version,omitempty" json:"sbs_version,omitempty"`
+	PatternedFlowCell     bool     `yaml:"patterned_flow_cell,omitempty" json:"patterned_flow_cell,omitempty"`
+	DualFlowCellCapable   bool     `yaml:"dual_flow_cell_capable,omitempty" json:"dual_flow_cell_capable,omitempty"`
+	TwoChannelChemistry   bool     `yaml:"two_channel_chemistry,omitempty" json:"two_channel_chemistry,omitempty"`
+	FourChannelChemistry  bool     `yaml:"four_channel_chemistry,omitempty" json:"four_channel_chemistry,omitempty"`
+	LowDiversitySensitive bool     `yaml:"low_diversity_sensitive,omitempty" json:"low_diversity_sensitive,omitempty"`
+	BenchtopFormat        bool     `yaml:"benchtop_format,omitempty" json:"benchtop_format,omitempty"`
+	XLEAPImprovements     []string `yaml:"xleap_improvements,omitempty" json:"xleap_improvements,omitempty"`
+	ReagentImprovements   []string `yaml:"reagent_improvements,omitempty" json:"reagent_improvements,omitempty"`
+	ClusterGeneration     string   `yaml:"cluster_generation,omitempty" json:"cluster_generation,omitempty"`
+	FlowCellDesign        string   `yaml:"flow_cell_design,omitempty" json:"flow_cell_design,omitempty"`
 }
 
 type ApplicationConfig struct {
-	OptimalFor           []string `yaml:"optimal_for,omitempty" json:"optimal_for,omitempty"`
-	ReadLengthAdvantage  string   `yaml:"read_length_advantage,omitempty" json:"read_length_advantage,omitempty"`
+	OptimalFor          []string `yaml:"optimal_for,omitempty" json:"optimal_for,omitempty"`
+	ReadLengthAdvantage string   `yaml:"read_length_advantage,omitempty" json:"read_length_advantage,omitempty"`
 }
 
 // PhantomConfigV1 represents versioned Phantom Science configuration
@@ -155,14 +159,14 @@ type EnterpriseConfigV1 struct {
 }
 
 type FingerprintConfigV1 struct {
-	Enable                bool     `yaml:"enable" json:"enable"`
-	CustomerFingerprint   bool     `yaml:"customer_fingerprint" json:"customer_fingerprint"`
-	DatasetFingerprint    bool     `yaml:"dataset_fingerprint" json:"dataset_fingerprint"`
-	SteganographyLayers   []string `yaml:"steganography_layers" json:"steganography_layers"`
-	KeyFile               string   `yaml:"key_file,omitempty" json:"key_file,omitempty"`
-	Plaintext             bool     `yaml:"plaintext,omitempty" json:"plaintext,omitempty"`
-	CryptographicSigning  bool     `yaml:"cryptographic_signing" json:"cryptographic_signing"`
-	TamperDetection       bool     `yaml:"tamper_detection" json:"tamper_detection"`
+	Enable               bool     `yaml:"enable" json:"enable"`
+	CustomerFingerprint  bool     `yaml:"customer_fingerprint" json:"customer_fingerprint"`
+	DatasetFingerprint   bool     `yaml:"dataset_fingerprint" json:"dataset_fingerprint"`
+	SteganographyLayers  []string `yaml:"steganography_layers" json:"steganography_layers"`
+	KeyFile              string   `yaml:"key_file,omitempty" json:"key_file,omitempty"`
+	Plaintext            bool     `yaml:"plaintext,omitempty" json:"plaintext,omitempty"`
+	CryptographicSigning bool     `yaml:"cryptographic_signing" json:"cryptographic_signing"`
+	TamperDetection      bool     `yaml:"tamper_detection" json:"tamper_detection"`
 }
 
 type AuditConfigV1 struct {
@@ -175,28 +179,28 @@ type AuditConfigV1 struct {
 }
 
 type ValidationConfigV1 struct {
-	Enable                         bool     `yaml:"enable" json:"enable"`
-	ValidationLevel                string   `yaml:"validation_level" json:"validation_level"`
-	StatisticalTests               []string `yaml:"statistical_tests" json:"statistical_tests"`
-	PopulationGeneticsTests        []string `yaml:"population_genetics_tests" json:"population_genetics_tests"`
-	PipelineCompatibilityTests     []string `yaml:"pipeline_compatibility_tests" json:"pipeline_compatibility_tests"`
+	Enable                     bool     `yaml:"enable" json:"enable"`
+	ValidationLevel            string   `yaml:"validation_level" json:"validation_level"`
+	StatisticalTests           []string `yaml:"statistical_tests" json:"statistical_tests"`
+	PopulationGeneticsTests    []string `yaml:"population_genetics_tests" json:"population_genetics_tests"`
+	PipelineCompatibilityTests []string `yaml:"pipeline_compatibility_tests" json:"pipeline_compatibility_tests"`
 }
 
 type RegulatoryConfigV1 struct {
-	FDACompliance       bool     `yaml:"fda_compliance" json:"fda_compliance"`
-	EMACompliance       bool     `yaml:"ema_compliance" json:"ema_compliance"`
-	GCPCompliance       bool     `yaml:"gcp_compliance,omitempty" json:"gcp_compliance,omitempty"`
-	ValidationStudies   []string `yaml:"validation_studies" json:"validation_studies"`
-	QualityMetrics      []string `yaml:"quality_metrics" json:"quality_metrics"`
+	FDACompliance     bool     `yaml:"fda_compliance" json:"fda_compliance"`
+	EMACompliance     bool     `yaml:"ema_compliance" json:"ema_compliance"`
+	GCPCompliance     bool     `yaml:"gcp_compliance,omitempty" json:"gcp_compliance,omitempty"`
+	ValidationStudies []string `yaml:"validation_studies" json:"validation_studies"`
+	QualityMetrics    []string `yaml:"quality_metrics" json:"quality_metrics"`
 }
 
 type AcademicConfigV1 struct {
-	PeerReviewReady            bool     `yaml:"peer_review_ready" json:"peer_review_ready"`
-	PublicationFormat          string   `yaml:"publication_format" json:"publication_format"`
-	BenchmarkDatasets          []string `yaml:"benchmark_datasets" json:"benchmark_datasets"`
-	StatisticalPower           float64  `yaml:"statistical_power" json:"statistical_power"`
-	EffectSizeReporting        bool     `yaml:"effect_size_reporting,omitempty" json:"effect_size_reporting,omitempty"`
-	MultipleTestingCorrection  string   `yaml:"multiple_testing_correction,omitempty" json:"multiple_testing_correction,omitempty"`
+	PeerReviewReady           bool     `yaml:"peer_review_ready" json:"peer_review_ready"`
+	PublicationFormat         string   `yaml:"publication_format" json:"publication_format"`
+	BenchmarkDatasets         []string `yaml:"benchmark_datasets" json:"benchmark_datasets"`
+	StatisticalPower          float64  `yaml:"statistical_power" json:"statistical_power"`
+	EffectSizeReporting       bool     `yaml:"effect_size_reporting,omitempty" json:"effect_size_reporting,omitempty"`
+	MultipleTestingCorrection string   `yaml:"multiple_testing_correction,omitempty" json:"multiple_testing_correction,omitempty"`
 }
 
 type SecurityConfigV1 struct {
@@ -209,25 +213,25 @@ type SecurityConfigV1 struct {
 }
 
 type VolumeTestingConfig struct {
-	FastGeneration            bool `yaml:"fast_generation" json:"fast_generation"`
-	MinimalValidation         bool `yaml:"minimal_validation" json:"minimal_validation"`
-	SimpleSequences           bool `yaml:"simple_sequences" json:"simple_sequences"`
-	ReducedQualityComplexity  bool `yaml:"reduced_quality_complexity" json:"reduced_quality_complexity"`
-	SkipCompression           bool `yaml:"skip_compression" json:"skip_compression"`
-	BatchProcessing           bool `yaml:"batch_processing" json:"batch_processing"`
-	MemoryOptimization        bool `yaml:"memory_optimization" json:"memory_optimization"`
-	ParallelGeneration        bool `yaml:"parallel_generation" json:"parallel_generation"`
+	FastGeneration           bool `yaml:"fast_generation" json:"fast_generation"`
+	MinimalValidation        bool `yaml:"minimal_validation" json:"minimal_validation"`
+	SimpleSequences          bool `yaml:"simple_sequences" json:"simple_sequences"`
+	ReducedQualityComplexity bool `yaml:"reduced_quality_complexity" json:"reduced_quality_complexity"`
+	SkipCompression          bool `yaml:"skip_compression" json:"skip_compression"`
+	BatchProcessing          bool `yaml:"batch_processing" json:"batch_processing"`
+	MemoryOptimization       bool `yaml:"memory_optimization" json:"memory_optimization"`
+	ParallelGeneration       bool `yaml:"parallel_generation" json:"parallel_generation"`
 }
 
 type OutputCustomizationConfig struct {
-	Compression     string                     `yaml:"compression" json:"compression"`
-	FileFormat      string                     `yaml:"file_format" json:"file_format"`
-	BatchProcessing bool                       `yaml:"batch_processing" json:"batch_processing"`
-	RealTimeGeneration bool                    `yaml:"real_time_generation" json:"real_time_generation"`
-	QualityProfiles string                     `yaml:"quality_profiles" json:"quality_profiles"`
+	Compression             string                 `yaml:"compression" json:"compression"`
+	FileFormat              string                 `yaml:"file_format" json:"file_format"`
+	BatchProcessing         bool                   `yaml:"batch_processing" json:"batch_processing"`
+	RealTimeGeneration      bool                   `yaml:"real_time_generation" json:"real_time_generation"`
+	QualityProfiles         string                 `yaml:"quality_profiles" json:"quality_profiles"`
 	ContaminationSimulation ContaminationSimConfig `yaml:"contamination_simulation" json:"contamination_simulation"`
-	AdapterSimulation      AdapterSimConfig        `yaml:"adapter_simulation" json:"adapter_simulation"`
-	ErrorProfiling         ErrorProfilingConfig    `yaml:"error_profiling" json:"error_profiling"`
+	AdapterSimulation       AdapterSimConfig       `yaml:"adapter_simulation" json:"adapter_simulation"`
+	ErrorProfiling          ErrorProfilingConfig   `yaml:"error_profiling" json:"error_profiling"`
 }
 
 type ContaminationSimConfig struct {
@@ -250,9 +254,9 @@ type PerformanceTargetsConfig struct {
 }
 
 type TestingScenario struct {
-	Files       int    `yaml:"files" json:"files"`
-	ReadsPerFile int   `yaml:"reads_per_file" json:"reads_per_file"`
-	Description string `yaml:"description" json:"description"`
+	Files        int    `yaml:"files" json:"files"`
+	ReadsPerFile int    `yaml:"reads_per_file" json:"reads_per_file"`
+	Description  string `yaml:"description" json:"description"`
 }
 
 type SimplifiedQualityConfig struct {
@@ -318,23 +322,23 @@ func (old *SequencerConfig) ToV1() *SequencerConfigV1 {
 func (v1 *SequencerConfigV1) ToLegacy() *SequencerConfig {
 	return &SequencerConfig{
 		SequencerModel:         v1.Sequencer.Model,
-		FlowCellType:          v1.Sequencer.FlowCellType,
-		ChemistryVersion:      v1.Sequencer.ChemistryVersion,
-		InstrumentID:          v1.Sequencer.InstrumentID,
-		RunID:                 v1.Sequencer.RunID,
-		FlowCellID:            v1.Sequencer.FlowCellID,
-		SampleName:            v1.Sample.Name,
-		Lane:                  v1.Sample.Lane,
-		OutputDir:             v1.Sample.OutputDir,
-		ReadLength:            v1.Reads.Length,
-		ReadsPerBatch:         v1.Reads.ReadsPerBatch,
-		BatchInterval:         v1.Reads.BatchInterval,
-		TotalBatches:          v1.Reads.TotalBatches,
-		PairedEnd:             v1.Reads.PairedEnd,
-		BaseQuality:           v1.Quality.BaseQuality,
-		QualityDecay:          v1.Quality.QualityDecay,
-		Q30Percentage:         v1.Quality.Q30Percentage,
-		ClusterDensityKPerMM2: v1.Quality.ClusterDensityKPerMM2,
+		FlowCellType:           v1.Sequencer.FlowCellType,
+		ChemistryVersion:       v1.Sequencer.ChemistryVersion,
+		InstrumentID:           v1.Sequencer.InstrumentID,
+		RunID:                  v1.Sequencer.RunID,
+		FlowCellID:             v1.Sequencer.FlowCellID,
+		SampleName:             v1.Sample.Name,
+		Lane:                   v1.Sample.Lane,
+		OutputDir:              v1.Sample.OutputDir,
+		ReadLength:             v1.Reads.Length,
+		ReadsPerBatch:          v1.Reads.ReadsPerBatch,
+		BatchInterval:          v1.Reads.BatchInterval,
+		TotalBatches:           v1.Reads.TotalBatches,
+		PairedEnd:              v1.Reads.PairedEnd,
+		BaseQuality:            v1.Quality.BaseQuality,
+		QualityDecay:           v1.Quality.QualityDecay,
+		Q30Percentage:          v1.Quality.Q30Percentage,
+		ClusterDensityKPerMM2:  v1.Quality.ClusterDensityKPerMM2,
 		LoadingConcentrationPM: v1.Performance.LoadingConcentrationPM,
 		PhixSpikeInPercent:     v1.Performance.PhixSpikeInPercent,
 		RunTimeHours:           v1.Performance.RunTimeHours,
@@ -346,5 +350,6 @@ func (v1 *SequencerConfigV1) ToLegacy() *SequencerConfig {
 		HMMModelPath:           v1.HMMModelPath,
 		Population:             v1.Population,
 		ModelDir:               v1.ModelDir,
+		Illumina:               v1.Illumina,
 	}
 }

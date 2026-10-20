@@ -25,6 +25,8 @@ func TestSequencerConfig_GenerationFieldsRoundTrip(t *testing.T) {
 		ErrorModel: ErrorModelSpec{Tier: "sup"},
 		ONT:        ONTSpec{RunID: "r", FlowCellID: "PAM12345", ProtocolGroupID: "p", Channels: 3000, SpeedBPS: 400},
 		Output:     OutputSpec{Compression: "gzip", FilePattern: "x", SummaryFile: "sequencing_summary.txt"},
+		Illumina: IlluminaSpec{QualityModel: "linear", Errors: "quality",
+			InsertSize: InsertSizeSpec{Dist: "lognormal", Mean: 400, SD: 60, Min: 150, Max: 1000}},
 		TotalBases: 140e9, TotalReads: 1e6, FlowCells: 2, Workers: 8,
 	}
 	data, err := json.Marshal(in)
@@ -38,7 +40,7 @@ func TestSequencerConfig_GenerationFieldsRoundTrip(t *testing.T) {
 	if !reflect.DeepEqual(back, in) {
 		t.Errorf("JSON round trip:\n got %+v\nwant %+v", back, in)
 	}
-	for _, key := range []string{`"seed":42`, `"platform":"ont"`, `"read_length_distribution":{`, `"n50":50000`, `"error_model":{"tier":"sup"}`, `"total_bases":140000000000`} {
+	for _, key := range []string{`"seed":42`, `"platform":"ont"`, `"read_length_distribution":{`, `"n50":50000`, `"error_model":{"tier":"sup"}`, `"total_bases":140000000000`, `"illumina":{"quality_model":"linear"`, `"insert_size":{"dist":"lognormal"`} {
 		if !strings.Contains(string(data), key) {
 			t.Errorf("JSON lacks %s: %s", key, data)
 		}
@@ -53,7 +55,7 @@ func TestSequencerConfig_GenerationFieldsRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	if yback.Seed != 42 || yback.Platform != "ont" || yback.ReadLengthDistribution != in.ReadLengthDistribution ||
-		yback.ErrorModel != in.ErrorModel || yback.ONT != in.ONT || yback.Output != in.Output ||
+		yback.ErrorModel != in.ErrorModel || yback.ONT != in.ONT || yback.Output != in.Output || yback.Illumina != in.Illumina ||
 		yback.TotalBases != in.TotalBases || yback.TotalReads != in.TotalReads || yback.FlowCells != 2 || yback.Workers != 8 {
 		t.Errorf("YAML round trip lost fields: %+v", yback)
 	}
@@ -64,7 +66,7 @@ func TestSequencerConfig_GenerationFieldsOmittedWhenUnset(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, key := range []string{"seed", "platform", "read_length_distribution", "error_model", `"ont"`, `"output"`, "total_bases", "total_reads", "flow_cells", "workers"} {
+	for _, key := range []string{"seed", "platform", "read_length_distribution", "error_model", `"ont"`, `"output"`, "illumina", "total_bases", "total_reads", "flow_cells", "workers"} {
 		if strings.Contains(string(data), key) {
 			t.Errorf("unset %s serialized: %s", key, data)
 		}
@@ -80,23 +82,23 @@ func TestSequencerConfigValidation(t *testing.T) {
 		{
 			name: "valid NovaSeq config",
 			config: SequencerConfig{
-				SequencerModel:    "NovaSeq 6000",
-				FlowCellType:      "S2",
-				ChemistryVersion:  "v1.5",
-				InstrumentID:      "A00123",
-				RunID:             "240101_A00123_0001_BH5TNVDRXY",
-				FlowCellID:        "H5TNVDRXY",
-				SampleName:        "Sample_001",
-				Lane:              1,
-				OutputDir:         "./output",
-				ReadLength:        150,
-				ReadsPerBatch:     1000000,
-				BatchInterval:     "30m",
-				TotalBatches:      10,
-				PairedEnd:         true,
-				BaseQuality:       35,
-				QualityDecay:      0.05,
-				Q30Percentage:     90.0,
+				SequencerModel:   "NovaSeq 6000",
+				FlowCellType:     "S2",
+				ChemistryVersion: "v1.5",
+				InstrumentID:     "A00123",
+				RunID:            "240101_A00123_0001_BH5TNVDRXY",
+				FlowCellID:       "H5TNVDRXY",
+				SampleName:       "Sample_001",
+				Lane:             1,
+				OutputDir:        "./output",
+				ReadLength:       150,
+				ReadsPerBatch:    1000000,
+				BatchInterval:    "30m",
+				TotalBatches:     10,
+				PairedEnd:        true,
+				BaseQuality:      35,
+				QualityDecay:     0.05,
+				Q30Percentage:    90.0,
 			},
 			valid: true,
 		},
@@ -424,6 +426,38 @@ func TestSequencerConfig_MaxOutputBases(t *testing.T) {
 		c := SequencerConfig{MaxOutputGB: tc.gb, MaxOutputTB: tc.tb}
 		if got := c.MaxOutputBases(); got != tc.want {
 			t.Errorf("gb=%g tb=%g: MaxOutputBases = %d, want %d", tc.gb, tc.tb, got, tc.want)
+		}
+	}
+}
+
+// IlluminaSpec defaults: binned qualities with quality errors, linear with
+// none, and inserts of 350 ± 50; Validate rejects unknown names and
+// impossible insert ranges.
+func TestIlluminaSpec_DefaultsAndValidate(t *testing.T) {
+	d := IlluminaSpec{}.WithDefaults()
+	if d.QualityModel != IlluminaQualityBinned || d.Errors != IlluminaErrorsQuality ||
+		d.InsertSize != (InsertSizeSpec{Dist: InsertSizeNormal, Mean: 350, SD: 50}) {
+		t.Errorf("defaults %+v", d)
+	}
+	if l := (IlluminaSpec{QualityModel: IlluminaQualityLinear}).WithDefaults(); l.Errors != IlluminaErrorsNone {
+		t.Errorf("linear defaults to errors %q, want none", l.Errors)
+	}
+	if l := (IlluminaSpec{QualityModel: IlluminaQualityLinear, Errors: IlluminaErrorsQuality}).WithDefaults(); l.Errors != IlluminaErrorsQuality {
+		t.Errorf("explicit errors overridden: %q", l.Errors)
+	}
+	for _, ok := range []IlluminaSpec{{}, {QualityModel: "linear"}, {InsertSize: InsertSizeSpec{Dist: "lognormal", Mean: 500, SD: 100, Min: 100, Max: 2000}}} {
+		if err := ok.Validate(); err != nil {
+			t.Errorf("%+v: %v", ok, err)
+		}
+	}
+	for _, bad := range []IlluminaSpec{
+		{QualityModel: "rta2"}, {Errors: "indel"}, {InsertSize: InsertSizeSpec{Dist: "uniform"}},
+		{InsertSize: InsertSizeSpec{Mean: -1}}, {InsertSize: InsertSizeSpec{SD: -1}},
+		{InsertSize: InsertSizeSpec{Min: -1}}, {InsertSize: InsertSizeSpec{Min: 500, Max: 400}},
+		{InsertSize: InsertSizeSpec{Max: 100}}, {InsertSize: InsertSizeSpec{Min: 1000}},
+	} {
+		if err := bad.Validate(); err == nil {
+			t.Errorf("%+v accepted", bad)
 		}
 	}
 }

@@ -4,12 +4,14 @@
 #
 # Fields that affect `generate`: sequencer.run_id and flowcell_id (recorded in
 # phantom-manifest.json), sample.*, reads.length, paired_end, reads_per_batch, total_batches,
-# quality.base_quality and quality_decay, performance.max_output_tb/gb (a cap
-# on the bases of each flow cell), and the optional top-level hmm_model_path,
-# population and model_dir. The TUI also reads sequencer.model and
+# performance.max_output_tb/gb (a cap on the bases of each flow cell), the
+# illumina section (quality model, sequencing errors, insert size), and the
+# optional top-level hmm_model_path, population and model_dir.
+# quality.base_quality and quality_decay are used only with
+# illumina.quality_model: linear (the default is binned RTA3 qualities). The TUI also reads sequencer.model and
 # flow_cell_type for its run timing. Every other field is descriptive and not
 # read by the generator; the vendor figures have not been checked against
-# current specifications. The newer settings (seed, platform,
+# current specifications. The other newer settings (seed, platform,
 # read_length_distribution, output, ...) are not part of this v1 layout: use a
 # JSON or flat YAML config, or command-line flags.
 
@@ -62,3 +64,15 @@ technology:
   dual_flow_cell_capable: true           # Can run 1 or 2 flow cells
   two_channel_chemistry: true            # NovaSeq 6000 SBS is 2-channel
   four_channel_chemistry: false
+
+# Illumina read model (#27). quality_model: binned (RTA3 bins Q2/Q12/Q23/Q37,
+# the default) or linear; errors: quality (substitutions at 10^(-Q/10), Q2
+# written as N; the default for binned) or none; insert_size: the paired-end
+# fragment length distribution (normal or lognormal).
+illumina:
+  quality_model: binned
+  errors: quality
+  insert_size:
+    dist: normal
+    mean: 350
+    sd: 50
