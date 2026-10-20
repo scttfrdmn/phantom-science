@@ -78,7 +78,7 @@ output: {proband_fastq: %s, proband_fastq_r2: %s, ground_truth: %s}
 				seqs = append(seqs, sc.Text())
 			case 3:
 				for _, q := range sc.Text() {
-					if !strings.ContainsRune("#-8F", q) {
+					if !strings.ContainsRune("#,:F", q) {
 						t.Fatalf("%s: quality %q is not a binned Illumina quality", path, q)
 					}
 				}

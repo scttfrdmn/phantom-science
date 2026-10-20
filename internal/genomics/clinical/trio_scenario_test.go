@@ -87,7 +87,7 @@ func runTrioScenario(t *testing.T, seed uint64, pop string) (*GroundTruthManifes
 	sc := &ClinicalScenario{
 		Phenotype: PhenotypeSpec{HPOTerms: []string{"HP:0001250", "HP:0011972"}},
 		Trio:      &TrioSpec{Generate: true, DeNovo: true},
-		Sequencer: SequencerSpec{Coverage: 12, ReadLength: 100},
+		Sequencer: SequencerSpec{Coverage: 40, ReadLength: 100},
 		Output: OutputSpec{
 			ProbandFASTQ: filepath.Join(dir, "proband.fastq"),
 			MotherFASTQ:  filepath.Join(dir, "mother.fastq"),
