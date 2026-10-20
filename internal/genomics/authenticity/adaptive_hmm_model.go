@@ -2,6 +2,7 @@ package authenticity
 
 import (
 	"fmt"
+	"math"
 	"math/rand/v2"
 	"sync"
 	"time"
@@ -9,35 +10,38 @@ import (
 	"github.com/scttfrdmn/phantom-science/internal/errors"
 )
 
-// AdaptiveHMMModel is an order-(k-1) Markov chain like HMMKmerModel, with
-// heuristic controls. Training skips k-mers that fail fixed filters
-// (homopolymer runs over 8, a GC-steering rule toward 0.42, and random CpG
-// rejection) and weights the rest by a k-mer diversity target, so the trained
-// transitions are not the reference's empirical frequencies. Generation
-// reweights the transitions toward a target fraction of distinct k-mers in a
-// 100-k-mer window and against homopolymer runs of 5 or more. Qualities in
-// generated sequences come from generateAdaptiveQuality, a heuristic, not
-// from the trained quality distributions.
+// AdaptiveHMMModel is an order-(k-1) Markov chain like HMMKmerModel (no
+// state is hidden despite the name), with heuristic controls at generation
+// time.
+//
+// Training (TrainFromSequence, TrainFromReferenceGenome) accumulates raw
+// transition counts: every k-mer of A/C/G/T counts one observation of its
+// last base following its first k-1 bases. Training may be split across any
+// number of calls; for a sequence cut into chunks, carrying the last k-1
+// bases of each chunk into the next gives exactly the counts of one-shot
+// training. Finalize turns the counts into probabilities with pseudocount
+// PseudoCount (see markov.go): every row sums to 1, unseen contexts are
+// uniform, and the start distribution is the smoothed (k-1)-mer frequency.
+// Finalize runs automatically before generation and on Save.
+//
+// Generation samples its first k-1 bases from the start distribution and
+// then each base from the transition row of the preceding k-1 bases,
+// reweighted toward a target fraction of distinct k-mers in a 100-k-mer
+// window and against homopolymer runs of 5 or more, so generated sequences
+// are not an unbiased sample of the chain. Qualities come from
+// generateAdaptiveQuality, a heuristic, not from training data.
 type AdaptiveHMMModel struct {
 	k                  int
 	stateSpace         []string
-	transitionMatrix   [][]float64
-	emissionMatrix     [][]float64
-	startProbabilities []float64
+	transitionCounts   [][]float64 // raw counts c(s, b) from training
+	transitionMatrix   [][]float64 // P(b | s), valid when finalized
+	startProbabilities []float64   // π(s), valid when finalized
+	finalized          bool        // probabilities are up to date with the counts
 
-	// Adaptive complexity features
-	complexityMemory     []string           // Recent k-mer history for complexity tracking
-	complexityWindowSize int                // Size of complexity tracking window
-	targetComplexity     float64            // Target sequence complexity (0.6-0.8)
-	currentComplexity    float64            // Current measured complexity
-	adaptiveWeights      map[string]float64 // Dynamic weights based on complexity
-
-	// Biological constraints
-	gcContentTarget      float64
-	gcContentTolerance   float64
-	currentGCContent     float64
-	homopolymerMaxLength int
-	cpgDepletionRatio    float64
+	// Generation-time complexity control
+	complexityMemory     []string // Recent k-mer history for complexity tracking
+	complexityWindowSize int      // Size of complexity tracking window
+	targetComplexity     float64  // Target fraction of distinct k-mers in the window
 
 	// Training and generation state
 	totalKmers uint64
@@ -60,7 +64,9 @@ type GenerationStats struct {
 	AverageJSDivergence float64
 }
 
-// NewAdaptiveHMMModel creates a new adaptive HMM model
+// NewAdaptiveHMMModel creates a new, untrained adaptive model of order k-1
+// (2 <= k <= 8); it returns nil for any other k. Its random source starts
+// from DefaultSeed (see SetSeed).
 func NewAdaptiveHMMModel(k int) *AdaptiveHMMModel {
 	if k < 2 || k > 8 {
 		// Use proper error handling instead of panic
@@ -71,344 +77,110 @@ func NewAdaptiveHMMModel(k int) *AdaptiveHMMModel {
 
 	model := &AdaptiveHMMModel{
 		k:                    k,
-		rng:                  rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), 0)), // #nosec G404
-		complexityWindowSize: 100,                                                     // Track last 100 k-mers
-		targetComplexity:     0.7,                                                     // Target fraction of distinct k-mers in the window
-		gcContentTarget:      0.42,                                                    // Target GC fraction
-		gcContentTolerance:   0.015,                                                   // ±0.015 GC fraction
-		homopolymerMaxLength: 8,                                                       // Max 8-base homopolymer runs
-		cpgDepletionRatio:    0.25,                                                    // CpG depletion ratio
-		adaptiveWeights:      make(map[string]float64),
+		rng:                  newModelRNG(DefaultSeed),
+		complexityWindowSize: 100, // Track last 100 k-mers
+		targetComplexity:     0.7, // Target fraction of distinct k-mers in the window
 		complexityMemory:     make([]string, 0),
 	}
 
 	model.initializeStateSpace()
-	model.initializeAdaptiveWeights()
 	return model
 }
 
-// initializeStateSpace generates all possible (k-1)-mers as states
+// initializeStateSpace generates all (k-1)-mers as states, in state-index
+// order, and allocates the count and probability matrices.
 func (m *AdaptiveHMMModel) initializeStateSpace() {
-	bases := []byte{'A', 'T', 'G', 'C'}
-	stateLength := m.k - 1
-
-	var generateStates func(current string, remaining int)
-	generateStates = func(current string, remaining int) {
-		if remaining == 0 {
-			m.stateSpace = append(m.stateSpace, current)
-			return
-		}
-		for _, base := range bases {
-			generateStates(current+string(base), remaining-1)
-		}
-	}
-
-	generateStates("", stateLength)
-
-	// Initialize matrices
+	m.stateSpace = generateStateSpace(m.k)
 	numStates := len(m.stateSpace)
-	m.transitionMatrix = make([][]float64, numStates)
-	m.emissionMatrix = make([][]float64, numStates)
+	m.transitionCounts = newCountMatrix(numStates, 4)
+	m.transitionMatrix = newCountMatrix(numStates, 4)
 	m.startProbabilities = make([]float64, numStates)
+}
 
-	for i := range m.transitionMatrix {
-		m.transitionMatrix[i] = make([]float64, 4) // 4 bases
-		m.emissionMatrix[i] = make([]float64, 42)  // Quality scores 0-41
+// generateStateSpace returns every (k-1)-mer over A,T,G,C in state-index
+// order (first base most significant).
+func generateStateSpace(k int) []string {
+	states := []string{""}
+	for i := 0; i < k-1; i++ {
+		next := make([]string, 0, len(states)*4)
+		for _, s := range states {
+			for _, b := range basesATGC {
+				next = append(next, s+string(b))
+			}
+		}
+		states = next
+	}
+	return states
+}
+
+// TrainFromSequence adds the k-mer transitions of sequence to the model's
+// counts. k-mers containing anything other than A/C/G/T (case-insensitive)
+// are skipped. A sequence shorter than k adds nothing. To train on a long
+// sequence in chunks, prefix each chunk with the last k-1 bases of the
+// previous one.
+func (m *AdaptiveHMMModel) TrainFromSequence(sequence []byte) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.addCounts(sequence)
+	return nil
+}
+
+// addCounts counts sequence's k-mers. The caller must hold m.mu.
+func (m *AdaptiveHMMModel) addCounts(sequence []byte) {
+	if n := countKmers(sequence, m.k, m.transitionCounts); n > 0 {
+		m.totalKmers += n
+		m.trained = true
+		m.finalized = false
 	}
 }
 
-// initializeAdaptiveWeights initializes weights for adaptive complexity control
-func (m *AdaptiveHMMModel) initializeAdaptiveWeights() {
-	// Initialize with uniform weights
-	for _, state := range m.stateSpace {
-		m.adaptiveWeights[state] = 1.0
-	}
-}
-
-// TrainFromReferenceGenome trains the adaptive model with complexity awareness
+// TrainFromReferenceGenome adds the k-mer transitions of every chromosome of
+// refGenome to the counts (chromosomes are independent: no k-mer spans two)
+// and finalizes the model. Chromosomes that fail to load are skipped.
 func (m *AdaptiveHMMModel) TrainFromReferenceGenome(refGenome GenomeInterface) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// Initialize counters
-	transitionCounts := make([][]int, len(m.stateSpace))
-	emissionCounts := make([][]int, len(m.stateSpace))
-	startCounts := make([]int, len(m.stateSpace))
-
-	for i := range transitionCounts {
-		transitionCounts[i] = make([]int, 4)
-		emissionCounts[i] = make([]int, 42)
-	}
-
-	// Process each chromosome with complexity tracking
-	chromosomeNames := refGenome.GetChromosomeNames()
-	for _, chrName := range chromosomeNames {
+	for _, chrName := range refGenome.GetChromosomeNames() {
 		chr, err := refGenome.LoadChromosome(chrName)
 		if err != nil {
 			continue
 		}
-
-		err = m.trainOnChromosomeAdaptive(chr, transitionCounts, emissionCounts, startCounts)
-		if err != nil {
-			return errors.WrapError(err, errors.BiologicalModelError, "adaptive_hmm_model", "train_from_reference", fmt.Sprintf("failed to train on chromosome %s", chrName))
-		}
+		m.addCounts(chr.GetSequence())
 	}
-
-	// Normalize with adaptive complexity control
-	m.normalizeWithComplexityControl(transitionCounts, emissionCounts, startCounts)
-
-	m.trained = true
+	if m.trained {
+		m.finalizeLocked()
+	}
 	return nil
 }
 
-// trainOnChromosomeAdaptive trains on a single chromosome with adaptive complexity tracking
-func (m *AdaptiveHMMModel) trainOnChromosomeAdaptive(chr ChromosomeInterface,
-	transitionCounts, emissionCounts [][]int, startCounts []int) error {
-
-	sequence := chr.GetSequence()
-	if len(sequence) < m.k {
-		return nil
-	}
-
-	// Track complexity during training
-	var kmerWindow []string
-
-	// Process sequence with adaptive complexity awareness
-	for i := 0; i <= len(sequence)-m.k; i++ {
-		kmer := string(sequence[i : i+m.k])
-
-		// Skip k-mers with non-standard bases
-		if !m.isValidKmer(kmer) {
-			continue
-		}
-
-		// Update complexity window
-		kmerWindow = append(kmerWindow, kmer)
-		if len(kmerWindow) > m.complexityWindowSize {
-			kmerWindow = kmerWindow[1:]
-		}
-
-		// Calculate current window complexity
-		windowComplexity := m.calculateWindowComplexity(kmerWindow)
-
-		// Apply adaptive weighting based on complexity
-		weight := m.getAdaptiveWeight(kmer, windowComplexity)
-
-		// Apply biological filters
-		if !m.passesBiologicalFilters(kmer, kmerWindow) {
-			continue
-		}
-
-		state := kmer[:m.k-1]
-		nextBase := kmer[m.k-1]
-
-		stateIndex := m.getStateIndex(state)
-		if stateIndex == -1 {
-			continue
-		}
-
-		baseIndex := m.getBaseIndex(nextBase)
-		if baseIndex == -1 {
-			continue
-		}
-
-		// Count transitions with adaptive weighting
-		if i == 0 {
-			startCounts[stateIndex] += int(weight * 100)
-		} else {
-			transitionCounts[stateIndex][baseIndex] += int(weight * 100)
-		}
-
-		// Generate quality score
-		qualityScore := m.generateAdaptiveQuality(kmer, windowComplexity)
-		if qualityScore >= 0 && qualityScore < 42 {
-			emissionCounts[stateIndex][qualityScore] += int(weight * 100)
-		}
-
-		m.totalKmers++
-	}
-
-	return nil
+// Finalize estimates the transition and start probabilities from the counts
+// accumulated so far (see markov.go). It is idempotent; training after
+// Finalize marks the model stale, and the next Finalize, GenerateSequence or
+// Save re-estimates from all counts.
+func (m *AdaptiveHMMModel) Finalize() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.finalizeLocked()
 }
 
-// calculateWindowComplexity calculates the complexity of a k-mer window
-func (m *AdaptiveHMMModel) calculateWindowComplexity(window []string) float64 {
-	if len(window) < 2 {
-		return 0.0
+// finalizeLocked is Finalize with m.mu held for writing.
+func (m *AdaptiveHMMModel) finalizeLocked() {
+	if m.finalized {
+		return
 	}
-
-	// Count unique k-mers in window
-	uniqueKmers := make(map[string]bool)
-	for _, kmer := range window {
-		uniqueKmers[kmer] = true
-	}
-
-	// Calculate complexity as ratio of unique k-mers to total k-mers
-	return float64(len(uniqueKmers)) / float64(len(window))
+	estimateChain(m.transitionCounts, m.transitionMatrix, m.startProbabilities)
+	m.finalized = true
 }
 
-// getAdaptiveWeight calculates adaptive weight based on complexity needs
-func (m *AdaptiveHMMModel) getAdaptiveWeight(kmer string, currentComplexity float64) float64 {
-	baseWeight := 1.0
-
-	// If current complexity is too low, favor rare k-mers
-	if currentComplexity < m.targetComplexity {
-		// Check if this k-mer would increase complexity
-		if m.wouldIncreaseComplexity(kmer) {
-			baseWeight *= 2.0 // Favor complexity-increasing k-mers
-		} else {
-			baseWeight *= 0.5 // Reduce weight for common k-mers
-		}
-	}
-
-	// If current complexity is too high, favor common k-mers
-	if currentComplexity > m.targetComplexity+0.1 {
-		if m.wouldIncreaseComplexity(kmer) {
-			baseWeight *= 0.5 // Reduce weight for rare k-mers
-		} else {
-			baseWeight *= 1.5 // Favor common k-mers
-		}
-	}
-
-	return baseWeight
-}
-
-// wouldIncreaseComplexity checks if adding this k-mer would increase complexity
+// wouldIncreaseComplexity reports whether kmer is absent from the recent
+// k-mer window.
 func (m *AdaptiveHMMModel) wouldIncreaseComplexity(kmer string) bool {
-	// Check if k-mer is in recent memory
 	for _, memKmer := range m.complexityMemory {
 		if memKmer == kmer {
-			return false // Would not increase complexity
+			return false
 		}
 	}
-	return true // Would increase complexity
-}
-
-// passesBiologicalFilters applies the homopolymer, GC and CpG training filters.
-func (m *AdaptiveHMMModel) passesBiologicalFilters(kmer string, window []string) bool {
-	// Homopolymer filter
-	if !m.passesHomopolymerFilter(kmer) {
-		return false
-	}
-
-	// GC content filter
-	if !m.passesGCFilter(kmer, window) {
-		return false
-	}
-
-	// CpG depletion filter
-	if !m.passesCpGFilter(kmer) {
-		return false
-	}
-
-	return true
-}
-
-// passesHomopolymerFilter checks homopolymer run length
-func (m *AdaptiveHMMModel) passesHomopolymerFilter(kmer string) bool {
-	currentRun := 1
-	for i := 1; i < len(kmer); i++ {
-		if kmer[i] == kmer[i-1] {
-			currentRun++
-			if currentRun > m.homopolymerMaxLength {
-				return false
-			}
-		} else {
-			currentRun = 1
-		}
-	}
-	return true
-}
-
-// passesGCFilter accepts a training k-mer only if its GC fraction moves the
-// recent window toward gcContentTarget; thresholds tighten as the window
-// deviates further.
-func (m *AdaptiveHMMModel) passesGCFilter(kmer string, window []string) bool {
-	// Calculate current window GC content
-	gcCount := 0
-	totalBases := 0
-
-	for _, windowKmer := range window {
-		for _, base := range windowKmer {
-			totalBases++
-			if base == 'G' || base == 'C' {
-				gcCount++
-			}
-		}
-	}
-
-	if totalBases == 0 {
-		return true
-	}
-
-	currentGC := float64(gcCount) / float64(totalBases)
-
-	// Check if adding this k-mer would improve GC content
-	kmerGC := 0
-	for _, base := range kmer {
-		if base == 'G' || base == 'C' {
-			kmerGC++
-		}
-	}
-
-	kmerGCRatio := float64(kmerGC) / float64(len(kmer))
-
-	deviationFromTarget := currentGC - m.gcContentTarget
-	absDeviation := deviationFromTarget
-	if absDeviation < 0 {
-		absDeviation = -absDeviation
-	}
-
-	// If we're significantly outside tolerance, be very aggressive
-	if absDeviation > m.gcContentTolerance*2 {
-		if deviationFromTarget > 0 {
-			// Too GC-rich, strongly favor AT-rich k-mers
-			return kmerGCRatio < 0.3
-		} else {
-			// Too AT-rich, strongly favor GC-rich k-mers
-			return kmerGCRatio > 0.7
-		}
-	}
-
-	// If we're moderately outside tolerance, be moderately aggressive
-	if absDeviation > m.gcContentTolerance {
-		if deviationFromTarget > 0 {
-			// Too GC-rich, favor AT-rich k-mers
-			return kmerGCRatio < 0.35
-		} else {
-			// Too AT-rich, favor GC-rich k-mers
-			return kmerGCRatio > 0.65
-		}
-	}
-
-	// If we're within tolerance, apply gentle corrections
-	if deviationFromTarget > 0 {
-		// Slightly too GC-rich, gently favor AT-rich k-mers
-		return kmerGCRatio < 0.5
-	} else if deviationFromTarget < 0 {
-		// Slightly too AT-rich, gently favor GC-rich k-mers
-		return kmerGCRatio > 0.5
-	}
-
-	return true
-}
-
-// passesCpGFilter keeps a k-mer containing CpG with probability
-// cpgDepletionRatio.
-func (m *AdaptiveHMMModel) passesCpGFilter(kmer string) bool {
-	// Count CpG dinucleotides in k-mer
-	cpgCount := 0
-	for i := 0; i < len(kmer)-1; i++ {
-		if kmer[i] == 'C' && kmer[i+1] == 'G' {
-			cpgCount++
-		}
-	}
-
-	// Apply CpG depletion
-	if cpgCount > 0 {
-		return m.rng.Float64() < m.cpgDepletionRatio
-	}
-
 	return true
 }
 
@@ -448,151 +220,9 @@ func (m *AdaptiveHMMModel) generateAdaptiveQuality(kmer string, complexity float
 	return quality
 }
 
-// normalizeWithComplexityControl normalizes probabilities with complexity control
-func (m *AdaptiveHMMModel) normalizeWithComplexityControl(
-	transitionCounts, emissionCounts [][]int, startCounts []int) {
-
-	// Normalize start probabilities
-	startTotal := 0
-	for _, count := range startCounts {
-		startTotal += count
-	}
-
-	if startTotal > 0 {
-		for i, count := range startCounts {
-			m.startProbabilities[i] = float64(count) / float64(startTotal)
-		}
-	} else {
-		for i := range m.startProbabilities {
-			m.startProbabilities[i] = 1.0 / float64(len(m.startProbabilities))
-		}
-	}
-
-	// Normalize transition probabilities with complexity awareness
-	for i, counts := range transitionCounts {
-		total := 0
-		for _, count := range counts {
-			total += count
-		}
-
-		if total > 0 {
-			for j, count := range counts {
-				baseProb := float64(count) / float64(total)
-
-				// Apply adaptive complexity weighting
-				state := m.stateSpace[i]
-				nextBase := m.getBaseFromIndex(j)
-				nextKmer := state + string(nextBase)
-
-				complexityWeight := m.getComplexityWeight(nextKmer)
-				biologicalWeight := m.getBiologicalWeight(state, nextBase)
-
-				finalProb := baseProb * complexityWeight * biologicalWeight
-				m.transitionMatrix[i][j] = finalProb
-			}
-
-			// Renormalize
-			m.renormalizeTransitionRow(i)
-		} else {
-			// Uniform distribution
-			for j := range m.transitionMatrix[i] {
-				m.transitionMatrix[i][j] = 0.25
-			}
-		}
-	}
-
-	// Normalize emission probabilities
-	for i, counts := range emissionCounts {
-		total := 0
-		for _, count := range counts {
-			total += count
-		}
-
-		if total > 0 {
-			for j, count := range counts {
-				m.emissionMatrix[i][j] = float64(count) / float64(total)
-			}
-		} else {
-			for j := range m.emissionMatrix[i] {
-				m.emissionMatrix[i][j] = m.getRealisticQualityProb(j)
-			}
-		}
-	}
-}
-
-// getComplexityWeight calculates weight based on complexity needs
-func (m *AdaptiveHMMModel) getComplexityWeight(kmer string) float64 {
-	// Favor k-mers that would increase complexity
-	if weight, exists := m.adaptiveWeights[kmer]; exists {
-		return weight
-	}
-	return 1.0
-}
-
-// getBiologicalWeight returns a heuristic multiplier for a transition: it
-// steers toward gcContentTarget and down-weights CpG and homopolymer
-// extensions.
-func (m *AdaptiveHMMModel) getBiologicalWeight(state string, nextBase byte) float64 {
-	weight := 1.0
-
-	// Local GC content of the state
-	localGC := 0.0
-	if len(state) > 0 {
-		gcCount := 0
-		for _, base := range state {
-			if base == 'G' || base == 'C' {
-				gcCount++
-			}
-		}
-		localGC = float64(gcCount) / float64(len(state))
-	}
-
-	// Calculate deviation from target GC content
-	gcDeviation := localGC - m.gcContentTarget
-
-	// Apply adaptive GC content weighting
-	if nextBase == 'G' || nextBase == 'C' {
-		// GC base - reduce weight if we're already GC-rich
-		baseGCWeight := m.gcContentTarget / 0.5
-		if gcDeviation > m.gcContentTolerance {
-			// Too GC-rich, penalize GC bases more heavily
-			penalty := 1.0 + (gcDeviation-m.gcContentTolerance)*10.0
-			baseGCWeight /= penalty
-		} else if gcDeviation < -m.gcContentTolerance {
-			// Too AT-rich, favor GC bases more heavily
-			bonus := 1.0 + (-gcDeviation-m.gcContentTolerance)*5.0
-			baseGCWeight *= bonus
-		}
-		weight *= baseGCWeight
-	} else {
-		// AT base - reduce weight if we're already AT-rich
-		baseATWeight := (1.0 - m.gcContentTarget) / 0.5
-		if gcDeviation < -m.gcContentTolerance {
-			// Too AT-rich, penalize AT bases more heavily
-			penalty := 1.0 + (-gcDeviation-m.gcContentTolerance)*10.0
-			baseATWeight /= penalty
-		} else if gcDeviation > m.gcContentTolerance {
-			// Too GC-rich, favor AT bases more heavily
-			bonus := 1.0 + (gcDeviation-m.gcContentTolerance)*5.0
-			baseATWeight *= bonus
-		}
-		weight *= baseATWeight
-	}
-
-	// CpG depletion
-	if len(state) > 0 && state[len(state)-1] == 'C' && nextBase == 'G' {
-		weight *= m.cpgDepletionRatio
-	}
-
-	// Homopolymer penalty
-	if len(state) > 0 && state[len(state)-1] == nextBase {
-		weight *= 0.7
-	}
-
-	return weight
-}
-
-// GenerateSequence generates a sequence with adaptive complexity control
+// GenerateSequence generates a sequence with adaptive complexity control.
+// It finalizes the model first if training has added counts since the last
+// Finalize.
 func (m *AdaptiveHMMModel) GenerateSequence(length int) (*GenerationResult, error) {
 	// Read trained/k under RLock before entering the generation lock.
 	m.mu.RLock()
@@ -610,9 +240,8 @@ func (m *AdaptiveHMMModel) GenerateSequence(length int) (*GenerationResult, erro
 
 	start := time.Now()
 
-	// Generate with adaptive complexity control.
 	// generateAdaptiveSequence acquires a full write lock internally because it
-	// writes m.complexityMemory during generation.
+	// may finalize and writes m.complexityMemory during generation.
 	sequence, qualities, states := m.generateAdaptiveSequence(length)
 
 	// Calculate k-mer frequencies (local computation, no shared state).
@@ -624,7 +253,7 @@ func (m *AdaptiveHMMModel) GenerateSequence(length int) (*GenerationResult, erro
 
 	// Update shared generation stats under a write lock.
 	m.mu.Lock()
-	m.updateGenerationStats(sequence, qualities)
+	m.updateGenerationStats(sequence)
 	m.mu.Unlock()
 
 	return &GenerationResult{
@@ -637,62 +266,38 @@ func (m *AdaptiveHMMModel) GenerateSequence(length int) (*GenerationResult, erro
 }
 
 // generateAdaptiveSequence generates sequence with adaptive complexity control.
-// Must be called without holding m.mu — acquires a full write lock because it
-// writes m.complexityMemory throughout the generation loop.
+// Must be called without holding m.mu. States[j] is the state (context
+// x[j:j+k-1]) that emitted base j+k-1.
 func (m *AdaptiveHMMModel) generateAdaptiveSequence(length int) ([]byte, []byte, []int) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.finalizeLocked()
 
+	k := m.k
 	sequence := make([]byte, length)
 	qualities := make([]byte, length)
-	states := make([]int, length)
+	states := make([]int, 0, length-k+1)
 
-	// Initialize complexity tracking
-	m.complexityMemory = make([]string, 0)
+	m.complexityMemory = make([]string, 0, m.complexityWindowSize)
 
-	// Choose initial state
-	currentState := m.sampleFromDistribution(m.startProbabilities)
-	states[0] = currentState
-
-	// Generate initial k-mer
+	// Initial k-1 bases from the start distribution.
+	currentState := sampleIndex(m.rng, m.startProbabilities)
 	initialKmer := m.stateSpace[currentState]
-	for i, base := range initialKmer {
-		sequence[i] = byte(base)                                         // #nosec G115
+	for i := 0; i < len(initialKmer); i++ {
+		sequence[i] = initialKmer[i]
 		qualities[i] = byte(m.generateAdaptiveQuality(initialKmer, 0.5)) // #nosec G115
 	}
 
-	// Add initial k-mer to memory
-	if len(initialKmer) == m.k {
-		m.updateComplexityMemory(initialKmer)
-	}
-
-	// Generate remaining sequence with adaptive complexity control
-	for i := m.k - 1; i < length; i++ {
-		// Calculate current sequence complexity
+	for i := k - 1; i < length; i++ {
+		states = append(states, currentState)
 		currentComplexity := m.calculateCurrentComplexity(sequence, i)
 
-		// Generate next base with adaptive control
 		nextBase := m.generateAdaptiveBase(currentState, sequence, i, currentComplexity)
-		nextQuality := m.generateAdaptiveQuality(string(nextBase), currentComplexity)
-
 		sequence[i] = nextBase
-		qualities[i] = byte(nextQuality) // #nosec G115
+		qualities[i] = byte(m.generateAdaptiveQuality(string(nextBase), currentComplexity)) // #nosec G115
 
-		// Update complexity memory
-		if i >= m.k-1 {
-			newKmer := string(sequence[i-m.k+1 : i+1])
-			m.updateComplexityMemory(newKmer)
-		}
-
-		// Update state
-		if i < length-1 {
-			newState := string(sequence[i-m.k+2 : i+1])
-			currentState = m.getStateIndex(newState)
-			if currentState == -1 {
-				currentState = 0
-			}
-			states[i] = currentState
-		}
+		m.updateComplexityMemory(string(sequence[i-k+1 : i+1]))
+		currentState = contextIndex(sequence[i-k+2 : i+1])
 	}
 
 	return sequence, qualities, states
@@ -732,15 +337,14 @@ func (m *AdaptiveHMMModel) calculateCurrentComplexity(sequence []byte, pos int) 
 	return float64(len(uniqueKmers)) / float64(totalPossibleKmers)
 }
 
-// generateAdaptiveBase generates next base with adaptive complexity control
+// generateAdaptiveBase draws the next base from the (smoothed, strictly
+// positive) transition row of state, reweighted for complexity and against
+// long homopolymers. Every base keeps a positive weight.
 func (m *AdaptiveHMMModel) generateAdaptiveBase(state int, sequence []byte, pos int, complexity float64) byte {
-	transitionProbs := make([]float64, 4)
-	copy(transitionProbs, m.transitionMatrix[state])
+	var transitionProbs [4]float64
+	copy(transitionProbs[:], m.transitionMatrix[state])
 
-	// Apply adaptive complexity adjustments
-	for i := 0; i < 4; i++ {
-		nextBase := []byte{'A', 'T', 'G', 'C'}[i]
-
+	for i, nextBase := range basesATGC {
 		// Check if this base would create a k-mer that increases complexity
 		if pos >= m.k-1 {
 			potentialKmer := string(sequence[pos-m.k+1:pos]) + string(nextBase)
@@ -764,16 +368,14 @@ func (m *AdaptiveHMMModel) generateAdaptiveBase(state int, sequence []byte, pos 
 			}
 		}
 
-		// Apply biological constraints
+		// Penalise extending a homopolymer run of 5 or more.
 		if pos > 0 {
 			prevBase := sequence[pos-1]
 			if nextBase == prevBase {
-				// Check homopolymer length
 				runLength := 1
 				for j := pos - 2; j >= 0 && sequence[j] == prevBase; j-- {
 					runLength++
 				}
-
 				if runLength >= 5 {
 					transitionProbs[i] *= 0.2
 				}
@@ -781,19 +383,7 @@ func (m *AdaptiveHMMModel) generateAdaptiveBase(state int, sequence []byte, pos 
 		}
 	}
 
-	// Renormalize
-	sum := 0.0
-	for _, prob := range transitionProbs {
-		sum += prob
-	}
-	if sum > 0 {
-		for i := range transitionProbs {
-			transitionProbs[i] /= sum
-		}
-	}
-
-	baseIndex := m.sampleFromDistribution(transitionProbs)
-	return []byte{'A', 'T', 'G', 'C'}[baseIndex]
+	return basesATGC[sampleIndex(m.rng, transitionProbs[:])]
 }
 
 // updateComplexityMemory updates the complexity memory window
@@ -805,7 +395,7 @@ func (m *AdaptiveHMMModel) updateComplexityMemory(kmer string) {
 }
 
 // updateGenerationStats updates generation statistics
-func (m *AdaptiveHMMModel) updateGenerationStats(sequence, qualities []byte) {
+func (m *AdaptiveHMMModel) updateGenerationStats(sequence []byte) {
 	m.generationStats.TotalSequences++
 	m.generationStats.TotalBases += int64(len(sequence))
 
@@ -848,32 +438,41 @@ func (m *AdaptiveHMMModel) calculateSequenceComplexity(sequence []byte) float64 
 
 // Utility methods
 
+// K returns the k-mer size (the model has order k-1).
 func (m *AdaptiveHMMModel) K() int {
 	return m.k
 }
 
+// IsTrained reports whether at least one k-mer has been counted.
 func (m *AdaptiveHMMModel) IsTrained() bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.trained
 }
 
+// TotalKmers returns the number of k-mers counted in training.
 func (m *AdaptiveHMMModel) TotalKmers() uint64 {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.totalKmers
 }
 
+// StateSpace returns the (k-1)-mer states in state-index order.
 func (m *AdaptiveHMMModel) StateSpace() []string {
 	return m.stateSpace
 }
 
+// SetSeed reseeds the model's random source; the same seed gives the same
+// generated sequences.
 func (m *AdaptiveHMMModel) SetSeed(seed int64) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.rng = rand.New(rand.NewPCG(uint64(seed), 0)) // #nosec G115 G404
+	m.rng = newModelRNG(seed)
 }
 
+// ValidateModel checks that the model is trained, its matrices have the
+// right shape, and (once finalized) that every transition row and the start
+// distribution sum to 1.
 func (m *AdaptiveHMMModel) ValidateModel() error {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -881,91 +480,62 @@ func (m *AdaptiveHMMModel) ValidateModel() error {
 	if !m.trained {
 		return errors.NewValidationError("adaptive_hmm_model", "validate_model", "model has not been trained")
 	}
+	return validateChain("adaptive_hmm_model", m.k, m.stateSpace, m.transitionCounts, m.transitionMatrix, m.startProbabilities, m.finalized)
+}
 
+// validateChain checks the shapes of a chain's matrices and, when
+// checkProbs is set, that its rows and start distribution sum to 1.
+func validateChain(component string, k int, stateSpace []string, counts, trans [][]float64, start []float64, checkProbs bool) error {
+	numStates := 1 << (2 * (k - 1))
+	if len(stateSpace) != numStates || len(trans) != numStates || len(start) != numStates ||
+		(counts != nil && len(counts) != numStates) {
+		return errors.NewValidationError(component, "validate_model", fmt.Sprintf("expected %d states for k=%d", numStates, k))
+	}
+	for i, s := range stateSpace {
+		if contextIndex([]byte(s)) != i || len(s) != k-1 {
+			return errors.NewValidationError(component, "validate_model", fmt.Sprintf("state %d is %q, not in state-index order", i, s))
+		}
+	}
+	for i := range trans {
+		if len(trans[i]) != 4 || (counts != nil && len(counts[i]) != 4) {
+			return errors.NewValidationError(component, "validate_model", fmt.Sprintf("state %d does not have 4 transitions", i))
+		}
+	}
+	if !checkProbs {
+		return nil
+	}
+	const tol = 1e-9
+	for i, row := range trans {
+		sum := 0.0
+		for _, p := range row {
+			if p < 0 || math.IsNaN(p) {
+				return errors.NewValidationError(component, "validate_model", fmt.Sprintf("state %d has an invalid transition probability", i))
+			}
+			sum += p
+		}
+		if math.Abs(sum-1) > tol {
+			return errors.NewValidationError(component, "validate_model", fmt.Sprintf("transition probabilities for state %d sum to %f, not 1", i, sum))
+		}
+	}
+	sum := 0.0
+	for _, p := range start {
+		if p < 0 || math.IsNaN(p) {
+			return errors.NewValidationError(component, "validate_model", "invalid start probability")
+		}
+		sum += p
+	}
+	if math.Abs(sum-1) > tol {
+		return errors.NewValidationError(component, "validate_model", fmt.Sprintf("start probabilities sum to %f, not 1", sum))
+	}
 	return nil
 }
 
+// GetGenerationStats returns the statistics accumulated over all generated
+// sequences.
 func (m *AdaptiveHMMModel) GetGenerationStats() GenerationStats {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.generationStats
-}
-
-// Helper methods
-
-func (m *AdaptiveHMMModel) isValidKmer(kmer string) bool {
-	for _, base := range kmer {
-		if base != 'A' && base != 'T' && base != 'G' && base != 'C' {
-			return false
-		}
-	}
-	return true
-}
-
-func (m *AdaptiveHMMModel) getStateIndex(state string) int {
-	for i, s := range m.stateSpace {
-		if s == state {
-			return i
-		}
-	}
-	return -1
-}
-
-func (m *AdaptiveHMMModel) getBaseIndex(base byte) int {
-	switch base {
-	case 'A':
-		return 0
-	case 'T':
-		return 1
-	case 'G':
-		return 2
-	case 'C':
-		return 3
-	default:
-		return -1
-	}
-}
-
-func (m *AdaptiveHMMModel) getBaseFromIndex(index int) byte {
-	bases := []byte{'A', 'T', 'G', 'C'}
-	if index >= 0 && index < len(bases) {
-		return bases[index]
-	}
-	return 'N'
-}
-
-func (m *AdaptiveHMMModel) sampleFromDistribution(probs []float64) int {
-	r := m.rng.Float64()
-	cumulative := 0.0
-
-	for i, prob := range probs {
-		cumulative += prob
-		if r <= cumulative {
-			return i
-		}
-	}
-
-	return len(probs) - 1
-}
-
-func (m *AdaptiveHMMModel) getRealisticQualityProb(quality int) float64 {
-	if quality >= 20 && quality <= 35 {
-		return 0.8 / 16.0
-	}
-	return 0.2 / 26.0
-}
-
-func (m *AdaptiveHMMModel) renormalizeTransitionRow(row int) {
-	sum := 0.0
-	for _, prob := range m.transitionMatrix[row] {
-		sum += prob
-	}
-
-	if sum > 0 {
-		for j := range m.transitionMatrix[row] {
-			m.transitionMatrix[row][j] /= sum
-		}
-	}
 }
 
 func (m *AdaptiveHMMModel) findMaxHomopolymerRun(sequence []byte) int {
@@ -992,46 +562,4 @@ func (m *AdaptiveHMMModel) findMaxHomopolymerRun(sequence []byte) int {
 	}
 
 	return maxRun
-}
-
-// TrainFromSequence trains the model on a raw sequence
-func (m *AdaptiveHMMModel) TrainFromSequence(sequence []byte) error {
-	if len(sequence) < m.k {
-		return nil
-	}
-
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	// Process sequence and update model
-	for i := 0; i <= len(sequence)-m.k; i++ {
-		kmer := string(sequence[i : i+m.k])
-		if !m.isValidKmer(kmer) {
-			continue
-		}
-
-		// Update k-mer counts
-		m.totalKmers++
-
-		// Update complexity memory
-		m.updateComplexityMemory(kmer)
-
-		// Train transitions if we have a previous k-mer
-		if i > 0 {
-			prevKmer := string(sequence[i-1 : i-1+m.k])
-			if m.isValidKmer(prevKmer) {
-				// Update transition probabilities
-				prevStateIndex := m.getStateIndex(prevKmer[:m.k-1])
-				nextBase := kmer[m.k-1]
-				nextBaseIndex := m.getBaseIndex(nextBase)
-
-				if prevStateIndex >= 0 && nextBaseIndex >= 0 {
-					m.transitionMatrix[prevStateIndex][nextBaseIndex] += 1.0
-				}
-			}
-		}
-	}
-
-	m.trained = true
-	return nil
 }

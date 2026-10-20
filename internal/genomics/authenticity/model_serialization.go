@@ -3,7 +3,6 @@ package authenticity
 import (
 	"encoding/json"
 	"fmt"
-	"math/rand/v2"
 	"os"
 	"time"
 )
@@ -37,30 +36,54 @@ type hmmKmerModelData struct {
 	Trained            bool        `json:"trained"`
 }
 
-// adaptiveHMMModelData is the serializable snapshot of AdaptiveHMMModel.
-// Excludes: mu, rng, complexityMemory (runtime sliding window),
-// currentComplexity, currentGCContent (runtime metrics).
+// adaptiveHMMModelData is the serializable snapshot of AdaptiveHMMModel
+// (format version 2). It holds the raw training counts, so a loaded model can
+// be trained further, and the finalized probabilities estimated from them
+// with PseudoCount. Excludes: mu, rng, complexityMemory and generation
+// statistics (runtime state).
 type adaptiveHMMModelData struct {
-	K                    int                `json:"k"`
-	StateSpace           []string           `json:"state_space"`
-	TransitionMatrix     [][]float64        `json:"transition_matrix"`
-	EmissionMatrix       [][]float64        `json:"emission_matrix"`
-	StartProbabilities   []float64          `json:"start_probabilities"`
-	TotalKmers           uint64             `json:"total_kmers"`
-	Trained              bool               `json:"trained"`
-	ComplexityWindowSize int                `json:"complexity_window_size"`
-	TargetComplexity     float64            `json:"target_complexity"`
-	GCContentTarget      float64            `json:"gc_content_target"`
-	GCContentTolerance   float64            `json:"gc_content_tolerance"`
-	HomopolymerMaxLength int                `json:"homopolymer_max_length"`
-	CpGDepletionRatio    float64            `json:"cpg_depletion_ratio"`
-	AdaptiveWeights      map[string]float64 `json:"adaptive_weights"`
+	K                    int         `json:"k"`
+	StateSpace           []string    `json:"state_space"`
+	PseudoCount          float64     `json:"pseudocount"`
+	TransitionCounts     [][]float64 `json:"transition_counts"`
+	TransitionMatrix     [][]float64 `json:"transition_matrix"`
+	StartProbabilities   []float64   `json:"start_probabilities"`
+	TotalKmers           uint64      `json:"total_kmers"`
+	Trained              bool        `json:"trained"`
+	ComplexityWindowSize int         `json:"complexity_window_size"`
+	TargetComplexity     float64     `json:"target_complexity"`
 }
 
+// Envelope format and versions. Version 2 (this release) changed how models
+// are trained: transition and start probabilities use pseudocount
+// PseudoCount, and adaptive models store their raw counts. Version 1
+// HMMKmerModel files are still loaded (their probabilities are normalised);
+// version 1 AdaptiveHMMModel files are rejected because they were trained
+// with the wrong context and no normalisation (generation from them was
+// degenerate, e.g. all C), and must be retrained.
 const (
 	envelopeFormat  = "phantom-science-hmm"
-	envelopeVersion = "1"
+	envelopeVersion = "2"
 )
+
+// readEnvelope reads and checks the envelope of the model file at path.
+func readEnvelope(component, path, modelType string) (*ModelEnvelope, error) {
+	raw, err := os.ReadFile(path) // #nosec G304 -- model path chosen by the user
+	if err != nil {
+		return nil, fmt.Errorf("%s: read file: %w", component, err)
+	}
+	var env ModelEnvelope
+	if err := json.Unmarshal(raw, &env); err != nil {
+		return nil, fmt.Errorf("%s: unmarshal envelope: %w", component, err)
+	}
+	if env.Format != envelopeFormat {
+		return nil, fmt.Errorf("%s: unexpected format %q", component, env.Format)
+	}
+	if env.ModelType != modelType {
+		return nil, fmt.Errorf("%s: wrong model type %q", component, env.ModelType)
+	}
+	return &env, nil
+}
 
 // Save serializes the trained HMMKmerModel to a JSON file at path.
 // Returns an error if the model has not been trained.
@@ -109,35 +132,38 @@ func (m *HMMKmerModel) Save(path string) error {
 }
 
 // LoadHMMKmerModel deserializes a HMMKmerModel from the JSON file at path.
+// Format versions 1 and 2 are accepted.
 func LoadHMMKmerModel(path string) (*HMMKmerModel, error) {
-	raw, err := os.ReadFile(path)
+	env, err := readEnvelope("hmm_kmer_model", path, "HMMKmerModel")
 	if err != nil {
-		return nil, fmt.Errorf("hmm_kmer_model: read file: %w", err)
+		return nil, err
 	}
-
-	var env ModelEnvelope
-	if err := json.Unmarshal(raw, &env); err != nil {
-		return nil, fmt.Errorf("hmm_kmer_model: unmarshal envelope: %w", err)
-	}
-
-	if env.Format != envelopeFormat {
-		return nil, fmt.Errorf("hmm_kmer_model: unexpected format %q", env.Format)
-	}
-	if env.Version != envelopeVersion {
+	if env.Version != "1" && env.Version != envelopeVersion {
 		return nil, fmt.Errorf("hmm_kmer_model: unsupported version %q", env.Version)
-	}
-	if env.ModelType != "HMMKmerModel" {
-		return nil, fmt.Errorf("hmm_kmer_model: wrong model type %q", env.ModelType)
 	}
 
 	var data hmmKmerModelData
 	if err := json.Unmarshal(env.Data, &data); err != nil {
 		return nil, fmt.Errorf("hmm_kmer_model: unmarshal data: %w", err)
 	}
+	if data.K < 2 || data.K > 8 {
+		return nil, fmt.Errorf("hmm_kmer_model: invalid k=%d in saved model", data.K)
+	}
 
 	m := NewHMMKmerModel(data.K)
 	if m == nil {
 		return nil, fmt.Errorf("hmm_kmer_model: invalid k=%d in saved model", data.K)
+	}
+	if err := validateChain("hmm_kmer_model", data.K, data.StateSpace, nil, data.TransitionMatrix, data.StartProbabilities, false); err != nil {
+		return nil, fmt.Errorf("hmm_kmer_model: malformed model: %w", err)
+	}
+	if len(data.EmissionMatrix) != len(data.StateSpace) {
+		return nil, fmt.Errorf("hmm_kmer_model: malformed model: %d emission rows for %d states", len(data.EmissionMatrix), len(data.StateSpace))
+	}
+	for i, row := range data.EmissionMatrix {
+		if len(row) != 42 {
+			return nil, fmt.Errorf("hmm_kmer_model: malformed model: emission row %d has %d values, want 42", i, len(row))
+		}
 	}
 
 	m.stateSpace = data.StateSpace
@@ -146,7 +172,7 @@ func LoadHMMKmerModel(path string) (*HMMKmerModel, error) {
 	m.startProbabilities = data.StartProbabilities
 	m.totalKmers = data.TotalKmers
 	m.trained = data.Trained
-	m.rng = rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), 0)) // #nosec G404
+	m.rng = newModelRNG(DefaultSeed)
 
 	if err := m.ValidateModel(); err != nil {
 		return nil, fmt.Errorf("hmm_kmer_model: validation after load: %w", err)
@@ -155,32 +181,29 @@ func LoadHMMKmerModel(path string) (*HMMKmerModel, error) {
 	return m, nil
 }
 
-// Save serializes the trained AdaptiveHMMModel to a JSON file at path.
-// Returns an error if the model has not been trained.
+// Save serializes the trained AdaptiveHMMModel to a JSON file at path,
+// finalizing it first. Returns an error if the model has not been trained.
 // The recommended file extension is .hmm.json.
 func (m *AdaptiveHMMModel) Save(path string) error {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	if !m.trained {
 		return fmt.Errorf("adaptive_hmm_model: cannot save untrained model")
 	}
+	m.finalizeLocked()
 
 	data := adaptiveHMMModelData{
 		K:                    m.k,
 		StateSpace:           m.stateSpace,
+		PseudoCount:          PseudoCount,
+		TransitionCounts:     m.transitionCounts,
 		TransitionMatrix:     m.transitionMatrix,
-		EmissionMatrix:       m.emissionMatrix,
 		StartProbabilities:   m.startProbabilities,
 		TotalKmers:           m.totalKmers,
 		Trained:              m.trained,
 		ComplexityWindowSize: m.complexityWindowSize,
 		TargetComplexity:     m.targetComplexity,
-		GCContentTarget:      m.gcContentTarget,
-		GCContentTolerance:   m.gcContentTolerance,
-		HomopolymerMaxLength: m.homopolymerMaxLength,
-		CpGDepletionRatio:    m.cpgDepletionRatio,
-		AdaptiveWeights:      m.adaptiveWeights,
 	}
 
 	raw, err := json.Marshal(data)
@@ -208,53 +231,53 @@ func (m *AdaptiveHMMModel) Save(path string) error {
 	return nil
 }
 
-// LoadAdaptiveHMMModel deserializes an AdaptiveHMMModel from the JSON file at path.
+// LoadAdaptiveHMMModel deserializes an AdaptiveHMMModel from the JSON file at
+// path. Only format version 2 is accepted; see envelopeVersion.
 func LoadAdaptiveHMMModel(path string) (*AdaptiveHMMModel, error) {
-	raw, err := os.ReadFile(path)
+	env, err := readEnvelope("adaptive_hmm_model", path, "AdaptiveHMMModel")
 	if err != nil {
-		return nil, fmt.Errorf("adaptive_hmm_model: read file: %w", err)
+		return nil, err
 	}
-
-	var env ModelEnvelope
-	if err := json.Unmarshal(raw, &env); err != nil {
-		return nil, fmt.Errorf("adaptive_hmm_model: unmarshal envelope: %w", err)
-	}
-
-	if env.Format != envelopeFormat {
-		return nil, fmt.Errorf("adaptive_hmm_model: unexpected format %q", env.Format)
-	}
-	if env.Version != envelopeVersion {
+	switch env.Version {
+	case envelopeVersion:
+	case "1":
+		return nil, fmt.Errorf("adaptive_hmm_model: %s is a version 1 model; version 1 adaptive models were "+
+			"trained with an off-by-one context and no smoothing (their output was degenerate), "+
+			"so they are no longer loaded: retrain it with `phantom-science train`", path)
+	default:
 		return nil, fmt.Errorf("adaptive_hmm_model: unsupported version %q", env.Version)
-	}
-	if env.ModelType != "AdaptiveHMMModel" {
-		return nil, fmt.Errorf("adaptive_hmm_model: wrong model type %q", env.ModelType)
 	}
 
 	var data adaptiveHMMModelData
 	if err := json.Unmarshal(env.Data, &data); err != nil {
 		return nil, fmt.Errorf("adaptive_hmm_model: unmarshal data: %w", err)
 	}
+	if data.K < 2 || data.K > 8 {
+		return nil, fmt.Errorf("adaptive_hmm_model: invalid k=%d in saved model", data.K)
+	}
+	if data.PseudoCount != PseudoCount {
+		return nil, fmt.Errorf("adaptive_hmm_model: model pseudocount %v, this version uses %v", data.PseudoCount, PseudoCount)
+	}
+	if err := validateChain("adaptive_hmm_model", data.K, data.StateSpace, data.TransitionCounts, data.TransitionMatrix, data.StartProbabilities, true); err != nil {
+		return nil, fmt.Errorf("adaptive_hmm_model: validation after load: %w", err)
+	}
 
 	m := NewAdaptiveHMMModel(data.K)
 	if m == nil {
 		return nil, fmt.Errorf("adaptive_hmm_model: invalid k=%d in saved model", data.K)
 	}
-
 	m.stateSpace = data.StateSpace
+	m.transitionCounts = data.TransitionCounts
 	m.transitionMatrix = data.TransitionMatrix
-	m.emissionMatrix = data.EmissionMatrix
 	m.startProbabilities = data.StartProbabilities
+	m.finalized = true
 	m.totalKmers = data.TotalKmers
 	m.trained = data.Trained
-	m.complexityWindowSize = data.ComplexityWindowSize
+	if data.ComplexityWindowSize > 0 {
+		m.complexityWindowSize = data.ComplexityWindowSize
+	}
 	m.targetComplexity = data.TargetComplexity
-	m.gcContentTarget = data.GCContentTarget
-	m.gcContentTolerance = data.GCContentTolerance
-	m.homopolymerMaxLength = data.HomopolymerMaxLength
-	m.cpgDepletionRatio = data.CpGDepletionRatio
-	m.adaptiveWeights = data.AdaptiveWeights
-	m.complexityMemory = make([]string, 0)
-	m.rng = rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), 0)) // #nosec G404
+	m.rng = newModelRNG(DefaultSeed)
 
 	if err := m.ValidateModel(); err != nil {
 		return nil, fmt.Errorf("adaptive_hmm_model: validation after load: %w", err)

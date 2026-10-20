@@ -8,16 +8,14 @@ import (
 	"testing"
 )
 
+// adjusted returns N(at), rounded, for a present size ne and events.
 func adjusted(t *testing.T, ne int, events []DemographicEvent, at float64) int {
 	t.Helper()
-	s := NewCoalescentSimulator(ne, 0, 0)
-	for _, e := range events {
-		s.AddDemographicEvent(e)
-	}
-	return s.getAdjustedPopSize(at)
+	n, _ := sizeAt(float64(ne), sortedEvents(events), at)
+	return int(math.Round(n))
 }
 
-// The old getAdjustedPopSize kept a bottleneck in force forever; it must end
+// An earlier size function kept a bottleneck in force forever; it must end
 // after Duration generations.
 func TestGetAdjustedPopSize_BottleneckRespectsDuration(t *testing.T) {
 	ev := []DemographicEvent{{
@@ -107,31 +105,29 @@ func TestNextEventTime_ExactAcrossEpochs(t *testing.T) {
 }
 
 // meanT2 returns the mean and standard error of the pairwise coalescence time
-// from SimulateGenealogy with the given events.
+// drawn with nextEventTime over the epochs of the given size history. Two
+// lineages in a diploid population of size N(t) coalesce at rate 1/(2N(t)).
 func meanT2(t *testing.T, ne int, events []DemographicEvent, reps int) (float64, float64) {
 	t.Helper()
-	s := NewCoalescentSimulator(ne, 0, 0)
-	s.SetSeed(11)
-	for _, e := range events {
-		s.AddDemographicEvent(e)
-	}
+	epochs := buildEpochs(float64(ne), events)
+	rng := rand.New(rand.NewPCG(11, 0))
 	sum, sumSq := 0.0, 0.0
 	for i := 0; i < reps; i++ {
-		g, err := s.SimulateGenealogy("t2", 2, 10)
-		if err != nil {
-			t.Fatal(err)
+		t2 := nextEventTime(epochs, 0.5, 0, math.Inf(1), rng.ExpFloat64())
+		if math.IsInf(t2, 1) {
+			t.Fatal("no coalescence")
 		}
-		sum += g.TotalTime
-		sumSq += g.TotalTime * g.TotalTime
+		sum += t2
+		sumSq += t2 * t2
 	}
 	m := sum / float64(reps)
 	sd := math.Sqrt((sumSq - float64(reps)*m*m) / float64(reps-1))
 	return m, sd / math.Sqrt(float64(reps))
 }
 
-// SimulateGenealogy's pairwise coalescence time must match the analytic
+// The pairwise coalescence time must match the analytic
 // expectation E[T2] = ∫ exp(-∫ 1/(2N(s)) ds) dt under each size history.
-func TestSimulateGenealogy_PairwiseTimeMatchesTheory(t *testing.T) {
+func TestPairwiseCoalescenceTime_MatchesTheory(t *testing.T) {
 	const reps = 6000
 	cases := []struct {
 		name   string

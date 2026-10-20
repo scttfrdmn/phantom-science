@@ -35,6 +35,16 @@ import (
 // Bottleneck windows take precedence over other events they overlap; when two
 // growth windows overlap, the more recent one wins. Sizes are clamped to >= 1.
 
+// DemographicEvent is one event in a population's size history; see the
+// semantics above.
+type DemographicEvent struct {
+	Type        string             // "bottleneck", "expansion", "size_change", "migration", "admixture"
+	Time        int                // Generations ago
+	Parameters  map[string]float64 // Event-specific parameters
+	Populations []string           // Affected populations
+	Duration    int                // Duration in generations
+}
+
 // epoch is one piece of a piecewise size history.
 type epoch struct {
 	start float64 // generations ago at which this epoch begins (backwards in time)

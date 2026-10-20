@@ -24,7 +24,8 @@ population, name it <population>.hmm.json in the --model-dir directory.
 
 Model types:
   adaptive  Stream VCF sequences through an AdaptiveHMMModel in 100 KB chunks
-            (default).
+            (default). Each chunk carries the last k-1 bases of the previous
+            one, so the counts equal one-shot training.
   kmer      Accumulate all VCF sequences in memory, then train an HMMKmerModel.
 
 Example usage (the VCF files are your own input, e.g. 1000 Genomes VCFs):
@@ -83,7 +84,7 @@ func trainAdaptive(vcfFiles []string, outPath string, kmerSize int) error {
 
 	for _, path := range vcfFiles {
 		fmt.Printf("   [train] reading %s...\n", path)
-		if err := streamVCFToAdaptive(path, model); err != nil {
+		if err := streamVCFToAdaptive(path, model, adaptiveChunkBytes); err != nil {
 			return fmt.Errorf("training from %s: %w", path, err)
 		}
 	}
@@ -99,8 +100,16 @@ func trainAdaptive(vcfFiles []string, outPath string, kmerSize int) error {
 	return nil
 }
 
-// streamVCFToAdaptive reads REF+ALT from a VCF file and trains the model in 100 KB chunks.
-func streamVCFToAdaptive(path string, model *authenticity.AdaptiveHMMModel) error {
+// adaptiveChunkBytes is the number of new bases streamed into each
+// TrainFromSequence call by the adaptive train path.
+const adaptiveChunkBytes = 100_000
+
+// streamVCFToAdaptive reads REF+ALT from a VCF file and trains the model in
+// chunks of chunkBytes new bases. Each chunk is prefixed with the last k-1
+// bases of the sequence so far, so every k-mer spanning a chunk boundary is
+// counted exactly once and the counts equal one-shot training on the whole
+// concatenated sequence.
+func streamVCFToAdaptive(path string, model *authenticity.AdaptiveHMMModel, chunkBytes int) error {
 	f, err := os.Open(path) // #nosec G304 -- path from CLI flag
 	if err != nil {
 		return err
@@ -115,6 +124,7 @@ func streamVCFToAdaptive(path string, model *authenticity.AdaptiveHMMModel) erro
 		defer gzClose()
 	}
 
+	ct := chunkTrainer{model: model, carryLen: model.K() - 1}
 	var buf strings.Builder
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -126,19 +136,40 @@ func streamVCFToAdaptive(path string, model *authenticity.AdaptiveHMMModel) erro
 			continue
 		}
 		appendVCFAlleles(&buf, fields[3], fields[4])
-		if buf.Len() >= 100_000 {
-			if err := model.TrainFromSequence([]byte(buf.String())); err != nil {
+		for buf.Len() >= chunkBytes {
+			rest := buf.String()
+			if err := ct.train(rest[:chunkBytes]); err != nil {
 				return err
 			}
 			buf.Reset()
+			buf.WriteString(rest[chunkBytes:])
 		}
+	}
+	if err := scanner.Err(); err != nil {
+		return err
 	}
 	if buf.Len() > 0 {
-		if err := model.TrainFromSequence([]byte(buf.String())); err != nil {
-			return err
-		}
+		return ct.train(buf.String())
 	}
-	return scanner.Err()
+	return nil
+}
+
+// chunkTrainer trains an adaptive model on consecutive pieces of one
+// sequence, carrying the last carryLen (= k-1) bases between pieces.
+type chunkTrainer struct {
+	model    *authenticity.AdaptiveHMMModel
+	carryLen int
+	carry    []byte
+}
+
+func (c *chunkTrainer) train(piece string) error {
+	seq := append(c.carry, piece...)
+	if err := c.model.TrainFromSequence(seq); err != nil {
+		return err
+	}
+	keep := min(c.carryLen, len(seq))
+	c.carry = append([]byte(nil), seq[len(seq)-keep:]...)
+	return nil
 }
 
 // trainKmer accumulates all VCF sequences and trains an HMMKmerModel via TrainFromReferenceGenome.
