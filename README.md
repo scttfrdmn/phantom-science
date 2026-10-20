@@ -24,13 +24,21 @@ on `main` but not in a tagged release yet.
   fragment, with insert sizes drawn from `illumina.insert_size` (normal
   350 ± 50 by default).
 - **Illumina-style output** (since 0.10.0) has Illumina headers and file
-  names, qualities in the four RTA3 bins (Q2, Q12, Q23, Q37) from a per-cycle
-  model that degrades along the read (read 2 lower than read 1), and
-  substitutions at the rate the quality implies (10^(−Q/10); Q2 bases are
-  `N`). Measured on 2×150 output: substitution rates of 0.0633, 0.0051 and
-  0.0002 at Q12, Q23 and Q37, against 0.0631, 0.0050 and 0.0002 expected
-  (`engine_illumina_test.go`). The degradation curve is a model that has not
-  yet been compared with real NovaSeq data. `illumina.quality_model: linear`
+  names, and a quality and error model fitted to a real NovaSeq 6000 run (ENA
+  DRR276626, 200,000 read pairs aligned to GRCh38;
+  `scripts/acceptance/illumina_calibrate.sh`):
+  - qualities in the four values NovaSeq 6000 writes (Q2, Q11, Q25, Q37),
+    from per-read quality classes and per-cycle fractions; generated reads
+    match the real per-cycle fractions within 0.002 on average, and the mean
+    quality (R1 36.23 and R2 36.08 against 36.22 and 36.08);
+  - substitutions at the measured, cycle-dependent rates of each bin (Q37
+    3.2e-4; Q25 0.07–0.25%; Q11 2.9–8.3%) with the measured substitution
+    spectrum (C→A and G→T dominate); Q2 bases are `N`.
+
+  Indels are not modelled (measured 7e-5 per base), the calibration comes
+  from one tile of one run, and it is not validated beyond 151 cycles or for
+  other instruments (MiSeq writes unbinned qualities; NovaSeq X uses other
+  values). `illumina.quality_model: linear`
   restores the old ramp (`base_quality` minus `quality_decay` per base, no
   errors). The `sequencer_model`, `flow_cell_type` and `q30_percentage` config
   fields do not change the output.
@@ -174,7 +182,7 @@ works; prefer the subcommands.
   cannot be combined with an HMM model. Measured on hg38
   chr22:20,000,000–21,000,000 (200,000 pairs, `minimap2 -ax sr`): 100% of reads
   mapped and properly paired, insert 348 ± 48, and per-quality mismatch rates
-  equal to the model's (0.0633, 0.0050, 0.0002 at Q12, Q23, Q37).
+  equal to the model's.
 - **HMM model:** `--hmm-model-path model.hmm.json`, or
   `--population CEU --model-dir models/` to load `models/CEU.hmm.json`. If a
   configured model is missing or cannot be loaded, `generate` fails before
@@ -372,7 +380,7 @@ output:
 ```
 
 ```bash
-phantom-science scenario --spec glut1.yaml --population CEU [--reference GRCh38.fa]
+phantom-science scenario --spec glut1.yaml --population CEU --reference GRCh38.fa
 ```
 
 HPO resolution uses a built-in catalogue of three entries. Each was checked on
@@ -390,8 +398,15 @@ Unmatched terms are an error; set `planted_variant` instead. With
 any reads are written. The manifest records the build, ClinVar ID and HGVS.
 
 Reads cover a 50 kb window around the variant at the given coverage, and the
-manifest records the variant, expected VAF, region and read count. As with
-`generate`, the surrounding sequence is synthetic. Trio generation
+manifest records the variant, expected VAF, region and read count. With
+`--reference`, reads are sampled from the reference over the window and the
+variant is planted at its coordinate; without it, bases are synthetic.
+Scenario reads use the `generate` read model: binned Illumina qualities,
+quality-matched errors (`illumina.errors: none` turns them off), and with
+`sequencer.paired_end: true` read pairs written to `*_fastq` and
+`*_fastq_r2`. Measured with hg38 (GLUT1 and a CF trio, 30×, 2×150): all reads
+map and pair to the window, and the planted variant is seen at VAF 0.53
+(GLUT1) and 0.43 (F508del, proband only). Trio generation
 (`trio: {generate: true, de_novo: true}` with `mother_fastq` and
 `father_fastq`) simulates the parents' haplotypes in Go with the structured
 coalescent (`internal/genomics/population`), seeded from the scenario seed.
@@ -399,7 +414,10 @@ It needs no Python. Trio populations are YRI, CEU, CHB and MXL, plus the 1000
 Genomes codes those presets model (GBR, TSI, EUR → CEU; JPT, CHS, EAS, ASN →
 CHB; LWK, GWD, AFR → YRI; PUR, AMR → MXL); other codes are an error. The
 region is one non-recombining locus, so crossovers come only from the genetic
-map length of the region.
+map length of the region. With `--reference`, each member's haplotypes are the
+reference window carrying the simulated sites (REF is the reference base;
+ALT is the simulated derived base, or the ancestral base if the derived one
+equals the reference), and every read comes from one phased haplotype.
 
 ## TUI
 

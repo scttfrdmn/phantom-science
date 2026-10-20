@@ -69,7 +69,7 @@ technology:
   four_channel_chemistry: false
   low_diversity_sensitive: true          # Requires higher PhiX for low diversity
 
-# Illumina read model (#27). quality_model: binned (RTA3 bins Q2/Q12/Q23/Q37,
+# Illumina read model (#27). quality_model: binned (NovaSeq 6000 bins Q2/Q11/Q25/Q37,
 # the default) or linear; errors: quality (substitutions at 10^(-Q/10), Q2
 # written as N; the default for binned) or none; insert_size: the paired-end
 # fragment length distribution (normal or lognormal).

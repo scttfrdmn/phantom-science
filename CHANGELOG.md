@@ -24,6 +24,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Positioned `--variants` are applied in reference coordinates. A REF mismatch is skipped with a warning, or is an error with `--strict-ref` (`strict_ref`).
   - A reference cannot be combined with an HMM model.
   - `Engine.ReferenceBases` exposes the loaded reference.
+- `scripts/acceptance/illumina_calibrate.sh` streams ENA run DRR276626, aligns it to GRCh38, measures qualities, error rates, spectrum and inserts, and regenerates `internal/genomics/illumina/calibration.go`. The results are committed under `scripts/acceptance/calibrate/illumina/results/` (#27).
+- `scenario --reference` samples scenario reads from the reference over the window (#24, #27).
+  - Trio background variants are anchored to reference bases, and each member's reads come from one phased haplotype.
+  - The manifest records `sequencer.bases` and `sequencer.paired_end`.
+- Scenario spec `sequencer.paired_end` and `output.*_fastq_r2` (#27).
 
 ### Changed
 - **BREAKING:** `sequence_validator` takes input paths as arguments (it read only `sequences/validation`) and exits 2 when any sequence fails (#27).
@@ -52,8 +57,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **BREAKING (catalogue):** the HPO catalogue terms changed (#24). GLUT1 deficiency is HP:0001250 + HP:0011972, PKU is HP:0004923 and cystic fibrosis is HP:0012236.
 - **BREAKING (API):** `clinical.ResolveHPO` returns `(*PlantedVariantSpec, *CatalogEntry, error)`, and `clinical.NewScenarioGenerator` no longer takes a project root (#24, #27).
 - `PopulationPanel` holds `Ne`, `MutationRate` and a `SetSeed` method instead of a `Simulator` (#25).
-- **BREAKING:** Illumina reads default to binned RTA3 qualities (Q2, Q12, Q23, Q37), with read 2 lower than read 1 (#27).
-  - Substitutions occur at 10^(−Q/10), and Q2 bases are written as `N`.
+- **BREAKING:** Illumina reads default to the four quality values NovaSeq 6000 writes (Q2, Q11, Q25, Q37), with qualities and substitution rates fitted to NovaSeq 6000 run DRR276626 (#27).
+  - Substitutions follow the measured cycle-dependent rate of each bin and the measured spectrum; Q2 bases are written as `N`. Indels are not modelled (measured 7e-5 per base).
   - `illumina.quality_model: linear` keeps the old ramp without errors.
 - **BREAKING:** paired-end mates are the two ends of one fragment, with insert size 350 ± 50 by default (`illumina.insert_size`) (#27).
   - Variants are applied once per fragment, so both mates carry the same allele.
@@ -62,6 +67,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **BREAKING:** `error_model.tier` (`--basecaller-tier`) applies only to platform ont. On Illumina it is a configuration error (#27).
 - **BREAKING:** an HMM model that is configured but missing or unloadable fails generation before anything is written, instead of falling back to uniform bases (#25, #27). This covers `hmm_model_path`, and `model_dir` + `population` with no file for that population.
 - `EmbedCustomerID` and `EmbedDatasetFingerprint` are deprecated in favour of `ReadTags` (#27).
+- Clinical scenario reads use the platform read model: binned qualities, quality-matched errors, and paired fragments (#27). Trio reads used to be constant-Q30 single-end reads.
+- Synthetic trio reads now come from one consistent window sequence per scenario, and scenario read names no longer encode read start positions (#27).
 
 ### Removed
 - **Subsystems that reported fabricated constants**, none of which any supported command used (#22, #26):
