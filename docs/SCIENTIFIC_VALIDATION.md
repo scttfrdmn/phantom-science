@@ -30,19 +30,23 @@ frequency vectors (Section 4.5). **It has not been run against real reads.**
 No real data is bundled, so no indistinguishability result exists, and none is
 claimed. `cmd/run_e2e_tests` calibrates the measurement instead:
 
-- **Null comparison:** two independent draws from one generator, 1000
-  training and 1000 holdout reads per class. It passes if the accuracy is
-  within 0.5 ± 4σ.
-- **Positive control:** one class GC-skewed (`testing.GCSkewed`, p = 0.4). It
-  passes if the accuracy is above 0.9.
+- **Null comparison:** two independent draws from the engine (2000 reads per
+  class, half used for training and half held out). It passes if the
+  accuracy is within 0.5 ± 4σ.
+- **Positive control:** one class GC-skewed to GC 0.70 (`testing.GCSkewed`).
+  It passes if the accuracy is above 0.9.
+- **Real reads:** with `-real-fastq FILE` (or `PHANTOM_REAL_FASTQ`) the
+  classifier is trained on real against generated reads and its accuracy is
+  reported, not graded.
 
 ```bash
 CGO_ENABLED=0 go run ./cmd/run_e2e_tests -quick -platforms novaseq \
     -benchmark=false -report=false
 ```
 
-One run on 2026-10-18 gave a null accuracy of 0.507 ± 0.045 and a control
-accuracy of 0.996. These show that the classifier detects a known difference
+One run on 2026-10-19 (full mode, 2000 held-out reads, band ±0.045) gave null
+accuracies of 0.489–0.502 and control accuracies of 0.993–1.000 across
+NovaSeq, NextSeq, MiSeq and ONT. These show that the classifier detects a known difference
 and reports chance on no difference. They say nothing about how close the
 output is to real sequencing data.
 
@@ -144,8 +148,7 @@ rather than test it independently.
 ### Where it is used
 
 `NewPopulationPanel` and `NewJointPanels` build variant panels (sites,
-frequencies, genotypes) from one seeded simulation, and the training pipeline
-library (`internal/genomics/training`) uses them. `generate` and `train` do
+frequencies, genotypes) from one seeded simulation. `generate` and `train` do
 not use the coalescent. Their `--population` flag only names a model file.
 Trio generation in `scenario` uses a separate msprime simulation in Python
 (`internal/population/haplotypes.py`), which needs a local virtualenv (see the

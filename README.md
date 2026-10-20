@@ -319,8 +319,7 @@ low-complexity sequence.
 
 Separately, `internal/genomics/population` has a structured coalescent with
 demographic presets for YRI, CEU, CHB and MXL (other 1000 Genomes codes map to
-the closest preset). It is used by the training pipeline library and tests, not
-by `generate`. See [docs/SCIENTIFIC_VALIDATION.md](docs/SCIENTIFIC_VALIDATION.md).
+the closest preset). It is a library with tests; `generate` does not use it. See [docs/SCIENTIFIC_VALIDATION.md](docs/SCIENTIFIC_VALIDATION.md).
 
 ## Clinical scenarios
 
@@ -364,34 +363,41 @@ must be run from the repository root. Without it the trio path fails.
 ## TUI
 
 `phantom-science tui [--config FILE] [--phantom-config FILE]` opens a terminal
-UI that picks NovaSeq 6000 S2, NextSeq 2000 P3 or MiSeq v3 timing and runs a
-simulated run at 100× time compression. Files are written by the same engine as
-`generate` as the simulated run progresses. Keys: Tab and Shift+Tab move
-between panels, Up and Down choose the sequencer, Enter on the actions panel
-starts or stops a run, `q` or Ctrl+C quits.
+UI that runs a simulated sequencer run with the timing of NovaSeq 6000 S2,
+NextSeq 2000 P3 or MiSeq v3, or of the model named in `--config`. Files are
+written by the same engine as `generate` as the simulated run progresses, and
+the run panel shows measured progress, files and bytes written. Errors appear
+in the UI. Keys: Tab and Shift+Tab move between panels, Up and Down choose a
+sequencer preset, Left and Right in the output panel choose the time speedup
+(1×, 10×, 100× or 1000×), Enter on the actions panel starts or stops a run,
+`q` or Ctrl+C quits.
 
-Limitations: the sample sheet shows two fixed example samples and cannot be
-edited. The time compression setting, the run parameters, the output settings
-(including the gzip checkbox) and the fingerprinting strategy are display-only.
-Time compression exists only in the TUI. `generate` writes as fast as it can, and
-`batch_interval` has no effect.
+The panels show the loaded configuration (platform, read length, paired-end,
+reads per batch, batches, seed, compression, fingerprinting); settings and the
+sample sheet are not editable in the TUI. Time compression exists only in the
+TUI: `generate` writes as fast as it can, and `batch_interval` has no effect.
 
 ## Testing tools
 
-- `CGO_ENABLED=0 go run ./cmd/run_e2e_tests -quick` runs an end-to-end
-  harness with its own platform models. Its ML calibration trains a
-  Multinomial Naive Bayes classifier on two independent draws from one
-  generator (it passes if accuracy is within 0.5 ± 4σ) and on a GC-skewed
-  positive control (it passes above 0.9). This tests the measurement, not
-  realism. The harness also prints an "overall score" and "authenticity"
-  numbers that are internal heuristics, not validated metrics.
+- `CGO_ENABLED=0 go run ./cmd/run_e2e_tests -quick` generates reads with the
+  engine for each modeled platform (Illumina NovaSeq, NextSeq, MiSeq and
+  ONT; others are reported as not modeled) and prints measured read
+  statistics and benchmarks. Its ML calibration trains a Multinomial Naive
+  Bayes classifier on two independent draws from one generator (it passes if
+  accuracy is within 0.5 ± 4σ) and on a GC-skewed positive control (it passes
+  above 0.9). This tests the measurement, not realism. With `-real-fastq FILE`
+  (or `PHANTOM_REAL_FASTQ`) it also reports how well the classifier separates
+  real reads from generated ones. `-report` writes `e2e_results.json` and
+  `e2e_summary.csv`.
 - `CGO_ENABLED=0 go run ./cmd/run_workflow_tests` runs a minimal
   read-counting pipeline in Cromwell, Nextflow and Snakemake when they are
-  installed, and reports missing engines as skipped. `workflows/cromwell/`
+  installed and checks the reported count against the reads written. Missing
+  engines are reported as skipped, and `-dry-run` lists the planned runs. `workflows/cromwell/`
   has a WDL workflow ([workflows/cromwell/README.md](workflows/cromwell/README.md)).
-- One-off research programs are in `cmd/experiments/`
-  (`go build ./cmd/experiments/<name>`). They are not maintained as part of
-  the CLI.
+- `cmd/experiments/` holds three developer tools, not part of the CLI:
+  `benchmark_memory` (k-mer counter memory and speed), `benchmark_reference`
+  (reference-loader cache timings) and `sequence_validator` (FASTA GC,
+  complexity and homopolymer checks).
 
 ## Documentation
 

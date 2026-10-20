@@ -7,6 +7,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **BREAKING:** `sequence_validator` takes input paths as arguments (it read only `sequences/validation`) and exits 2 when any sequence fails (#27).
+- `run_e2e_tests` and the e2e test suites generate reads with the real engine and report only measured values: read statistics, wall and CPU time, allocations, bases/s and classifier accuracies (#23).
+  - PacBio, MGI and AVITI, which the engine does not model, are reported as not modeled.
+  - `-report` writes `e2e_results.json` and `e2e_summary.csv`.
+  - `-seed` is added, and `-real-fastq` (or `PHANTOM_REAL_FASTQ`) compares real reads with generated ones.
+- `run_workflow_tests` reports, for each run: status, wall time, engine exit status, reported read count and data integrity. Its JSON and CSV reports are written (#23).
+- The TUI shows the loaded configuration and measured run progress (#27):
+  - platform, read length, paired-end, reads per batch, batches, seed, compression and resolved fingerprinting settings
+  - files, bytes and MB/s written
+  - the running version in the header
+  - Left and Right select the time speedup.
+
+### Removed
+- **Subsystems that reported fabricated constants**, none of which any supported command used (#22, #26):
+  - `internal/authenticity`, `internal/gpu` and `internal/monitoring`
+  - in `internal/genomics`: `acceleration` (Metal/CUDA), `diseases`, `features`, `populations`, `quality`, `tools`, `training`, `validation` and `vcf`
+  - the platform error-signature, platform quality-modeling and cross-platform bias-correction managers
+  - kmer's `GPUPackedProcessor`, which never attached a GPU
+  - the `prometheus/client_golang` dependency
+- `scenario`'s ClinVar fallback (#26). It could never match, and its integrator returned made-up variants. Unmatched HPO terms now fail with a message to set `planted_variant`.
+- **56 of the 59 programs under `cmd/experiments/`** (#27). Only `benchmark_memory`, `benchmark_reference` and `sequence_validator` remain, as developer tools.
+- `Makefile.cuda`, `Makefile.metal` and `Makefile.streaming` (#27).
+- Scripts that only fed removed code (#27): `benchmark-gpu.sh`, `compare-performance.py`, `convert_vcf_to_fasta.sh`, `create_population_dataset.sh`, `download_1000_genomes.sh`, `download_1000genomes_data.sh`, `download_full_genome.sh`, `download_validation_data.sh` and `monitor_and_train.sh`.
+- `benchmark_reference -compression` (the loader ignored it) and `-warmup` (#27).
+- **Constant-reporting parts of the test harnesses** (#23):
+  - `AnalyzeAuthenticity`
+  - the per-platform and per-population constants
+  - the `RunWorkflow` stub
+  - fixed benchmark accuracy, cost and throughput figures
+  - the "Overall Score" and verdicts
+  - the constant workflow accuracy, memory and CPU figures and the score built from them
+  - tests that only read back constants or literal configs
+- **From the TUI** (#27):
+  - the Chemistry, PhiX and Real-time fields
+  - the embedding-strategy selector
+  - the sample-sheet editing mode, which trapped Tab
+  - the demo sample rows
+  - the Load Config, Save Config, Help, Quit, Add Sample, Import CSV and Clear All buttons, which did nothing (`q` still quits)
+
+### Fixed
+- `CreatePlatformConfig` returned configs that shared one map, so changing one changed the others (#23).
+- `run_workflow_tests -dry-run` said no workflow engine was available. It now lists the planned runs (#23).
+- The TUI overwrote `sequencer_model`, `flow_cell_type`, `total_batches` and `sample_name` from `--config` (#27).
+- The TUI highlighted the wrong time-compression option (#27).
+- The TUI printed generation errors over the screen or dropped them; they are now shown in the UI (#27).
+- In the TUI, a stopped run's late message could end a newer run (#27).
+- `benchmark_memory` (#27):
+  - it generated period-4 sequences with only a handful of distinct k-mers
+  - its unsigned memory delta could wrap
+- `benchmark_reference` (#27):
+  - it assumed chromosomes chr1–chr5
+  - it read past chromosome ends and silently dropped the errors
+  - it wrote its temporary FASTA one unbuffered byte at a time
+- `sequence_validator` (#27):
+  - it failed every sequence whose header had no `model_target_gc`
+  - it counted N bases in GC content
+  - it read extra FASTA records as bases
+- `Makefile.memory` and `Makefile.reference` test targets passed package paths without `./` and ran tests that do not exist (#27).
+- `tests/integration/workflow_engines_test.go` failed `go vet -tags release` (#23).
+
 ## [0.9.0] - 2026-10-19
 
 ### Added

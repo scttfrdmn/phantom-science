@@ -36,10 +36,9 @@ extract quality-score fingerprints, and generation refuses to run when the
 |---|---|
 | `cgo` (CGO_ENABLED=1) | stegano fingerprinting engine (`engine_stegano.go`); without it, `engine_nocgo.go` |
 | `release` | excludes all `_test.go` files (they are `//go:build !release`) and uses the legacy fingerprinting engine, which cannot write extractable fingerprints |
-| `cuda` | CUDA k-mer kernels in `internal/genomics/acceleration/cuda`; needs the CUDA Toolkit (`Makefile.cuda`) |
 
-Metal acceleration (`internal/genomics/acceleration/metal`) builds only with
-CGO on macOS; elsewhere a stub is used.
+There is no GPU code: the Metal and CUDA acceleration packages were removed
+because nothing used them.
 
 ## Testing
 
@@ -114,7 +113,7 @@ cmd/                     cobra commands (generate, validate, verify, train,
                          scenario, transcriptome, signal, bench, tui)
 cmd/run_e2e_tests/       end-to-end harness and ML calibration
 cmd/run_workflow_tests/  Cromwell / Nextflow / Snakemake checks
-cmd/experiments/         one-off research programs, not maintained with the CLI
+cmd/experiments/         three developer tools (benchmark_memory, benchmark_reference, sequence_validator)
 internal/cli/            config loading and command plumbing
 internal/fingerprinting/ stegano engine, keys, verifier
 internal/genomics/       generation engine and read pipeline
@@ -130,7 +129,7 @@ internal/tui/ timing/    terminal UI and its run-timing simulator
 internal/validation/     validation framework used by `validate`
 pkg/types/               configuration types
 configs/                 example sequencer and phantom configs
-scripts/                 build, release, acceptance and data scripts
+scripts/                 build, release and acceptance scripts
 deploy/production/       container image
 docs/                    this documentation
 ```
