@@ -1,8 +1,6 @@
 // Package kmer counts k-mer frequencies in DNA sequences, either into a map
 // (FrequencyTable) or into a dense 4^k bit-packed array
 // (PackedFrequencyTable), and computes summary statistics over the counts.
-// GPUPackedProcessor wraps the packed extractor behind a GPU-shaped API, but
-// no GPU processor is ever attached to it, so it always counts on the CPU.
 package kmer
 
 import (

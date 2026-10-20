@@ -147,7 +147,7 @@ func TestManifest_RoundTrip(t *testing.T) {
 }
 
 func TestResolveHPO_GLUT1(t *testing.T) {
-    spec, gene, err := ResolveHPO(nil, []string{"HP:0001250", "HP:0001253"}, nil)
+    spec, gene, err := ResolveHPO([]string{"HP:0001250", "HP:0001253"})
     require.NoError(t, err)
     assert.Equal(t, "SLC2A1", gene)
     require.NotNil(t, spec)
@@ -159,7 +159,7 @@ func TestResolveHPO_GLUT1(t *testing.T) {
 }
 
 func TestResolveHPO_PKU(t *testing.T) {
-    spec, gene, err := ResolveHPO(nil, []string{"HP:0001360"}, nil)
+    spec, gene, err := ResolveHPO([]string{"HP:0001360"})
     require.NoError(t, err)
     assert.Equal(t, "PAH", gene)
     require.NotNil(t, spec)
@@ -167,7 +167,7 @@ func TestResolveHPO_PKU(t *testing.T) {
 }
 
 func TestResolveHPO_CF(t *testing.T) {
-    spec, gene, err := ResolveHPO(nil, []string{"HP:0002837"}, nil)
+    spec, gene, err := ResolveHPO([]string{"HP:0002837"})
     require.NoError(t, err)
     assert.Equal(t, "CFTR", gene)
     require.NotNil(t, spec)
@@ -175,17 +175,17 @@ func TestResolveHPO_CF(t *testing.T) {
 }
 
 func TestResolveHPO_NoMatch(t *testing.T) {
-    _, _, err := ResolveHPO(nil, []string{"HP:9999999"}, nil)
+    _, _, err := ResolveHPO([]string{"HP:9999999"})
     assert.Error(t, err)
     assert.Contains(t, err.Error(), "planted_variant")
 }
 
 func TestResolveHPO_Superset(t *testing.T) {
     // Extra HPO terms beyond catalog keys should still resolve.
-    spec, gene, err := ResolveHPO(nil, []string{
+    spec, gene, err := ResolveHPO([]string{
         "HP:0001250", "HP:0001253",
         "HP:0012345", // extra term not in catalog key
-    }, nil)
+    })
     require.NoError(t, err)
     assert.Equal(t, "SLC2A1", gene)
     require.NotNil(t, spec)
