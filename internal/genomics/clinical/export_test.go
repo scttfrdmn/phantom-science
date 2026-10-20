@@ -4,25 +4,34 @@
 package clinical
 
 import (
-	"io"
 	mathrand "math/rand"
 
-	"github.com/scttfrdmn/phantom-science/internal/genomics"
 	"github.com/scttfrdmn/phantom-science/pkg/types"
 )
 
-// ExportGenerateHaplotypeFASTQ exposes generateHaplotypeFASTQ for testing.
-func ExportGenerateHaplotypeFASTQ(
-	w io.Writer,
-	engine *genomics.Engine,
-	cfg *types.SequencerConfig,
-	trio *TrioHaplotypes,
-	member string,
-	region *genomics.GenomicRegion,
-	readLength int,
-	readCount int,
-) (int, error) {
-	return generateHaplotypeFASTQ(w, engine, cfg, trio, member, region, readLength, readCount)
+// ExportMemberHaplotypes returns member's two haplotype sequences built from
+// the window bases base (0-based start) and trio, as a trio scenario does
+// without a reference (the simulated REF alleles are written into a copy of
+// base first).
+func ExportMemberHaplotypes(base []byte, start int64, trio *TrioHaplotypes, member string) ([2][]byte, error) {
+	tp := exportPlan(base, start, trio, 0)
+	return tp.memberHaplotypes(member)
+}
+
+// ExportWriteMemberReads writes member's reads, sampled by the engine with
+// cfg (ReadsPerBatch reads or pairs) from its haplotypes as
+// ExportMemberHaplotypes builds them, to r1 (and r2 for separate mates). It
+// returns the number of FASTQ records.
+func ExportWriteMemberReads(cfg types.SequencerConfig, base []byte, start int64, trio *TrioHaplotypes, member, r1, r2 string) (int, error) {
+	cfg.TotalBatches = 1
+	tp := exportPlan(base, start, trio, cfg.Seed)
+	return writeMemberReads(cfg, tp, member, output{r1, r2})
+}
+
+func exportPlan(base []byte, start int64, trio *TrioHaplotypes, seed uint64) *trioPlan {
+	b := append([]byte(nil), base...)
+	writeSyntheticREF(trio, b, start)
+	return &trioPlan{trio: trio, base: b, start: start, runSeed: seed}
 }
 
 // ExportSimulateCrossover exposes simulateCrossover for testing.

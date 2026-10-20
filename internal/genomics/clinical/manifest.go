@@ -15,8 +15,9 @@ type GroundTruthManifest struct {
 	ProbandID       string           `json:"proband_id"`
 	PlantedVariants []PlantedVariant `json:"planted_variants"`
 	Trio            *TrioManifest    `json:"trio,omitempty"`
-	// Reference is the FASTA the planted REF alleles were checked against
-	// (scenario --reference); empty when unchecked.
+	// Reference is the FASTA (scenario --reference) the reads were sampled
+	// from and the planted REF alleles checked against; empty for
+	// synthetic bases.
 	Reference      string            `json:"reference,omitempty"`
 	Sequencer      SequencerManifest `json:"sequencer"`
 	ComputeMetrics ComputeMetrics    `json:"compute_metrics"`
@@ -57,9 +58,12 @@ type TrioManifest struct {
 
 // SequencerManifest records sequencing parameters.
 type SequencerManifest struct {
-	Platform      string `json:"platform"`
-	Coverage      int    `json:"coverage"`
-	ReadLength    int    `json:"read_length"`
+	Platform   string `json:"platform"`
+	Coverage   int    `json:"coverage"`
+	ReadLength int    `json:"read_length"`
+	PairedEnd  bool   `json:"paired_end"`
+	// Bases is where read bases come from: "reference" or "synthetic".
+	Bases         string `json:"bases,omitempty"`
 	RegionFocused string `json:"region_focused,omitempty"` // e.g. "chr1:42904241-42954241"
 }
 
