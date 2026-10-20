@@ -104,13 +104,14 @@ func TestRun_ReferenceCheck(t *testing.T) {
 			Phenotype: PhenotypeSpec{PlantedVariant: &PlantedVariantSpec{
 				Chrom: "chr1", Pos: 15, Ref: refAllele, Alt: "T", Zygosity: "heterozygous",
 			}},
-			Sequencer: SequencerSpec{Coverage: 1, ReadLength: 50},
+			// The reads come from the 30-base chr1, so they are shorter.
+			Sequencer: SequencerSpec{Coverage: 2, ReadLength: 20},
 			Output: OutputSpec{
 				ProbandFASTQ: filepath.Join(dir, "p.fastq"),
 				GroundTruth:  filepath.Join(dir, "m.json"),
 			},
 		}
-		cfg := &types.SequencerConfig{SampleName: "ref", Lane: 1, ReadLength: 50, BaseQuality: 30, Seed: 3}
+		cfg := &types.SequencerConfig{SampleName: "ref", Lane: 1, ReadLength: 20, BaseQuality: 30, Seed: 3}
 		m, err := NewScenarioGenerator(cfg).WithReference(ref).Run(context.Background(), sc)
 		return m, sc.Output.ProbandFASTQ, err
 	}

@@ -3,15 +3,11 @@
 package clinical
 
 import (
-	"bufio"
 	"bytes"
 	"context"
-	"fmt"
 	mathrand "math/rand"
 	"os"
 	"path/filepath"
-	"strconv"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -114,50 +110,11 @@ func runTrioScenario(t *testing.T, seed uint64, pop string) (*GroundTruthManifes
 	return m, out
 }
 
-// readsByStart parses haplotype-FASTQ records into (read start, sequence).
-func readsByStart(t *testing.T, data []byte) [][2]string {
-	t.Helper()
-	var out [][2]string
-	sc := bufio.NewScanner(bytes.NewReader(data))
-	sc.Buffer(make([]byte, 1<<20), 1<<20)
-	var lines []string
-	for sc.Scan() {
-		lines = append(lines, sc.Text())
-	}
-	require.Zero(t, len(lines)%4)
-	for i := 0; i < len(lines); i += 4 {
-		// @name:lane:HXXXXXX:1:1101:X:Y 1:N:0:1 with start = Y*100000 + X
-		f := strings.Split(strings.SplitN(lines[i][1:], " ", 2)[0], ":")
-		require.GreaterOrEqual(t, len(f), 7)
-		x, err := strconv.ParseInt(f[5], 10, 64)
-		require.NoError(t, err)
-		y, err := strconv.ParseInt(f[6], 10, 64)
-		require.NoError(t, err)
-		out = append(out, [2]string{fmt.Sprint(y*100000 + x), lines[i+1]})
-	}
-	return out
-}
-
-// allelesAt returns the bases observed at 0-based position pos.
-func allelesAt(t *testing.T, reads [][2]string, pos int64) map[byte]int {
-	t.Helper()
-	seen := map[byte]int{}
-	for _, r := range reads {
-		start, err := strconv.ParseInt(r[0], 10, 64)
-		require.NoError(t, err)
-		off := pos - start
-		if off >= 0 && off < int64(len(r[1])) {
-			seen[r[1][off]]++
-		}
-	}
-	return seen
-}
-
-// The scenario-level trio: deterministic for a seed, the de novo ALT appears
-// only in the proband, and at every simulated background site the bases each
-// member shows are exactly the alleles on that member's haplotypes, with the
-// proband's alleles drawn from its parents (Mendelian consistency). Runs with
-// nothing on PATH: no Python or other external process is involved.
+// The scenario-level trio from the catalogue: deterministic for a seed, the
+// de novo ALT only in the proband, binned qualities for every member. Runs
+// with nothing on PATH: no Python or other external process is involved.
+// (The haplotype content, Mendelian consistency and read origin are checked
+// in TestScenarioReference_Trio, with and without a reference.)
 func TestScenario_TrioPureGo(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 	const seed, pop = 2026, "CEU"
@@ -169,6 +126,7 @@ func TestScenario_TrioPureGo(t *testing.T) {
 	assert.Equal(t, "CEU", m.Trio.DemographicModel)
 	assert.False(t, m.Trio.MotherCarries)
 	assert.False(t, m.Trio.FatherCarries)
+	assert.Equal(t, basesSynthetic, m.Sequencer.Bases)
 
 	m2, fq2 := runTrioScenario(t, seed, pop)
 	for member := range fq {
@@ -178,68 +136,32 @@ func TestScenario_TrioPureGo(t *testing.T) {
 	_, fq3 := runTrioScenario(t, seed+1, pop)
 	assert.False(t, bytes.Equal(fq["proband"], fq3["proband"]), "a different seed gives different reads")
 
-	reads := map[string][][2]string{}
+	// De novo SLC2A1 chr1:42929242 C>T: rebuild the window to get its
+	// context on the proband's haplotypes.
+	cfg := types.SequencerConfig{SampleName: "trio", Lane: 1, ReadLength: 100, Seed: seed, Population: pop}
+	dn0 := int64(42929242 - 1)
+	region := &genomics.GenomicRegion{Chromosome: "chr1", Start: dn0 - windowHalfSize, End: dn0 + windowHalfSize}
+	tp, err := NewScenarioGenerator(&cfg).planTrio(cfg, region, "chr1",
+		&genomics.VariantRecord{Chromosome: "chr1", Position: 42929242, Ref: "C", Alt: "T", Freq: 0.5})
+	require.NoError(t, err)
+	haps, err := tp.memberHaplotypes("proband")
+	require.NoError(t, err)
+	off := windowHalfSize
+	altCtx, refCtx := string(haps[0][off-12:off+13]), string(haps[1][off-12:off+13])
+	require.Equal(t, byte('T'), altCtx[12])
+	require.Equal(t, byte('C'), refCtx[12])
 	for member, data := range fq {
-		reads[member] = readsByStart(t, data)
-	}
-
-	// De novo SLC2A1 chr1:42929242 C>T: ALT in the proband only.
-	dn := int64(42929242 - 1)
-	for member, rs := range reads {
-		obs := allelesAt(t, rs, dn)
+		recs := parseRecords(t, data)
+		requireBinnedQualities(t, recs)
+		n := countCovering(recs, altCtx, refCtx)
 		if member == "proband" {
-			assert.Greater(t, obs['T'], 0, "proband carries the de novo ALT")
-			assert.Greater(t, obs['C'], 0, "proband is heterozygous for the de novo")
+			// Sequencing errors are on here, so only a loose check.
+			assert.Greater(t, n[0], 0, "proband carries the de novo ALT")
+			assert.Greater(t, n[1], 0, "proband is heterozygous for the de novo")
 		} else {
-			assert.Zero(t, obs['T'], "%s must not carry the de novo ALT", member)
-			assert.Greater(t, obs['C'], 0, "%s shows REF at the de novo site", member)
+			assert.Zero(t, n[0], "%s must not carry the de novo ALT", member)
 		}
 	}
-
-	// Recreate the haplotypes the run used and check every background site.
-	var cfgSeed uint64 = seed
-	region0 := int64(42929242-1) - windowHalfSize
-	res, err := population.SimulateHaplotypes(pop, "chr1", int(region0), 2*windowHalfSize, 6, cfgSeed^trioSimSeedSalt)
-	require.NoError(t, err)
-	require.Equal(t, m.Trio.BackgroundVariants, res.NumVariants)
-	// #nosec G404 G115 -- same derivation as the generator
-	trio, err := GenerateTrioHaplotypes(res, &genomics.VariantRecord{Chromosome: "chr1", Position: 42929242, Ref: "C", Alt: "T"},
-		mathrand.New(mathrand.NewSource(int64(cfgSeed))))
-	require.NoError(t, err)
-	require.NotEmpty(t, trio.Variants)
-
-	haps := map[string][2][]int{
-		"mother":  {trio.MotherH1, trio.MotherH2},
-		"father":  {trio.FatherH1, trio.FatherH2},
-		"proband": {trio.ProbandH1, trio.ProbandH2},
-	}
-	checked := 0
-	for i, v := range trio.Variants {
-		ref, alt := v.Alleles[0][0], v.Alleles[1][0]
-		allele := func(x int) byte {
-			if x == 1 {
-				return alt
-			}
-			return ref
-		}
-		parental := map[byte]bool{}
-		for _, member := range []string{"mother", "father"} {
-			parental[allele(haps[member][0][i])] = true
-			parental[allele(haps[member][1][i])] = true
-		}
-		for member, h := range haps {
-			obs := allelesAt(t, reads[member], int64(v.Position))
-			want := map[byte]bool{allele(h[0][i]): true, allele(h[1][i]): true}
-			for b := range obs {
-				require.True(t, want[b], "%s site %d: base %q not on its haplotypes", member, v.Position, b)
-				if member == "proband" {
-					require.True(t, parental[b], "proband site %d: allele %q absent from both parents", v.Position, b)
-				}
-			}
-		}
-		checked++
-	}
-	t.Logf("checked %d background sites; manifest reports %d", checked, m.Trio.BackgroundVariants)
 }
 
 func TestScenario_TrioUnsupportedPopulation(t *testing.T) {
@@ -259,6 +181,17 @@ func TestScenario_TrioUnsupportedPopulation(t *testing.T) {
 	assert.Contains(t, err.Error(), `"FIN"`)
 	assert.Contains(t, err.Error(), "supported:")
 	assert.NoFileExists(t, sc.Output.ProbandFASTQ)
+}
+
+func TestLoadScenario_R2NeedsPairedEnd(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "s.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(`
+phenotype: {hpo_terms: [HP:0004923]}
+output: {proband_fastq: p1.fastq, proband_fastq_r2: p2.fastq, ground_truth: m.json}
+`), 0o600))
+	_, err := LoadScenario(path)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "paired_end")
 }
 
 func TestLoadScenario_TrioRequiresDeNovo(t *testing.T) {

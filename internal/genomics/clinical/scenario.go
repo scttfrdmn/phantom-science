@@ -52,19 +52,29 @@ type TrioSpec struct {
 	DeNovo   bool `yaml:"de_novo"`
 }
 
-// SequencerSpec describes the sequencing parameters.
+// SequencerSpec describes the sequencing parameters. Platform is a label
+// recorded in the manifest; the read model is the sequencer config's
+// (Illumina by default: binned qualities, quality-matched errors).
 type SequencerSpec struct {
 	Platform   string `yaml:"platform"`
 	Coverage   int    `yaml:"coverage"`
 	ReadLength int    `yaml:"read_length"`
+	// PairedEnd writes read pairs, the two ends of one fragment: to the
+	// *_fastq and *_fastq_r2 files, or interleaved in *_fastq when no R2
+	// file is given.
+	PairedEnd bool `yaml:"paired_end,omitempty"`
 }
 
-// OutputSpec specifies output file paths.
+// OutputSpec specifies output file paths. The *R2 paths are the read-2
+// files of paired-end scenarios.
 type OutputSpec struct {
-	ProbandFASTQ string `yaml:"proband_fastq"`
-	MotherFASTQ  string `yaml:"mother_fastq,omitempty"`
-	FatherFASTQ  string `yaml:"father_fastq,omitempty"`
-	GroundTruth  string `yaml:"ground_truth"`
+	ProbandFASTQ   string `yaml:"proband_fastq"`
+	ProbandFASTQR2 string `yaml:"proband_fastq_r2,omitempty"`
+	MotherFASTQ    string `yaml:"mother_fastq,omitempty"`
+	MotherFASTQR2  string `yaml:"mother_fastq_r2,omitempty"`
+	FatherFASTQ    string `yaml:"father_fastq,omitempty"`
+	FatherFASTQR2  string `yaml:"father_fastq_r2,omitempty"`
+	GroundTruth    string `yaml:"ground_truth"`
 }
 
 // LoadScenario reads and unmarshals a YAML scenario specification.
@@ -88,6 +98,17 @@ func LoadScenario(path string) (*ClinicalScenario, error) {
 	}
 	if sc.Output.GroundTruth == "" {
 		return nil, fmt.Errorf("scenario must specify output.ground_truth")
+	}
+	if !sc.Sequencer.PairedEnd {
+		for _, f := range []struct{ name, path string }{
+			{"proband_fastq_r2", sc.Output.ProbandFASTQR2},
+			{"mother_fastq_r2", sc.Output.MotherFASTQR2},
+			{"father_fastq_r2", sc.Output.FatherFASTQR2},
+		} {
+			if f.path != "" {
+				return nil, fmt.Errorf("output.%s needs sequencer.paired_end: true", f.name)
+			}
+		}
 	}
 	return &sc, nil
 }

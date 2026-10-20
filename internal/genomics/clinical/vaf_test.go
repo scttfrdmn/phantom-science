@@ -6,7 +6,10 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
+	"math"
 	mathrand "math/rand"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -237,6 +240,75 @@ func TestCoordinateAware_BackwardCompat(t *testing.T) {
 	assert.NotEmpty(t, buf.Bytes())
 }
 
+// randomBases returns n uniform A/C/G/T bases from seed.
+func randomBases(seed int64, n int) []byte {
+	// #nosec G404 -- test fixture
+	rng := mathrand.New(mathrand.NewSource(seed))
+	b := make([]byte, n)
+	for i := range b {
+		b[i] = "ACGT"[rng.Intn(4)]
+	}
+	return b
+}
+
+// revcomp returns the reverse complement of s.
+func revcomp(s string) string {
+	out := make([]byte, len(s))
+	for i := range s {
+		c := s[len(s)-1-i]
+		switch c {
+		case 'A':
+			c = 'T'
+		case 'C':
+			c = 'G'
+		case 'G':
+			c = 'C'
+		case 'T':
+			c = 'A'
+		}
+		out[i] = c
+	}
+	return string(out)
+}
+
+// countContexts counts the reads that contain each context, on either
+// strand.
+func countContexts(reads [][2]string, contexts ...[]byte) []int {
+	counts := make([]int, len(contexts))
+	for _, rd := range reads {
+		for i, c := range contexts {
+			if strings.Contains(rd[1], string(c)) || strings.Contains(revcomp(rd[1]), string(c)) {
+				counts[i]++
+			}
+		}
+	}
+	return counts
+}
+
+// requireBinomial checks that alt of n draws is within 4σ of n·p.
+func requireBinomial(t *testing.T, alt, n int, p float64, what string) {
+	t.Helper()
+	require.Greater(t, n, 30, "%s: too few observations", what)
+	sd := math.Sqrt(float64(n) * p * (1 - p))
+	assert.LessOrEqual(t, math.Abs(float64(alt)-float64(n)*p), 4*sd,
+		"%s: %d ALT of %d, expected %.1f ± 4·%.1f", what, alt, n, float64(n)*p, sd)
+}
+
+// memberReads samples a member's reads (errors off) from the haplotypes
+// built on base and returns them.
+func memberReads(t *testing.T, base []byte, start int64, trio *clinical.TrioHaplotypes, member string, readLength, n int, seed uint64) [][2]string {
+	t.Helper()
+	cfg := types.SequencerConfig{SampleName: member, Lane: 1, ReadLength: readLength, ReadsPerBatch: n,
+		Seed: seed, Illumina: types.IlluminaSpec{Errors: types.IlluminaErrorsNone}}
+	path := filepath.Join(t.TempDir(), member+".fastq")
+	got, err := clinical.ExportWriteMemberReads(cfg, base, start, trio, member, path, "")
+	require.NoError(t, err, member)
+	require.Equal(t, n, got)
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	return parseFASTQ(data)
+}
+
 // TestTrio_DeNovoProbandOnly verifies de novo on H1 produces ~50% VAF in proband
 // and 0% in mother/father.
 func TestTrio_DeNovoProbandOnly(t *testing.T) {
@@ -284,64 +356,25 @@ func TestTrio_DeNovoProbandOnly(t *testing.T) {
 	trio, err := clinical.GenerateTrioHaplotypes(result, deNovo, rng)
 	require.NoError(t, err)
 
-	region := &genomics.GenomicRegion{
-		Chromosome: testChrom,
-		Start:      testLocus1Based - 1 - 100,
-		End:        testLocus1Based - 1 + 200,
-	}
+	// A 300-base window, the locus at offset 100.
+	start := int64(locus0) - 100
+	base := randomBases(1, 300)
+	haps, err := clinical.ExportMemberHaplotypes(base, start, trio, "proband")
+	require.NoError(t, err)
+	altCtx, refCtx := haps[0][90:111], haps[1][90:111]
+	require.Equal(t, testAlt[0], altCtx[10])
+	require.Equal(t, testRef[0], refCtx[10])
 
-	cfg := &types.SequencerConfig{
-		SampleName:    "test",
-		Lane:          1,
-		ReadLength:    readLength,
-		ReadsPerBatch: nReads,
-		TotalBatches:  1,
-		BaseQuality:   30,
-	}
-
-	engine := genomics.NewEngine(*cfg)
-	defer engine.Close()
-
-	checkMemberVAF := func(member string, expectAlt bool) {
-		var buf bytes.Buffer
-		bw := bufio.NewWriterSize(&buf, 256*1024)
-		_, err := clinical.ExportGenerateHaplotypeFASTQ(bw, engine, cfg, trio, member, region, readLength, nReads)
-		require.NoError(t, err, "member=%s", member)
-		require.NoError(t, bw.Flush())
-
-		reads := parseFASTQ(buf.Bytes())
-		locus0 := testLocus1Based - 1
-		var altCount, refCount int
-		for _, rd := range reads {
-			readStart, err := parseReadStart(rd[0])
-			if err != nil {
-				continue
-			}
-			off := locus0 - readStart
-			if off < 0 || int(off) >= len(rd[1]) {
-				continue
-			}
-			switch string(rd[1][off : off+1]) {
-			case testAlt:
-				altCount++
-			case testRef:
-				refCount++
-			}
-		}
-
-		if expectAlt {
-			total := altCount + refCount
-			require.Greater(t, total, 50, "member=%s: need >50 locus observations", member)
-			vaf := float64(altCount) / float64(total)
-			assert.InDelta(t, 0.5, vaf, 0.12, "proband VAF should be ~0.5 (de novo on H1); got %.3f", vaf)
+	for _, member := range []string{"proband", "mother", "father"} {
+		reads := memberReads(t, base, start, trio, member, readLength, nReads, 5)
+		c := countContexts(reads, altCtx, refCtx)
+		if member == "proband" {
+			requireBinomial(t, c[0], c[0]+c[1], 0.5, "proband de novo")
 		} else {
-			assert.Zero(t, altCount, "member=%s should have 0 ALT reads (no de novo)", member)
+			assert.Zero(t, c[0], "member=%s should have 0 ALT reads (no de novo)", member)
+			assert.Greater(t, c[1], 50, "member=%s shows REF", member)
 		}
 	}
-
-	checkMemberVAF("proband", true)
-	checkMemberVAF("mother", false)
-	checkMemberVAF("father", false)
 }
 
 // TestTrioCrossover_MendelianInheritance verifies crossover statistics.
@@ -437,75 +470,22 @@ func TestHaplotypeAwareInjection_Deterministic(t *testing.T) {
 	assert.Equal(t, 1, trio.ProbandH1[variantIdx], "ProbandH1 should carry alt from the mother")
 	assert.Equal(t, 0, trio.ProbandH2[variantIdx], "ProbandH2 should carry ref from the father")
 
-	region := &genomics.GenomicRegion{
-		Chromosome: testChrom,
-		Start:      int64(locus0) - 100,
-		End:        int64(locus0) + 200,
-	}
-
-	cfg := &types.SequencerConfig{
-		SampleName:    "test",
-		Lane:          1,
-		ReadLength:    readLength,
-		ReadsPerBatch: nReads,
-		TotalBatches:  1,
-		BaseQuality:   30,
-	}
-	engine := genomics.NewEngine(*cfg)
-	defer engine.Close()
+	start := int64(locus0) - 100
+	base := randomBases(2, 300)
+	haps, err := clinical.ExportMemberHaplotypes(base, start, trio, "proband")
+	require.NoError(t, err)
+	altCtx, refCtx := haps[0][90:111], haps[1][90:111]
+	require.Equal(t, testAlt[0], altCtx[10])
+	require.Equal(t, testRef[0], refCtx[10])
 
 	// Proband: H1=alt, H2=ref → expected ~50% ALT.
-	var probandBuf bytes.Buffer
-	bwP := bufio.NewWriterSize(&probandBuf, 256*1024)
-	_, err = clinical.ExportGenerateHaplotypeFASTQ(bwP, engine, cfg, trio, "proband", region, readLength, nReads)
-	require.NoError(t, err)
-	require.NoError(t, bwP.Flush())
-
-	probandReads := parseFASTQ(probandBuf.Bytes())
-	var pAlt, pRef int
-	for _, rd := range probandReads {
-		rs, err := parseReadStart(rd[0])
-		if err != nil {
-			continue
-		}
-		off := int64(locus0) - rs
-		if off < 0 || int(off) >= len(rd[1]) {
-			continue
-		}
-		switch string(rd[1][off : off+1]) {
-		case testAlt:
-			pAlt++
-		case testRef:
-			pRef++
-		}
-	}
-	total := pAlt + pRef
-	require.Greater(t, total, 50, "need >50 locus observations")
-	vaf := float64(pAlt) / float64(total)
-	assert.InDelta(t, 0.5, vaf, 0.12, "proband VAF should be ~0.5; got %.3f (alt=%d ref=%d)", vaf, pAlt, pRef)
+	c := countContexts(memberReads(t, base, start, trio, "proband", readLength, nReads, 9), altCtx, refCtx)
+	requireBinomial(t, c[0], c[0]+c[1], 0.5, "proband")
 
 	// Mother: homozygous ALT, so every read covering the site is ALT.
-	var motherBuf bytes.Buffer
-	bwM := bufio.NewWriterSize(&motherBuf, 64*1024)
-	_, err = clinical.ExportGenerateHaplotypeFASTQ(bwM, engine, cfg, trio, "mother", region, readLength, 200)
-	require.NoError(t, err)
-	require.NoError(t, bwM.Flush())
-	var mAlt, mOther int
-	for _, rd := range parseFASTQ(motherBuf.Bytes()) {
-		rs, err := parseReadStart(rd[0])
-		require.NoError(t, err)
-		off := int64(locus0) - rs
-		if off < 0 || int(off) >= len(rd[1]) {
-			continue
-		}
-		if rd[1][off] == testAlt[0] {
-			mAlt++
-		} else {
-			mOther++
-		}
-	}
-	assert.Greater(t, mAlt, 20)
-	assert.Zero(t, mOther, "homozygous ALT mother")
+	c = countContexts(memberReads(t, base, start, trio, "mother", readLength, 200, 9), altCtx, refCtx)
+	assert.Greater(t, c[0], 20)
+	assert.Zero(t, c[1], "homozygous ALT mother")
 }
 
 // TestVAF_BinomialDistribution runs 20 independent generations and verifies

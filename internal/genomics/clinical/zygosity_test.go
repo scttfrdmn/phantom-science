@@ -6,7 +6,6 @@ package clinical_test
 // haplotype injection without 'N' padding, and seeded reproducibility.
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	mathrand "math/rand"
@@ -88,8 +87,9 @@ func TestScenario_SeedReproducible(t *testing.T) {
 }
 
 // A deletion and an insertion on the haplotype next to the de novo SNV: the
-// reads keep their length, contain no N, and the de novo allele lands at its
-// offset after the deletion to its left.
+// haplotypes carry exactly those alleles, and the reads sampled from them
+// keep their length, contain no N, are substrings of a haplotype, and show
+// the de novo allele at VAF 1/2.
 func TestHaplotypeFASTQ_IndelsNoNPadding(t *testing.T) {
 	const readLength = 100
 	locus0 := int(testLocus1Based - 1)
@@ -107,39 +107,35 @@ func TestHaplotypeFASTQ_IndelsNoNPadding(t *testing.T) {
 	trio, err := clinical.GenerateTrioHaplotypes(result, deNovo, mathrand.New(mathrand.NewSource(7)))
 	require.NoError(t, err)
 
-	// Reads start exactly 50 bases before the locus.
-	region := &genomics.GenomicRegion{Chromosome: testChrom, Start: int64(locus0) - 50, End: int64(locus0) - 50 + readLength + 1}
-	cfg := &types.SequencerConfig{SampleName: "indel", Lane: 1, ReadLength: readLength, BaseQuality: 30, Seed: 99}
-	engine := genomics.NewEngine(*cfg)
-	defer engine.Close()
-
-	var buf bytes.Buffer
-	bw := bufio.NewWriter(&buf)
-	_, err = clinical.ExportGenerateHaplotypeFASTQ(bw, engine, cfg, trio, "proband", region, readLength, 400)
+	// A 400-base window with the locus at offset 200.
+	start := int64(locus0) - 200
+	base := randomBases(3, 400)
+	copy(base[180:], "ACGTA")
+	base[200] = testRef[0]
+	base[230] = 'G'
+	haps, err := clinical.ExportMemberHaplotypes(base, start, trio, "proband")
 	require.NoError(t, err)
-	require.NoError(t, bw.Flush())
-
-	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
-	require.Equal(t, 400*4, len(lines))
-	var alt, ref int
-	for i := 0; i < len(lines); i += 4 {
-		seq, qual := lines[i+1], lines[i+3]
-		require.Len(t, seq, readLength)
-		require.Len(t, qual, readLength)
-		require.NotContains(t, seq, "N")
-		// Deletion at read offset 30 keeps its anchor base 'A'; the locus
-		// (offset 50) moves 4 bases left; the insertion follows at 80-4.
-		require.Equal(t, byte('A'), seq[30], "deletion anchor")
-		require.Equal(t, "GCCCC", seq[76:81], "insertion allele")
-		switch seq[46] {
-		case testAlt[0]:
-			alt++
-		case testRef[0]:
-			ref++
-		default:
-			t.Fatalf("locus base %q is neither REF nor ALT: %s", seq[46], seq)
-		}
+	want := func(dn byte) string {
+		return string(base[:181]) + string(base[185:200]) + string(dn) + string(base[201:231]) + "CCCC" + string(base[231:])
 	}
-	vaf := float64(alt) / float64(alt+ref)
-	assert.InDelta(t, 0.5, vaf, 0.1, "proband de novo VAF")
+	require.Equal(t, want(testAlt[0]), string(haps[0]), "proband H1: deletion, de novo ALT, insertion")
+	require.Equal(t, want(testRef[0]), string(haps[1]), "proband H2: deletion, REF, insertion")
+
+	reads := memberReads(t, base, start, trio, "proband", readLength, 2000, 99)
+	require.Len(t, reads, 2000)
+	for _, rd := range reads {
+		seq := rd[1]
+		require.Len(t, seq, readLength)
+		require.NotContains(t, seq, "N")
+		found := false
+		for _, h := range haps {
+			if strings.Contains(string(h), seq) || strings.Contains(string(h), revcomp(seq)) {
+				found = true
+			}
+		}
+		require.True(t, found, "read is not a substring of either haplotype: %s", seq)
+	}
+	// The locus is at offset 196 of the haplotypes, after the deletion.
+	c := countContexts(reads, haps[0][186:207], haps[1][186:207])
+	requireBinomial(t, c[0], c[0]+c[1], 0.5, "proband de novo")
 }
