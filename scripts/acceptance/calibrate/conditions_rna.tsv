@@ -35,3 +35,11 @@ rna_l3_noise	phantom	rna.fa	--profile rna004_130bps_4khz --pore-model $PS/models
 rna_cal	phantom	rna.fa	--profile rna004_130bps_4khz --pore-model $PS/models/rna004/9mer_levels_v1.txt --ref $PS/real/rna/sampled_context_strands.fa $RNAARGS --set adapter_seconds=0.7 --set adapter_level_pa=62 --set adapter_noise_pa=1.5 --set model_scale=17 --set model_shift=80 --set white_noise_pa=0 --set drift_pa=0 --set level_noise_scale=2.2 --set dwell_cv=0.31 --set skip_prob=0
 rna_cal_tau0.5	phantom	rna.fa	--profile rna004_130bps_4khz --pore-model $PS/models/rna004/9mer_levels_v1.txt --ref $PS/real/rna/sampled_context_strands.fa $RNAARGS --set adapter_seconds=0.7 --set adapter_level_pa=62 --set adapter_noise_pa=1.5 --set model_scale=17 --set model_shift=80 --set white_noise_pa=0 --set drift_pa=0 --set level_noise_scale=2.2 --set dwell_cv=0.31 --set skip_prob=0 --set level_tau=0.5
 rna_cal_squigtable	phantom	rna.fa	--profile rna004_130bps_4khz --pore-model $TABLES/squig_rna_pa.txt --ref $PS/real/rna/sampled_context_strands.fa $RNAARGS --set adapter_seconds=0.7 --set adapter_level_pa=62 --set adapter_noise_pa=1.5 --set white_noise_pa=0 --set drift_pa=0 --set dwell_cv=0.31 --set skip_prob=0
+#
+# Preset check: the preset with no overrides, and the two remaining
+# one-factor checks. Built from the "feat: calibrated RNA004 signal preset"
+# commit before these rows were added to it (git_sha a4712ed in the TSV; the
+# same internal/ and cmd/ tree).
+rna_preset	phantom	rna.fa	--profile rna004_130bps_4khz --pore-model $PS/models/rna004/9mer_levels_v1.txt --ref $PS/real/rna/sampled_context_strands.fa $RNAARGS
+rna_preset_s115	phantom	rna.fa	--profile rna004_130bps_4khz --pore-model $PS/models/rna004/9mer_levels_v1.txt --ref $PS/real/rna/sampled_context_strands.fa $RNAARGS --set speed_bps=115
+rna_preset_nostall	phantom	rna.fa	--profile rna004_130bps_4khz --pore-model $PS/models/rna004/9mer_levels_v1.txt --ref $PS/real/rna/sampled_context_strands.fa $RNAARGS --set stall_prob=0

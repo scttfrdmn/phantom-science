@@ -207,8 +207,12 @@ median over all reads of matched bases / construct length:
 
 The calibrated values (adapter 0.7 s at 62 pA, Dorado's 17/80 pA scaling,
 3.0 pA per-sample noise and no white noise or drift, dwell CV 0.31, no
-skips) are measured on the real reads. Speed (115 instead of 130 bps),
-stalls and level smoothing did not change identity.
+skips) are measured on the real reads; `rna_preset` reruns the committed
+preset without overrides and reproduces `rna_cal` exactly. Within the CIs,
+speed (115 instead of 130 bps: 72.08%), no stalls (73.33%, but dwell CV
+0.60 against 1.15 for real reads) and level smoothing (`level_tau` 0.5:
+73.17%) do not change identity. The main measured lever is a per-k-mer
+stdv, which ONT's RNA004 table does not carry.
 
 ```sh
 scripts/acceptance/calibrate/run_conditions.sh --inputs          # DNA

@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"math"
+	"strings"
 	"testing"
 )
 
@@ -183,6 +184,55 @@ func TestLevelTauValidate(t *testing.T) {
 	for _, n := range PresetNames() {
 		if p, _ := Preset(n); !(p.LevelTau >= 0) {
 			t.Errorf("%s: level_tau %g", n, p.LevelTau)
+		}
+	}
+}
+
+// TestModelStdv checks that a profile's model_stdv is the stdv of a
+// two-column table's k-mers (in table units, scaled like the levels), that
+// a table's own stdv column wins, that the DNA preset keeps
+// DefaultModelStdv (so its output is unchanged) and that Validate rejects
+// bad values.
+func TestModelStdv(t *testing.T) {
+	dna, _ := Preset(PresetDNAR10)
+	if dna.ModelStdv != DefaultModelStdv {
+		t.Errorf("DNA preset model_stdv %g, want DefaultModelStdv %g", dna.ModelStdv, DefaultModelStdv)
+	}
+	rna, _ := Preset(PresetRNA004)
+	// 0.176 standardised units x 17 pA: the ~3.0 pA per-sample noise of
+	// real RNA004 reads.
+	if got := rna.ModelStdv * rna.ModelScale; math.Abs(got-2.992) > 1e-9 {
+		t.Errorf("RNA004 preset stdv %g pA, want 2.992", got)
+	}
+	two := testModelText(9, 2, false)
+	rna.ModelK = 9
+	m, err := ReadPoreModel(strings.NewReader(two), rna.ModelOptions()...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := float64(m.Stdv[12345]); math.Abs(got-0.176*17) > 1e-4 {
+		t.Errorf("two-column table stdv %g pA, want %g", got, 0.176*17)
+	}
+	if err := rna.Set("model_stdv", 0.05); err != nil {
+		t.Fatal(err)
+	}
+	if m, _ = ReadPoreModel(strings.NewReader(two), rna.ModelOptions()...); math.Abs(float64(m.Stdv[7])-0.05*17) > 1e-4 {
+		t.Errorf("model_stdv=0.05: stdv %g pA", m.Stdv[7])
+	}
+	three := testModelText(9, 3, false)
+	m3, err := ReadPoreModel(strings.NewReader(three), WithDefaultStdv(rna.ModelStdv))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref, _ := ReadPoreModel(strings.NewReader(three))
+	if m3.Stdv[99] != ref.Stdv[99] {
+		t.Errorf("table stdv column overridden: %g, want %g", m3.Stdv[99], ref.Stdv[99])
+	}
+	for _, v := range []float64{-0.1, math.NaN(), math.Inf(1)} {
+		p := rna
+		p.ModelStdv = v
+		if err := p.Validate(); err == nil {
+			t.Errorf("model_stdv %g validated", v)
 		}
 	}
 }

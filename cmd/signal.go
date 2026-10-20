@@ -47,8 +47,10 @@ Signal is synthesised from a k-mer pore model (--pore-model) with the
 --profile chemistry (squigulator's algorithm, internal/genomics/signal). ONT
 tables are not shipped: fetch one with scripts/fetch-pore-model.sh. Two-column
 ONT kmer_models tables are in standardised units and are scaled to pA with
-the profile's scaling; tables with a level_stdv column are taken as pA
-(--model-units overrides the detection).
+the profile's scaling, every k-mer getting the profile's model_stdv; tables
+with a level_stdv column are taken as pA and keep their per-k-mer stdv
+(--model-units overrides the detection). Level smoothing between k-mers is
+--profile-set level_tau=SAMPLES (0, a step function, by default).
 
 Source sequence. Each read's signal is synthesised from its sequence as
 written in the input. With --truth FASTA (or FASTQ), a read whose ID (or
@@ -783,7 +785,7 @@ func signalRun(o signalOptions, logw io.Writer) (*signalResult, error) {
 	}
 	var lopts []signal.LoadOption
 	if units == "standardised" {
-		lopts = append(lopts, signal.WithScaling(p.ModelScale, p.ModelShift))
+		lopts = append(lopts, signal.WithScaling(p.ModelScale, p.ModelShift), signal.WithDefaultStdv(p.ModelStdv))
 	}
 	model, err := signal.LoadPoreModel(o.modelPath, lopts...)
 	if err != nil {
