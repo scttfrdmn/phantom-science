@@ -205,19 +205,19 @@ func TestNewEngine_HMMMessagesNotOnStdout(t *testing.T) {
 	}
 }
 
-// NewEngineLog sends every diagnostic (here the HMM load warning and the
-// drawn seed) to its writer, so the TUI can keep them off the terminal; a
-// nil writer discards them.
+// NewEngineLog sends every diagnostic (here the missing population model
+// warning and the drawn seed) to its writer, so the TUI can keep them off
+// the terminal; a nil writer discards them.
 func TestNewEngineLog_DiagnosticsToWriter(t *testing.T) {
 	c := goldenConfig(t.TempDir())
-	c.HMMModelPath = filepath.Join(t.TempDir(), "missing.hmm.json")
+	c.ModelDir, c.Population = t.TempDir(), "YRI"
 	var log bytes.Buffer
 	e := NewEngineLog(c, &log)
 	if err := e.GenerateToWriter(io.Discard, GenerateOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	e.Close()
-	if s := log.String(); !strings.Contains(s, "HMM model load failed") || !strings.Contains(s, "--seed ") {
+	if s := log.String(); !strings.Contains(s, "no HMM model") || !strings.Contains(s, "--seed ") {
 		t.Errorf("log %q lacks the HMM warning or the drawn seed", s)
 	}
 	e = NewEngineLog(c, nil)

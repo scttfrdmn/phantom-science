@@ -103,6 +103,9 @@ func (e *Engine) checkExtensions() error {
 	if e.seedErr != nil {
 		return e.seedErr
 	}
+	if e.modelErr != nil {
+		return e.modelErr
+	}
 	if err := e.checkScale(); err != nil {
 		return err
 	}
@@ -815,7 +818,7 @@ func (e *Engine) flowCellEngine(k, n int, spool string, seen map[string]bool) (*
 	fc := &Engine{
 		config: c, parent: e, logw: e.logw, seed: e.seed,
 		fingerprintingEngine: e.fingerprintingEngine, keyErr: e.keyErr, encrypted: e.encrypted,
-		hmmModel: e.hmmModel, modelPath: e.modelPath, toolVersion: e.toolVersion,
+		hmmModel: e.hmmModel, modelPath: e.modelPath, modelErr: e.modelErr, toolVersion: e.toolVersion,
 		customerID: e.customerID, fragments: e.fragments,
 	}
 	rel := ""

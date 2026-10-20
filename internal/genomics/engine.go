@@ -9,8 +9,10 @@ package genomics
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"math/rand/v2"
 	"os"
 	"path/filepath"
@@ -46,6 +48,10 @@ type Engine struct {
 	// fragments, when set, supplies read and fragment bases (see
 	// FragmentSampler); nil uses the HMM model or uniform bases.
 	fragments FragmentSampler
+
+	// modelErr records a configured HMM model that could not be loaded;
+	// generation fails with it rather than silently using uniform bases.
+	modelErr error
 
 	// rawMu guards rawRand, the stream behind GenerateRawSequence.
 	rawMu   sync.Mutex
@@ -203,10 +209,14 @@ func NewEngineLog(config types.SequencerConfig, logw io.Writer) *Engine {
 	e.fingerprintingEngine = fingerprinting.New(customerID, fpOpts...)
 	if modelPath := resolveModelPath(config); modelPath != "" {
 		m, err := authenticity.LoadModel(modelPath)
-		if err != nil {
-			fmt.Fprintf(e.logw, "   [warn] HMM model load failed (%s): %v — using uniform random bases\n",
-				modelPath, err)
-		} else {
+		switch {
+		case err != nil && config.HMMModelPath == "" && errors.Is(err, fs.ErrNotExist):
+			// model_dir has no model for this population: not configured.
+			fmt.Fprintf(e.logw, "   [warn] no HMM model %s for population %s — using uniform random bases\n",
+				modelPath, config.Population)
+		case err != nil:
+			e.modelErr = fmt.Errorf("HMM model %s could not be loaded: %w", modelPath, err)
+		default:
 			e.hmmModel = m
 			e.modelPath = modelPath
 			e.reseedModel(newStream(e.seed, rawStream))
@@ -216,7 +226,10 @@ func NewEngineLog(config types.SequencerConfig, logw io.Writer) *Engine {
 	return e
 }
 
-// resolveModelPath returns the effective HMM model file path for config.
+// resolveModelPath returns the effective HMM model file path for config. A
+// configured model that cannot be loaded is a generation error (an explicit
+// HMMModelPath, or a ModelDir/<Population>.hmm.json file that exists); only
+// a population with no model file in ModelDir falls back to uniform bases.
 // Resolution order:
 //  1. Explicit HMMModelPath — highest priority.
 //  2. ModelDir/<Population>.hmm.json — when both Population and ModelDir are set.
@@ -583,6 +596,9 @@ func (e *Engine) writeStreams(w io.Writer, opts GenerateOpts, obs ReadObserver) 
 // It draws from an engine-wide stream; GenerateRawSequenceWith takes the
 // generator explicitly.
 func (e *Engine) GenerateRawSequence(readLength int) ([]byte, []byte, error) {
+	if e.modelErr != nil {
+		return nil, nil, e.modelErr
+	}
 	e.rawMu.Lock()
 	defer e.rawMu.Unlock()
 	if e.rawRand == nil {
@@ -594,5 +610,8 @@ func (e *Engine) GenerateRawSequence(readLength int) ([]byte, []byte, error) {
 // GenerateRawSequenceWith is GenerateRawSequence drawing uniform bases from r
 // (for example a generator from Engine.Rand).
 func (e *Engine) GenerateRawSequenceWith(r *rand.Rand, readLength int) ([]byte, []byte, error) {
+	if e.modelErr != nil {
+		return nil, nil, e.modelErr
+	}
 	return e.generateWith(r, readLength)
 }

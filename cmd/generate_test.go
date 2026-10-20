@@ -434,32 +434,27 @@ func captureStdout(t *testing.T, fn func(stdout io.Writer) error) ([]byte, error
 	return out, runErr
 }
 
-// generate --stdout with an inaccessible hmm_model_path still writes pure
-// FASTQ to stdout: the config loader's warning must go to stderr, not into
-// the stream a pipeline is reading.
-func TestGenerateStdout_InvalidHMMModelPathKeepsStdoutClean(t *testing.T) {
+// generate --stdout with an inaccessible hmm_model_path fails before
+// writing anything: a configured model that cannot be loaded is an error,
+// not a silent fallback to uniform bases, and stdout stays empty (the config
+// loader's warning goes to stderr).
+func TestGenerateStdout_InvalidHMMModelPathFails(t *testing.T) {
 	const readLength, reads = 40, 20
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "seq.json")
+	missing := filepath.Join(dir, "missing.hmm.json")
 	cfg := fmt.Sprintf(`{"sample_name":"CLI","lane":1,"output_dir":%q,"read_length":%d,"reads_per_batch":%d,"total_batches":1,"base_quality":35,"quality_decay":0.1,"hmm_model_path":%q}`,
-		filepath.Join(dir, "out"), readLength, reads, filepath.Join(dir, "missing.hmm.json"))
+		filepath.Join(dir, "out"), readLength, reads, missing)
 	if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	setGenerateFlags(t, map[string]string{"config": cfgPath, "stdout": "true", "seed": "5"})
 
 	out, err := captureStdout(t, func(stdout io.Writer) error { return runGenerate(generateCmd, stdout) })
-	if err != nil {
-		t.Fatal(err)
+	if err == nil || !strings.Contains(err.Error(), missing) {
+		t.Fatalf("err = %v, want a load error naming %s", err, missing)
 	}
-	lines := strings.Split(strings.TrimRight(string(out), "\n"), "\n")
-	if len(lines) != reads*4 {
-		t.Fatalf("stdout has %d lines, want %d FASTQ lines; first line %q", len(lines), reads*4, lines[0])
-	}
-	for i := 0; i < len(lines); i += 4 {
-		if !strings.HasPrefix(lines[i], "@") || lines[i+2] != "+" ||
-			len(lines[i+1]) != readLength || len(lines[i+3]) != readLength {
-			t.Fatalf("non-FASTQ content on stdout at line %d: %q", i+1, lines[i:i+4])
-		}
+	if len(out) != 0 {
+		t.Errorf("stdout has %d bytes, want none: %q", len(out), out[:min(len(out), 80)])
 	}
 }

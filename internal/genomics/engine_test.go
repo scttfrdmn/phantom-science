@@ -1,10 +1,13 @@
 package genomics
 
 import (
+	"bytes"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
 	"github.com/scttfrdmn/phantom-science/internal/genomics/authenticity"
 	"github.com/scttfrdmn/phantom-science/pkg/types"
 )
@@ -37,7 +40,7 @@ func TestNewEngine(t *testing.T) {
 
 func TestEngineGenerate(t *testing.T) {
 	tmpDir := t.TempDir()
-	
+
 	config := types.SequencerConfig{
 		SampleName:    "Test_Sample",
 		Lane:          1,
@@ -83,7 +86,7 @@ func TestEngineGenerate(t *testing.T) {
 
 func TestEngineGenerateSingleEnd(t *testing.T) {
 	tmpDir := t.TempDir()
-	
+
 	config := types.SequencerConfig{
 		SampleName:    "SingleEnd_Sample",
 		Lane:          1,
@@ -131,13 +134,13 @@ func TestEngineGenerateSingleEnd(t *testing.T) {
 func TestGenerateFASTQFile(t *testing.T) {
 	tmpDir := t.TempDir()
 	filename := filepath.Join(tmpDir, "test_R1_001.fastq")
-	
+
 	config := types.SequencerConfig{
-		SampleName:   "Test_Sample",
-		ReadLength:   100,
+		SampleName:    "Test_Sample",
+		ReadLength:    100,
 		ReadsPerBatch: 10,
-		BaseQuality:  30,
-		QualityDecay: 0.1,
+		BaseQuality:   30,
+		QualityDecay:  0.1,
 	}
 
 	engine := NewEngine(config)
@@ -191,13 +194,13 @@ func TestGenerateFASTQFile(t *testing.T) {
 func TestFASTQFormat(t *testing.T) {
 	tmpDir := t.TempDir()
 	filename := filepath.Join(tmpDir, "test_format.fastq")
-	
+
 	config := types.SequencerConfig{
-		SampleName:   "Test_Sample",
-		ReadLength:   50,
+		SampleName:    "Test_Sample",
+		ReadLength:    50,
 		ReadsPerBatch: 5,
-		BaseQuality:  30,
-		QualityDecay: 0.1,
+		BaseQuality:   30,
+		QualityDecay:  0.1,
 	}
 
 	engine := NewEngine(config)
@@ -213,7 +216,7 @@ func TestFASTQFormat(t *testing.T) {
 	}
 
 	lines := strings.Split(string(content), "\n")
-	
+
 	// Should have at least 4 lines per read (header, sequence, +, quality)
 	if len(lines) < 4 {
 		t.Error("Expected at least 4 lines in FASTQ file")
@@ -227,7 +230,7 @@ func TestFASTQFormat(t *testing.T) {
 		if !strings.HasPrefix(lines[2], "+") {
 			t.Error("Expected third line to start with '+' (quality header)")
 		}
-		
+
 		// Check read length
 		if len(lines[1]) != config.ReadLength {
 			t.Errorf("Expected read length %d, got %d", config.ReadLength, len(lines[1]))
@@ -274,7 +277,7 @@ func TestEngineConfigValidation(t *testing.T) {
 
 func TestFASTQFileNaming(t *testing.T) {
 	tmpDir := t.TempDir()
-	
+
 	config := types.SequencerConfig{
 		SampleName:    "Sample_123",
 		Lane:          2,
@@ -325,7 +328,7 @@ func TestFASTQFileNaming(t *testing.T) {
 
 func TestLongReadGeneration(t *testing.T) {
 	tmpDir := t.TempDir()
-	
+
 	config := types.SequencerConfig{
 		SampleName:    "LongRead_Sample",
 		Lane:          1,
@@ -457,60 +460,69 @@ func TestEngine_HMMModel_GeneratesValidSequences(t *testing.T) {
 	}
 }
 
-// TestEngine_HMMModel_FallsBackOnMissingPath verifies silent fallback when
-// HMMModelPath points to a non-existent file: hmmModel is nil and Generate() succeeds.
-func TestEngine_HMMModel_FallsBackOnMissingPath(t *testing.T) {
-	tmpDir := t.TempDir()
-	config := types.SequencerConfig{
-		SampleName:    "Fallback_Sample",
-		Lane:          1,
-		OutputDir:     tmpDir,
-		ReadLength:    50,
-		ReadsPerBatch: 5,
-		TotalBatches:  1,
-		PairedEnd:     false,
-		BaseQuality:   30,
-		QualityDecay:  0.1,
-		HMMModelPath:  "/nonexistent/path/model.hmm.json",
-	}
-
-	engine := NewEngine(config)
-	if engine.hmmModel != nil {
-		t.Error("expected hmmModel to be nil after missing-path fallback")
-	}
-	if err := engine.Generate(); err != nil {
-		t.Errorf("Generate() should succeed after fallback, got: %v", err)
-	}
+// modelTestConfig is a small single-end run (this file is built in release
+// test builds too, so it cannot use goldenConfig).
+func modelTestConfig(dir string) types.SequencerConfig {
+	return types.SequencerConfig{SampleName: "M", Lane: 1, OutputDir: dir, ReadLength: 50,
+		ReadsPerBatch: 5, TotalBatches: 1, BaseQuality: 30, QualityDecay: 0.1}
 }
 
-// TestEngine_HMMModel_FallsBackOnCorruptFile verifies silent fallback when
-// HMMModelPath points to a corrupt JSON file: hmmModel is nil and Generate() succeeds.
-func TestEngine_HMMModel_FallsBackOnCorruptFile(t *testing.T) {
-	corruptPath := filepath.Join(t.TempDir(), "corrupt.hmm.json")
-	if err := os.WriteFile(corruptPath, []byte("not valid json {{{"), 0600); err != nil {
-		t.Fatalf("WriteFile failed: %v", err)
+// A configured HMM model that cannot be loaded (missing or corrupt
+// hmm_model_path, or a corrupt model_dir/<population>.hmm.json) fails
+// generation, on every output path, before any file is written; the error
+// names the model and the load error. Only a population without a model file
+// in model_dir falls back to uniform bases, with a warning.
+func TestEngine_HMMModel_ConfiguredLoadFailureIsError(t *testing.T) {
+	dir := t.TempDir()
+	corrupt := filepath.Join(dir, "corrupt.hmm.json")
+	if err := os.WriteFile(corrupt, []byte("not valid json {{{"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	popDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(popDir, "YRI.hmm.json"), []byte("{}"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for name, edit := range map[string]func(*types.SequencerConfig){
+		"missing path":   func(c *types.SequencerConfig) { c.HMMModelPath = "/nonexistent/path/model.hmm.json" },
+		"corrupt path":   func(c *types.SequencerConfig) { c.HMMModelPath = corrupt },
+		"corrupt in dir": func(c *types.SequencerConfig) { c.ModelDir, c.Population = popDir, "YRI" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := modelTestConfig(t.TempDir())
+			edit(&c)
+			want := resolveModelPath(c)
+			for path, run := range map[string]func(*Engine) error{
+				"Generate":          func(e *Engine) error { return e.Generate() },
+				"GenerateToWriter":  func(e *Engine) error { return e.GenerateToWriter(io.Discard, GenerateOpts{}) },
+				"GenerateFASTQFile": func(e *Engine) error { return e.GenerateFASTQFile(filepath.Join(c.OutputDir, "x.fastq"), 1, 1) },
+				"GenerateRawSequence": func(e *Engine) error {
+					_, _, err := e.GenerateRawSequence(10)
+					return err
+				},
+			} {
+				e := NewEngineLog(c, io.Discard)
+				err := run(e)
+				e.Close()
+				if err == nil || !strings.Contains(err.Error(), want) || !strings.Contains(err.Error(), "could not be loaded") {
+					t.Errorf("%s: err = %v, want a load error naming %s", path, err, want)
+				}
+			}
+			if entries, _ := os.ReadDir(c.OutputDir); len(entries) != 0 {
+				t.Errorf("failed runs wrote %d entries", len(entries))
+			}
+		})
 	}
 
-	tmpDir := t.TempDir()
-	config := types.SequencerConfig{
-		SampleName:    "Corrupt_Sample",
-		Lane:          1,
-		OutputDir:     tmpDir,
-		ReadLength:    50,
-		ReadsPerBatch: 5,
-		TotalBatches:  1,
-		PairedEnd:     false,
-		BaseQuality:   30,
-		QualityDecay:  0.1,
-		HMMModelPath:  corruptPath,
+	c := modelTestConfig(t.TempDir())
+	c.ModelDir, c.Population = t.TempDir(), "CEU" // no CEU.hmm.json: not configured
+	var log bytes.Buffer
+	e := NewEngineLog(c, &log)
+	defer e.Close()
+	if err := e.Generate(); err != nil {
+		t.Fatalf("population without a model file: %v", err)
 	}
-
-	engine := NewEngine(config)
-	if engine.hmmModel != nil {
-		t.Error("expected hmmModel to be nil after corrupt-file fallback")
-	}
-	if err := engine.Generate(); err != nil {
-		t.Errorf("Generate() should succeed after fallback, got: %v", err)
+	if !strings.Contains(log.String(), "no HMM model") {
+		t.Errorf("no warning for the missing population model: %q", log.String())
 	}
 }
 
