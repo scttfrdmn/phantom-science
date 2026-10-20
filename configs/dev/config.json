@@ -9,16 +9,14 @@
   "paired_end": true,
   "base_quality": 38,
   "quality_decay": 0.2,
+  "dataset_id": "DEV_DATASET_001",
   "enterprise": {
     "customer_id": "DEV_CUSTOMER_001",
     "fingerprinting": {
       "enable": true,
-      "customer_fingerprint": true,
-      "dataset_fingerprint": true,
       "steganography_layers": [
-        "quality_scores"
-      ],
-      "plaintext": true
+        "keyed_seed"
+      ]
     }
   }
 }
