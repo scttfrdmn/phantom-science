@@ -29,6 +29,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Trio background variants are anchored to reference bases, and each member's reads come from one phased haplotype.
   - The manifest records `sequencer.bases` and `sequencer.paired_end`.
 - Scenario spec `sequencer.paired_end` and `output.*_fastq_r2` (#27).
+- `docs/CHARTER.md`, the principles that decide design questions: data fidelity, fingerprints that never alter the data, measured claims, reproducibility and stated limitations.
+- `verify` by regeneration (#27):
+  - candidates come from `--manifest` (repeatable), `--config` with `--customer`/`--dataset`/`--salt`, or `--candidates file.tsv`
+  - reads match exactly or by 31-mer containment, so trimmed, shuffled, renamed or quality-rewritten reads still match
+  - `--max-reads`, `--max-files`, `--max-regen-reads` and `--decoy`
+- `generate --dataset-id` (#27).
+- `Engine.Regenerate` reproduces any file of a run from its manifest without writing it (#27).
 
 ### Changed
 - **BREAKING:** `sequence_validator` takes input paths as arguments (it read only `sequences/validation`) and exits 2 when any sequence fails (#27).
@@ -66,9 +73,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **BREAKING:** read-ID fingerprint tags are SAM-style comment fields (`XC:Z:<customer>`, `XD:Z:<dataset>`), no longer `:cust:`/`:ds:` suffixes that corrupted the Illumina comment and `RG:Z:` (#27).
 - **BREAKING:** `error_model.tier` (`--basecaller-tier`) applies only to platform ont. On Illumina it is a configuration error (#27).
 - **BREAKING:** an HMM model that is configured but missing or unloadable fails generation before anything is written, instead of falling back to uniform bases (#25, #27). This covers `hmm_model_path`, and `model_dir` + `population` with no file for that population.
-- `EmbedCustomerID` and `EmbedDatasetFingerprint` are deprecated in favour of `ReadTags` (#27).
 - Clinical scenario reads use the platform read model: binned qualities, quality-matched errors, and paired fragments (#27). Trio reads used to be constant-Q30 single-end reads.
 - Synthetic trio reads now come from one consistent window sequence per scenario, and scenario read names no longer encode read start positions (#27).
+- **BREAKING:** fingerprints no longer alter the data (`docs/CHARTER.md`, principle 2) (#27).
+  - With fingerprinting on, the run seed is derived as HMAC-SHA256(key, customer, dataset, salt), scheme `keyed_seed/v1`. Output is byte-identical to an unfingerprinted run with that seed.
+  - Fingerprinting needs a key, `enterprise.customer_id` and `dataset_id`, and no longer needs the stegano library or CGO.
+  - The salt is `--seed`, or a drawn value that is logged.
+- **BREAKING:** the `quality_scores` layer is rejected at generation (#27). It edited qualities and moved binned NovaSeq qualities off-bin (scttfrdmn/stegano#107).
+  - Unknown layer names are errors.
+  - `plaintext` is ignored.
+  - The read-ID `XC:Z:`/`XD:Z:` labels are visible labels, not fingerprints, and stay opt-in.
+- **BREAKING:** manifests of fingerprinted runs record `fingerprint` {scheme, customer, dataset, salt} and omit the run and flow-cell seeds; `config.seed` holds the salt. S3 objects are tagged `phantom:regenerable=keyed_seed` (#27).
+- `verify FILE` without candidate flags extracts the quality-score fingerprints of files from 0.9.0 and earlier, which needs the stegano library (#27).
+- **BREAKING:** the default Illumina insert size is lognormal 455 ± 100, measured on proper pairs of NovaSeq 6000 run DRR276626 (454.5 ± 99.8, right-skewed). It was normal 350 ± 50 (#27).
+  - Insert size depends on the library preparation, so set `illumina.insert_size` for other libraries.
+  - A mean or SD given without a distribution keeps the normal.
+- `generate` errors no longer print the usage text.
 
 ### Removed
 - **Subsystems that reported fabricated constants**, none of which any supported command used (#22, #26):
@@ -99,6 +119,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The unused authenticity `Engine`, `IntegrationManager`, `AuthenticityConfig`, `authenticity/validation` and `authenticity/reference` (#25).
 - `ParallelHMMModel`, the demographic HMM wrappers and the old `CoalescentSimulator` (#25).
 - The Python simulators in `internal/population` (11 `.py` files), plus `DemographicSimulator`, `HaplotypeSimulator` and the privacy-preserving genetics mock (#27).
+- `fingerprinting.New`, `LegacyEngine`, the `Engine` interface and the deprecated `EmbedCustomerID` and `EmbedDatasetFingerprint` (#27).
+- Quality-score fingerprint embedding from generation (#27).
 
 ### Fixed
 - `CreatePlatformConfig` returned configs that shared one map, so changing one changed the others (#23).
@@ -138,9 +160,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The TUI's run timer printed a summary into the terminal (#27).
 - Paired-end mates could carry different alleles at a planted variant (#27).
 - `config_v1` `ToV1()` dropped the `illumina` section (#27).
-
-### Security
-- Known limitation: with the default binned Illumina qualities, the quality-score fingerprint moves 360–412 qualities per file off the four bins (for example Q38 `G`), so fingerprinted binned files are detectable from their quality histogram. Bin-aware embedding is requested in scttfrdmn/stegano#107; `illumina.quality_model: linear` avoids it (#27).
+- `scenario` with fingerprinting enabled would have produced runs that cannot be verified. It now rejects fingerprinting (#27).
 
 ## [0.9.0] - 2026-10-19
 

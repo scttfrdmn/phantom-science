@@ -6,9 +6,9 @@
 Phantom Science generates synthetic sequencing data for testing bioinformatics
 pipelines: Illumina-style and Oxford Nanopore FASTQ, ONT cDNA reads with
 isoform ground truth, and raw nanopore signal in BLOW5. Output is reproducible
-from a seed, and FASTQ files from `generate` can carry an encrypted
-steganographic fingerprint that identifies the customer and dataset they were
-made for.
+from a seed. Runs from `generate` can be fingerprinted for the customer and
+dataset they were made for, without changing the data: the seed is derived
+from a secret key, and `verify` attributes a file by regenerating the run.
 
 The project is pre-1.0. Interfaces and output formats can change between minor
 versions; see [CHANGELOG.md](CHANGELOG.md). Features marked "since 0.8.0" are
@@ -55,9 +55,10 @@ on `main` but not in a tagged release yet.
 ## Install
 
 Requires Go 1.24.4 or later. `go.mod` pins the go1.26.9 toolchain, which the
-`go` command downloads automatically. Fingerprinting also needs a C toolchain
-and Rust (`cargo`) to build the [stegano](https://github.com/scttfrdmn/stegano)
-library.
+`go` command downloads automatically. Reading quality-score fingerprints
+from files made by 0.9.0 and earlier also needs a C toolchain and Rust
+(`cargo`) to build the [stegano](https://github.com/scttfrdmn/stegano)
+library; everything else, including fingerprinting, builds in pure Go.
 
 ```bash
 git clone https://github.com/scttfrdmn/phantom-science.git
@@ -73,8 +74,9 @@ L="$PWD/.stegano/target/release"
 CGO_LDFLAGS="-L$L -Wl,-rpath,$L" go build -o phantom-science .
 ```
 
-A pure-Go build needs no C or Rust toolchain, but cannot write or read
-quality-score fingerprints:
+A pure-Go build needs no C or Rust toolchain. It fingerprints and verifies
+runs; it only lacks extraction of legacy (0.9.0 and earlier) quality-score
+fingerprints:
 
 ```bash
 CGO_ENABLED=0 go build -o phantom-science .
@@ -143,7 +145,7 @@ Run `phantom-science <command> --help` for every flag.
 |---|---|
 | `generate` | Writes FASTQ files from a sequencer config, or streams FASTQ to stdout with `--stdout` |
 | `validate FILE...` | Runs the validation checks on FASTQ files (plain or `.gz`) |
-| `verify FILE...` | Extracts and reports each file's fingerprint (needs the stegano library) |
+| `verify FILE...` | Attributes files to a fingerprinted run by regenerating it (`--manifest`, or `--config` with candidates); without those flags, extracts legacy quality-score fingerprints (needs the stegano library) |
 | `train` | Trains an HMM from VCF REF/ALT alleles and writes a `.hmm.json` model |
 | `scenario` | Writes FASTQ with a planted pathogenic variant and a ground-truth manifest |
 | `transcriptome` | Since 0.8.0. Writes ONT cDNA reads from transcripts, with expression and isoform truth |
@@ -258,18 +260,21 @@ are in [scripts/acceptance/README.md](scripts/acceptance/README.md).
 
 ## Fingerprinting
 
-Phantom Science uses [stegano](https://github.com/scttfrdmn/stegano) v0.8.0
-(Go module `github.com/scttfrdmn/stegano/go`) to embed one fingerprint per
-output file, `customer:dataset:stegano-<version>:ts-<unix time>`, into the
-least-significant bits of the FASTQ quality scores. Headers and sequences are
-unchanged, and each quality score changes by at most one Phred step
-(`TestSteganoEngine_FASTQRoundTrip`). Extraction fails on files with no
-fingerprint or a damaged one (`TestSteganoEngine_CleanFASTQHasNoFingerprint`,
-`TestSteganoEngine_CorruptedFingerprintIsRejected`).
+Fingerprints never alter the data ([docs/CHARTER.md](docs/CHARTER.md),
+principle 2). With fingerprinting on, the run's seed is derived from a secret
+key and the customer and dataset IDs:
 
-Fingerprints are encrypted by default: stegano derives a key from your key
-with Argon2id and seals the payload with AES-256-GCM. Without the key the
-fingerprint cannot be read.
+```
+seed = first 8 bytes of HMAC-SHA256(key, "phantom-science/fingerprint/v1" ‖ customer ‖ dataset ‖ salt)
+```
+
+Everything else (bases, qualities, lengths, inserts, errors) follows from
+that seed, so the output is byte-identical to an unfingerprinted run with the
+derived seed (`TestKeyedSeed_OutputEqualsUnfingerprintedRun`) and its
+qualities stay on the real bins. Nothing is embedded in the files. Without
+the key, nobody can produce data that matches another customer's seed, and
+the fingerprint cannot be stripped without discarding the data. It needs no
+stegano library or CGO.
 
 1. Create a key once and keep it private:
 
@@ -277,67 +282,74 @@ fingerprint cannot be read.
    openssl rand -base64 32 > fingerprint.key && chmod 600 fingerprint.key
    ```
 
-2. Enable the `quality_scores` layer in the sequencer config's
+2. Enable fingerprinting in the sequencer config's top-level or
    `enterprise.fingerprinting` section, or in a phantom config passed with
-   `-p` (which takes precedence):
+   `-p` (which takes precedence), and set the customer and dataset:
 
    ```json
+   "dataset_id": "STUDY_1",
    "enterprise": {
      "customer_id": "ACME",
-     "fingerprinting": {
-       "enable": true,
-       "steganography_layers": ["quality_scores"],
-       "key_file": "fingerprint.key"
-     }
+     "fingerprinting": {"enable": true, "key_file": "fingerprint.key"}
    }
    ```
 
-3. Generate as usual, then verify with the same key:
+   `generate --dataset-id` sets the dataset too. `--seed` is the salt; without
+   it a salt is drawn and logged. The manifest records the scheme, customer,
+   dataset and salt, never the key or the derived seed.
+
+3. Verify a suspect file by regenerating candidate runs:
 
    ```bash
-   phantom-science verify --key-file fingerprint.key --customer ACME out/*.fastq.gz
+   phantom-science verify --key-file fingerprint.key \
+       --manifest acme/phantom-manifest.json --manifest beta/phantom-manifest.json \
+       suspect.fastq.gz
    ```
+
+   Or name candidates without manifests: `--config run.json --customer C
+   --dataset D --salt S`, or `--candidates file.tsv` (customer, dataset, salt
+   per line) with `--config` or a `--manifest`.
+
+How verification decides:
+
+- **Matching:** suspect reads are matched to the regenerated run by sequence:
+  whole reads on either strand, or containment of sampled 31-mers. Reads that
+  were trimmed, shuffled, renamed, reverse-complemented or had every quality
+  rewritten still match. A file is attributed to a candidate when at least
+  three reads match and matches exceed ten times both a uniform-random chance
+  bound and a `--decoy` run (the first candidate regenerated with a random
+  seed).
+- **Measured:** 10,000 of 10,000 reads of each file of a 200,000-pair
+  NovaSeq run matched the right customer (exact), and 0 of 10,000 matched the
+  wrong one. After rewriting every quality to `F`, trimming 10 bases from each
+  end, renaming and shuffling, 10,000 of 10,000 still matched by 31-mer
+  containment. Regenerating one candidate's 400,000 reads took about 2.5 s on
+  an M4 Pro.
+- **Limits:** `--max-reads` (default 10,000 suspect reads per file),
+  `--max-files` and `--max-regen-reads` bound the work. The chance bound
+  assumes uniform-random sequence, so for `--reference` or HMM runs use
+  `--decoy`. Runs made by `signal` and `scenario` cannot be verified this way
+  (`scenario` rejects fingerprinting).
 
 The rules:
 
 - **Key source:** `fingerprinting.key_file`, or the `PHANTOM_FINGERPRINT_KEY`
   environment variable when no file is set. Relative paths resolve against
-  the working directory. A key is text of at least 16 bytes with no NUL bytes,
-  and a key file must not be readable by other users (`chmod 600`).
-- **No key:** generation refuses to start, unless `plaintext: true` is set.
-  Anyone with the stegano library can read plaintext fingerprints.
-  `configs/dev/config.json` sets `plaintext: true`.
-- **Fail closed:** generation fails rather than write unmarked files. That
-  happens without the stegano library (`CGO_ENABLED=0` or `-tags release`
-  builds, checked before any file is written), or when a file is too small to
-  hold the fingerprint (the file is removed). With a short customer ID an
-  encrypted fingerprint fits in six 150 bp reads or eight 100 bp reads. The
-  minimum grows with the fingerprint's length.
-- **Binned qualities:** embedding changes a few hundred qualities per file
-  by ±1, all in the first records. With the default binned Illumina qualities
-  these become values outside the four bins (for example Q38 `G`), which real
-  NovaSeq data never contains, so a fingerprinted binned file can be spotted
-  by its quality histogram. Measured on 2×150 output: 360–412 changed values
-  per 20,000-read file. Bin-aware embedding is requested in
-  [scttfrdmn/stegano#107](https://github.com/scttfrdmn/stegano/issues/107);
-  `illumina.quality_model: linear` avoids the problem.
-- **gzip:** the fingerprint is embedded before compression. `verify` and
-  `validate` read `.fastq.gz`.
-- **Streaming:** `generate --stdout` cannot carry a fingerprint and refuses to
-  run with the `quality_scores` layer.
-- **Read-ID tags:** `customer_fingerprint` and `dataset_fingerprint` add
-  plain-text SAM-style comment fields `XC:Z:<customer>` and `XD:Z:<dataset>`
-  (tab-separated, after the Illumina comment) to every read header. Read
-  names are unchanged. They are separate from the encrypted fingerprint. Turn them off if the IDs must not
-  be visible.
-- **verify:** reports customer, dataset, creation time, stegano version and
-  whether the fingerprint was encrypted. `--customer` and `--dataset` require
-  specific values. It exits non-zero if any file has no fingerprint, a
-  mismatched one, or cannot be read.
-- **Not covered:** BLOW5 output from `signal` and reads from `transcriptome`
-  and `scenario` do not carry a quality-score fingerprint. The library can also put a fingerprint
-  in a SAM `zs:Z:` tag, but no command writes SAM. Fingerprints written by
-  stegano 0.5.x and earlier cannot be extracted.
+  the working directory. A key is text of at least 16 bytes with no NUL
+  bytes, and a key file must not be readable by other users (`chmod 600`).
+- **Required:** a key, `enterprise.customer_id` and `dataset_id`; each
+  missing one is an error before anything is written.
+- **Layers:** an empty `steganography_layers`, or `keyed_seed`, turns on the
+  keyed seed. `quality_scores` is rejected, because it edits qualities.
+- **Read-ID labels:** `customer_fingerprint` and `dataset_fingerprint` add
+  visible SAM-style comment fields `XC:Z:<customer>` and `XD:Z:<dataset>`
+  (tab-separated, after the Illumina comment) to every read header. They are
+  labels, not fingerprints, and are off unless set; the layer `read_ids`
+  alone writes only the labels.
+- **Legacy files:** `verify FILE` with no candidate flags extracts the
+  quality-score fingerprints written by phantom-science 0.9.0 and earlier
+  (with stegano; needs a build with the stegano library). Generation can no
+  longer write them.
 
 ## Training an HMM
 

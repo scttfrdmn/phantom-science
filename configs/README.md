@@ -37,7 +37,7 @@ config.
 | `sequencer/v1.0/miseq-v3.yaml`, `nextseq-2000-p3.yaml`, `novaseq-6000-s2.yaml` | v1 YAML | the same runs in the v1 layout |
 | `sequencers/ont_promethion24.yaml` | v2 template | Oxford Nanopore output (`platform: ont`): lognormal read lengths, SUP error model, MinKNOW headers, `sequencing_summary.txt`, gzip |
 | `sequencers/pacbio_revio.yaml`, `element_aviti.yaml`, `mgi_dnbseq_t20x2.yaml` | v2 template | description only: loading fails with "only Oxford Nanopore templates are supported" |
-| `dev/config.json` | JSON | 3 files of 10,000 read pairs with plaintext quality-score fingerprints (needs a stegano build) |
+| `dev/config.json` | JSON | 3 files of 10,000 read pairs with keyed-seed fingerprints (needs `PHANTOM_FINGERPRINT_KEY`) |
 | `dev/fast-test.json` | JSON | 50 bp single end, 10,000 files of 100 reads |
 | `dev/high-volume-test.json` | JSON | 1,000 files of 1,000 read pairs |
 | `dev/million-files.json` | JSON | 500,000 files of 100 read pairs (one million files) |
@@ -76,16 +76,18 @@ matching `generate` flags.
 
 | File | Notes |
 |---|---|
-| `phantom/v1.0/enterprise-settings.yaml` | encrypted quality-score fingerprints, read-ID customer tags, and the built-in validation checks |
+| `phantom/v1.0/enterprise-settings.yaml` | keyed-seed fingerprints and the built-in validation checks |
 
 A phantom config is read for:
 
 - `enterprise.customer_id` and `fingerprinting` (`enable`,
   `customer_fingerprint`, `dataset_fingerprint`, `steganography_layers`,
-  `key_file`, `plaintext`). `quality_scores` is the only steganography layer
-  that embeds a fingerprint; it needs the stegano library and an encryption
-  key (from `key_file`, mode 600, or `PHANTOM_FINGERPRINT_KEY`) unless
-  `plaintext: true` is set.
+  `key_file`). Fingerprinting derives the run seed from the key (from
+  `key_file`, mode 600, or `PHANTOM_FINGERPRINT_KEY`), the customer ID and
+  the dataset ID (`dataset_id` in the sequencer config, or `generate
+  --dataset-id`); it does not change the data. `steganography_layers` may be
+  empty or `keyed_seed`; `read_ids` adds visible `XC:Z:`/`XD:Z:` labels;
+  `quality_scores` is rejected. `plaintext` is ignored.
 - `validation` (`enable` and the three test lists). Valid test names are
   `format_compliance`, `quality_distribution`, `sequence_complexity`,
   `read_length_consistency`, `hardy_weinberg`, `base_composition`,
@@ -107,10 +109,11 @@ phantom-science generate --config configs/sequencer/v1.0/miseq-v3.yaml --total-r
 # Oxford Nanopore reads
 phantom-science generate --config configs/sequencers/ont_promethion24.yaml --total-bases 5M --seed 1
 
-# With fingerprinting and validation (needs a stegano build and a key)
+# With fingerprinting and validation (needs a key)
 export PHANTOM_FINGERPRINT_KEY="$(openssl rand -base64 32)"
 phantom-science generate --config configs/sequencer/simple-run.json \
-  -p configs/phantom/v1.0/enterprise-settings.yaml --total-reads 1000 --seed 1
+  -p configs/phantom/v1.0/enterprise-settings.yaml --dataset-id STUDY_1 \
+  --total-reads 1000 --seed 1
 ```
 
 `internal/cli/config_loader_v2_test.go` checks that every
