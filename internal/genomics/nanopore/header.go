@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/scttfrdmn/phantom-science/internal/detmath"
 	"github.com/scttfrdmn/phantom-science/internal/genomics/seqread"
 )
 
@@ -131,7 +132,7 @@ func FormatComment(info RunInfo, p Placement) string {
 // phredError[q] is the error probability of Phred score q.
 var phredError = func() (t [256]float64) {
 	for q := range t {
-		t[q] = math.Pow(10, -float64(q)/10)
+		t[q] = detmath.Pow(10, -float64(q)/10)
 	}
 	return t
 }()
@@ -148,7 +149,7 @@ func MeanQScore(qual []byte, maxPhred byte) float64 {
 	for _, q := range qual {
 		sum += phredError[min(q, maxPhred)]
 	}
-	return float64(-10 * math.Log10(sum/float64(len(qual))))
+	return float64(-10 * detmath.Log10(sum/float64(len(qual))))
 }
 
 // NewHeaderFormatter returns a per-stream read-header function for the

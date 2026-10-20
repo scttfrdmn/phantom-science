@@ -2,9 +2,10 @@ package reference
 
 import (
 	"fmt"
-	"math"
 	"strings"
 	"sync"
+
+	"github.com/scttfrdmn/phantom-science/internal/detmath"
 )
 
 // KmerExtractor handles k-mer frequency extraction from genomic sequences
@@ -128,7 +129,7 @@ func (e *KmerExtractor) MergeFrequencyTables(tables []*KmerFrequencyTable) (*Kme
 		}
 
 		for kmer, freq := range table.Frequencies {
-			count := uint64(freq * float64(table.TotalKmers))
+			count := uint64(float64(freq * float64(table.TotalKmers)))
 			mergedFreqs[kmer] += count
 			totalKmers += count
 		}
@@ -156,7 +157,7 @@ func (e *KmerExtractor) MergeFrequencyTables(tables []*KmerFrequencyTable) (*Kme
 // ComputeExpectedKmers computes the expected number of unique k-mers for given k
 func (e *KmerExtractor) ComputeExpectedKmers(k int) int {
 	// For DNA: 4^k possible k-mers
-	return int(math.Pow(4, float64(k)))
+	return int(detmath.Pow(4, float64(k)))
 }
 
 // GetObservedKmers returns the number of observed unique k-mers
@@ -241,12 +242,12 @@ func (e *KmerExtractor) GetKmerComplexity() float64 {
 	for _, count := range e.frequencyTable {
 		prob := float64(count) / float64(e.totalKmers)
 		if prob > 0 {
-			entropy -= float64(prob * math.Log2(prob))
+			entropy -= float64(prob * detmath.Log2(prob))
 		}
 	}
 
 	// Normalize by maximum possible entropy
-	maxEntropy := math.Log2(float64(e.ComputeExpectedKmers(e.k)))
+	maxEntropy := detmath.Log2(float64(e.ComputeExpectedKmers(e.k)))
 	if maxEntropy == 0 {
 		return 0.0
 	}

@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/scttfrdmn/phantom-science/internal/detmath"
 	"github.com/scttfrdmn/phantom-science/internal/errors"
 )
 
@@ -366,7 +367,7 @@ func (m *HMMKmerModel) GetModelStats() map[string]interface{} {
 			for j := 0; j < 4; j++ {
 				prob := m.transitionMatrix[i][j]
 				if prob > 0 {
-					transitionEntropy -= float64(prob * math.Log2(prob))
+					transitionEntropy -= float64(prob * detmath.Log2(prob))
 				}
 			}
 		}

@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 
+	"github.com/scttfrdmn/phantom-science/internal/detmath"
 	"github.com/scttfrdmn/phantom-science/internal/genomics/nanopore"
 	"github.com/scttfrdmn/phantom-science/internal/genomics/nanopore/errmodel"
 	"github.com/scttfrdmn/phantom-science/internal/genomics/seqread"
@@ -375,10 +376,10 @@ func truncGeom(r *rand.Rand, q float64, K int) int {
 		return 0
 	}
 	u := r.Float64()
-	lq := math.Log(q)
+	lq := detmath.Log(q)
 	// P(k <= x) = (1 − q^{x+1}) / (1 − q^{K+1}).
-	tail := -math.Expm1(float64(K+1) * lq) // 1 − q^{K+1}
-	k := int(math.Floor(math.Log1p(-u*tail) / lq))
+	tail := -detmath.Expm1(float64(float64(K+1) * lq)) // 1 − q^{K+1}
+	k := int(math.Floor(detmath.Log1p(float64(-u*tail)) / lq))
 	return min(max(k, 0), K)
 }
 
@@ -392,7 +393,7 @@ func (s *Simulator) fragment(r *rand.Rand, L int) (start int, full bool) {
 		return 0, true
 	}
 	// Keep MinFragment + k bases, k in 0..L−1−MinFragment.
-	k := truncGeom(r, math.Exp(-1/s.cfg.TruncMean), L-1-s.cfg.MinFragment)
+	k := truncGeom(r, detmath.Exp(-1/s.cfg.TruncMean), L-1-s.cfg.MinFragment)
 	return L - (s.cfg.MinFragment + k), false
 }
 

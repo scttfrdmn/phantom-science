@@ -32,6 +32,8 @@ import (
 	"fmt"
 	"math"
 	"math/rand/v2"
+
+	"github.com/scttfrdmn/phantom-science/internal/detmath"
 )
 
 // Tier is an ONT basecaller model tier.
@@ -141,7 +143,7 @@ func NewParams(p Params) (*Model, error) {
 	// In i.i.d. uniform sequence a base lies in a run of length L with
 	// probability L·(3/4)²·(1/4)^(L−1).
 	for L := 2; L <= 64; L++ {
-		m.meanHP += float64(float64(L) * 9 / 16 * math.Pow(0.25, float64(L-1)) * m.HomopolymerExcess(L))
+		m.meanHP += float64(float64(L) * 9 / 16 * detmath.Pow(0.25, float64(L-1)) * m.HomopolymerExcess(L))
 	}
 	return m, nil
 }
@@ -176,7 +178,7 @@ func (m *Model) HomopolymerExcess(runLen int) float64 {
 	if runLen <= 1 || m.p.HPCap == 0 {
 		return 0
 	}
-	return float64(m.p.HPCap * -math.Expm1(-float64(runLen-1)/m.p.HPScale))
+	return float64(m.p.HPCap * -detmath.Expm1(-float64(runLen-1)/m.p.HPScale))
 }
 
 // DeletionRate is the deletion probability of a base in a run of length
@@ -263,14 +265,14 @@ func MeanQ(qual []byte) float64 {
 	}
 	var s float64
 	for _, q := range qual {
-		s += math.Pow(10, -float64(q)/10)
+		s += detmath.Pow(10, -float64(q)/10)
 	}
-	return float64(-10 * math.Log10(s/float64(len(qual))))
+	return float64(-10 * detmath.Log10(s/float64(len(qual))))
 }
 
 // ReadQuality draws one read's target quality (ONT mean) around the mode.
 func (m *Model) ReadQuality(r *rand.Rand) float64 {
-	q := m.p.ModalQ + float64(m.p.ReadSD*r.NormFloat64())
+	q := m.p.ModalQ + float64(m.p.ReadSD*detmath.NormFloat64(r))
 	return math.Min(MaxPhred, math.Max(MinPhred, q))
 }
 
@@ -282,7 +284,7 @@ func (m *Model) Qualities(r *rand.Rand, n int) []byte {
 	q := make([]byte, n)
 	centre := m.centre(m.ReadQuality(r))
 	for i := range q {
-		q[i] = clampQ(centre + float64(m.p.BaseSD*r.NormFloat64()))
+		q[i] = clampQ(centre + float64(m.p.BaseSD*detmath.NormFloat64(r)))
 	}
 	return q
 }
@@ -298,28 +300,28 @@ func (m *Model) Qualities(r *rand.Rand, n int) []byte {
 func (m *Model) centre(q float64) float64 {
 	p := m.p
 	a := math.Ln10 / 10
-	v := a * a * p.BaseSD * p.BaseSD / 2
+	v := float64(a * a * p.BaseSD * p.BaseSD / 2)
 	del := p.Del + m.meanHP
 	errEmit := p.Sub + p.Ins                     // emitted error bases per truth base
 	nb := math.Min(2*(del+errEmit), 1-del-p.Sub) // bases bordering an error
 	match := 1 - del - p.Sub - nb                // unpenalised bases
 	emitted := 1 - del + p.Ins
-	target := math.Exp(-a * q)
+	target := detmath.Exp(float64(-a * q))
 	mean := func(c float64) float64 {
-		b := math.Exp(float64(-a*c) + v)
-		e := math.Exp(float64(-a*p.ErrFactor*c) + float64(v*p.ErrFactor*p.ErrFactor))
-		return (float64(match*b) + float64(nb*b*math.Exp(a*p.NeighbourDrop)) + float64(errEmit*e)) / emitted
+		b := detmath.Exp(float64(-a*c) + v)
+		e := detmath.Exp(float64(-a*p.ErrFactor*c) + float64(v*p.ErrFactor*p.ErrFactor))
+		return (float64(match*b) + float64(nb*b*detmath.Exp(float64(a*p.NeighbourDrop))) + float64(errEmit*e)) / emitted
 	}
 	lo, hi := q-10, q+40 // mean is decreasing in c
 	for range 50 {
-		mid := (lo + hi) / 2
+		mid := float64((lo + hi) / 2)
 		if mean(mid) > target {
 			lo = mid
 		} else {
 			hi = mid
 		}
 	}
-	return (lo + hi) / 2
+	return float64((lo + hi) / 2)
 }
 
 func clampQ(v float64) byte {

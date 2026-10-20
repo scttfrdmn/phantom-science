@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/scttfrdmn/phantom-science/internal/detmath"
 	"github.com/scttfrdmn/phantom-science/internal/errors"
 )
 
@@ -209,7 +210,7 @@ func (m *AdaptiveHMMModel) generateAdaptiveQuality(kmer string, complexity float
 	}
 
 	// Add randomness and clamp
-	quality := baseQuality + int(m.rng.NormFloat64()*3)
+	quality := baseQuality + int(detmath.NormFloat64(m.rng)*3)
 	if quality < 0 {
 		quality = 0
 	}

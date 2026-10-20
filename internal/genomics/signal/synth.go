@@ -6,6 +6,8 @@ import (
 	"hash/fnv"
 	"math"
 	"math/rand/v2"
+
+	"github.com/scttfrdmn/phantom-science/internal/detmath"
 )
 
 // Digitiser converts between pA and raw ADC values:
@@ -246,20 +248,20 @@ func Synthesize(r *rand.Rand, seq []byte, p Profile, model *PoreModel, opts ...O
 	s := synth{r: r, p: p, model: model, events: cfg.events}
 	s.seq = sanitize(r, seq)
 
-	offset := p.OffsetMean + float64(p.OffsetStd*r.NormFloat64())
-	medianBefore := p.MedianBeforeMean + float64(p.MedianBeforeStd*r.NormFloat64())
-	s.scale = 1 + float64(p.ReadScaleSD*r.NormFloat64())
+	offset := p.OffsetMean + float64(p.OffsetStd*detmath.NormFloat64(r))
+	medianBefore := p.MedianBeforeMean + float64(p.MedianBeforeStd*detmath.NormFloat64(r))
+	s.scale = 1 + float64(p.ReadScaleSD*detmath.NormFloat64(r))
 	if s.scale < 0.5 {
 		s.scale = 0.5
 	}
-	s.shift = float64(p.ReadShiftSD * r.NormFloat64())
+	s.shift = float64(p.ReadShiftSD * detmath.NormFloat64(r))
 	if p.DriftPA > 0 {
-		s.driftA = math.Exp(-1 / (p.DriftTau * p.SamplingRate))
+		s.driftA = detmath.Exp(-1 / (p.DriftTau * p.SamplingRate))
 		s.driftB = float64(p.DriftPA * math.Sqrt(1-float64(s.driftA*s.driftA)))
-		s.drift = float64(p.DriftPA * r.NormFloat64())
+		s.drift = float64(p.DriftPA * detmath.NormFloat64(r))
 	}
 	if p.LevelTau > 0 {
-		s.levelA = math.Exp(-1 / p.LevelTau)
+		s.levelA = detmath.Exp(-1 / p.LevelTau)
 	}
 	s.dig = p.Digitiser(offset)
 	nk := len(s.seq) - k + 1
@@ -414,9 +416,9 @@ func (s *synth) dwells(n int, withEvents bool) []int {
 }
 
 func (s *synth) emit(level, sd float64) {
-	v := level + float64(sd*s.r.NormFloat64())
+	v := level + float64(sd*detmath.NormFloat64(s.r))
 	if s.driftB > 0 {
-		s.drift = float64(s.driftA*s.drift) + float64(s.driftB*s.r.NormFloat64())
+		s.drift = float64(s.driftA*s.drift) + float64(s.driftB*detmath.NormFloat64(s.r))
 		v += s.drift
 	}
 	raw, clipped := s.dig.Raw(v)
@@ -481,19 +483,19 @@ func gammaMeanCV(r *rand.Rand, mean, cv float64) float64 {
 func gammaSample(r *rand.Rand, shape float64) float64 {
 	if shape < 1 {
 		u := r.Float64()
-		return float64(gammaSample(r, shape+1) * math.Pow(u, 1/shape))
+		return float64(gammaSample(r, shape+1) * detmath.Pow(u, 1/shape))
 	}
 	d := shape - 1.0/3
 	c := 1 / math.Sqrt(9*d)
 	for {
-		x := r.NormFloat64()
+		x := detmath.NormFloat64(r)
 		v := 1 + float64(c*x)
 		if v <= 0 {
 			continue
 		}
 		v = float64(v * v * v)
 		u := r.Float64()
-		if u < 1-float64(0.0331*x*x*x*x) || math.Log(u) < float64(0.5*x*x)+float64(d*(1-v+math.Log(v))) {
+		if u < 1-float64(0.0331*x*x*x*x) || detmath.Log(u) < float64(0.5*x*x)+float64(d*(1-v+detmath.Log(v))) {
 			return float64(d * v)
 		}
 	}

@@ -37,6 +37,7 @@ import (
 	"math/rand/v2"
 	"sort"
 
+	"github.com/scttfrdmn/phantom-science/internal/detmath"
 	"github.com/scttfrdmn/phantom-science/pkg/types"
 )
 
@@ -150,14 +151,14 @@ func (d *Distribution) initLognormal(spec types.ReadLengthSpec) error {
 		if spec.N50 <= spec.Median {
 			return invalid("lognormal n50 %d must exceed median %d (N50 > median for every log-normal)", spec.N50, spec.Median)
 		}
-		s2 := math.Log(float64(spec.N50) / float64(spec.Median))
-		d.mu, d.sigma = math.Log(float64(spec.Median)), math.Sqrt(s2)
+		s2 := detmath.Log(float64(spec.N50) / float64(spec.Median))
+		d.mu, d.sigma = detmath.Log(float64(spec.Median)), math.Sqrt(s2)
 	case byMoments:
 		if !(spec.Mean > 0) || !(spec.SD > 0) || math.IsInf(spec.Mean, 0) || math.IsInf(spec.SD, 0) {
 			return invalid("lognormal needs mean > 0 and sd > 0 (got mean %g, sd %g)", spec.Mean, spec.SD)
 		}
-		s2 := math.Log1p(spec.SD * spec.SD / (spec.Mean * spec.Mean))
-		d.mu, d.sigma = math.Log(spec.Mean)-s2/2, math.Sqrt(s2)
+		s2 := detmath.Log1p(spec.SD * spec.SD / (spec.Mean * spec.Mean))
+		d.mu, d.sigma = detmath.Log(spec.Mean)-float64(s2/2), math.Sqrt(s2)
 	default:
 		return invalid("lognormal needs n50+median or mean+sd")
 	}
@@ -217,12 +218,12 @@ func (d *Distribution) partialMoments(a, b float64) (m1, m2 float64) {
 		mu, s := d.mu, d.sigma
 		// E[X^k 1{a<X<b}] = e^(kμ + k²σ²/2) [Φ((ln b − μ − kσ²)/σ) − Φ((ln a − μ − kσ²)/σ)]
 		part := func(k float64) float64 {
-			lo := normCDF((math.Log(a) - mu - float64(k*s*s)) / s)
+			lo := normCDF((detmath.Log(a) - mu - float64(k*s*s)) / s)
 			hi := 1.0
 			if !math.IsInf(b, 1) {
-				hi = normCDF((math.Log(b) - mu - float64(k*s*s)) / s)
+				hi = normCDF((detmath.Log(b) - mu - float64(k*s*s)) / s)
 			}
-			return float64(math.Exp(float64(k*mu)+k*k*s*s/2) * (hi - lo))
+			return float64(detmath.Exp(float64(k*mu)+float64(k*k*s*s/2)) * (hi - lo))
 		}
 		return part(1), part(2)
 	default: // gamma
@@ -249,7 +250,7 @@ func (d *Distribution) cdf(x float64) float64 {
 	}
 	switch d.dist {
 	case types.ReadLengthLognormal:
-		return normCDF((math.Log(x) - d.mu) / d.sigma)
+		return normCDF((detmath.Log(x) - d.mu) / d.sigma)
 	case types.ReadLengthGamma:
 		return gammaP(d.shape, x/d.scale)
 	}
@@ -317,7 +318,7 @@ func (d *Distribution) Sample(r *rand.Rand) int {
 func (d *Distribution) draw(r *rand.Rand) int {
 	var x float64
 	if d.dist == types.ReadLengthLognormal {
-		x = math.Exp(d.mu + float64(d.sigma*r.NormFloat64()))
+		x = detmath.Exp(d.mu + float64(d.sigma*detmath.NormFloat64(r)))
 	} else {
 		x = d.scale * sampleGamma(r, d.shape)
 	}
@@ -330,12 +331,12 @@ func (d *Distribution) draw(r *rand.Rand) int {
 func sampleGamma(r *rand.Rand, shape float64) float64 {
 	if shape < 1 {
 		u := r.Float64()
-		return float64(sampleGamma(r, shape+1) * math.Pow(u, 1/shape))
+		return float64(sampleGamma(r, shape+1) * detmath.Pow(u, 1/shape))
 	}
 	d := shape - 1.0/3
 	c := 1 / math.Sqrt(9*d)
 	for {
-		x := r.NormFloat64()
+		x := detmath.NormFloat64(r)
 		v := 1 + float64(c*x)
 		if v <= 0 {
 			continue
@@ -346,7 +347,7 @@ func sampleGamma(r *rand.Rand, shape float64) float64 {
 		if u < 1-float64(0.0331*x2*x2) {
 			return float64(d * v)
 		}
-		if math.Log(u) < float64(0.5*x2)+float64(d*(1-v+math.Log(v))) {
+		if detmath.Log(u) < float64(0.5*x2)+float64(d*(1-v+detmath.Log(v))) {
 			return float64(d * v)
 		}
 	}
@@ -395,7 +396,7 @@ func (d *Distribution) CDF(k int) float64 {
 }
 
 // normCDF is the standard normal CDF.
-func normCDF(z float64) float64 { return float64(0.5 * math.Erfc(-z/math.Sqrt2)) }
+func normCDF(z float64) float64 { return float64(0.5 * detmath.Erfc(-z/math.Sqrt2)) }
 
 // gammaP is the regularized lower incomplete gamma function P(a, x)
 // (Numerical Recipes §6.2: series for x < a+1, continued fraction otherwise).
@@ -406,8 +407,8 @@ func gammaP(a, x float64) float64 {
 	if math.IsInf(x, 1) {
 		return 1
 	}
-	lg, _ := math.Lgamma(a)
-	front := math.Exp(float64(a*math.Log(x)) - x - lg)
+	lg, _ := detmath.Lgamma(a)
+	front := detmath.Exp(float64(a*detmath.Log(x)) - x - lg)
 	if x < a+1 {
 		sum, term := 1/a, 1/a
 		for n := 1; n < 10000; n++ {

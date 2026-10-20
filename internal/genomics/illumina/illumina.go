@@ -92,6 +92,7 @@ import (
 	"math"
 	"math/rand/v2"
 
+	"github.com/scttfrdmn/phantom-science/internal/detmath"
 	"github.com/scttfrdmn/phantom-science/pkg/types"
 )
 
@@ -235,7 +236,9 @@ func (p QualityParams) Qualities(r *rand.Rand, n int) []byte {
 	for c := range q {
 		low, mid := p.means(c, n, &j)
 		t := p.classTarget(k, low, mid)
-		u := r.Float64()
+		// r.Float64 is inlined as an exact product by 2^-53; the conversion
+		// keeps it from being fused into u - rho below (internal/fmacheck).
+		u := float64(r.Float64())
 		if c == 0 {
 			q[c] = pick(t, u)
 			continue
@@ -291,9 +294,9 @@ func (e ErrorParams) Rate(q byte, c int) float64 {
 	case QHigh:
 		return e.High
 	case QMid:
-		return e.MidLate - float64((e.MidLate-e.MidEarly)*math.Exp(-x/e.MidTau))
+		return e.MidLate - float64((e.MidLate-e.MidEarly)*detmath.Exp(-x/e.MidTau))
 	case QLow:
-		return e.LowLate - float64((e.LowLate-e.LowEarly)*math.Exp(-x/e.LowTau))
+		return e.LowLate - float64((e.LowLate-e.LowEarly)*detmath.Exp(-x/e.LowTau))
 	}
 	return ErrorProb(q)
 }
@@ -301,7 +304,7 @@ func (e ErrorParams) Rate(q byte, c int) float64 {
 // errorProb[q] is the Phred error probability 10^(−q/10).
 var errorProb = func() (t [94]float64) {
 	for q := range t {
-		t[q] = math.Pow(10, -float64(q)/10)
+		t[q] = detmath.Pow(10, -float64(q)/10)
 	}
 	return t
 }()
@@ -388,8 +391,8 @@ func NewInsertSampler(spec types.InsertSizeSpec) (*InsertSampler, error) {
 	s := &InsertSampler{spec: full.InsertSize}
 	if s.spec.Dist == types.InsertSizeLognormal {
 		m, sd := s.spec.Mean, s.spec.SD
-		s.sigma = math.Sqrt(math.Log(1 + sd*sd/(m*m)))
-		s.mu = math.Log(m) - s.sigma*s.sigma/2
+		s.sigma = math.Sqrt(detmath.Log(1 + sd*sd/(m*m)))
+		s.mu = detmath.Log(m) - float64(s.sigma*s.sigma/2)
 	}
 	return s, nil
 }
@@ -409,9 +412,9 @@ func (s *InsertSampler) Sample(r *rand.Rand, readLen int) int {
 	for range maxRedraws {
 		var v float64
 		if s.spec.Dist == types.InsertSizeLognormal {
-			v = math.Exp(s.mu + float64(s.sigma*r.NormFloat64()))
+			v = detmath.Exp(s.mu + float64(s.sigma*detmath.NormFloat64(r)))
 		} else {
-			v = s.spec.Mean + float64(s.spec.SD*r.NormFloat64())
+			v = s.spec.Mean + float64(s.spec.SD*detmath.NormFloat64(r))
 		}
 		if n := math.Round(v); n >= float64(lo) && n <= float64(hi) {
 			return int(n)

@@ -3,6 +3,8 @@ package population
 import (
 	"math"
 	"sort"
+
+	"github.com/scttfrdmn/phantom-science/internal/detmath"
 )
 
 // Population-size histories.
@@ -102,7 +104,7 @@ func sizeAt(present float64, events []DemographicEvent, t float64) (float64, flo
 			if dur > 0 {
 				r := 0.0
 				if factor > 0 {
-					r = math.Log(factor) / dur
+					r = detmath.Log(factor) / dur
 				} else {
 					r = e.Parameters["growth_rate"]
 				}
@@ -110,12 +112,12 @@ func sizeAt(present float64, events []DemographicEvent, t float64) (float64, flo
 					continue
 				}
 				if t < start+dur {
-					n = float64(n * math.Exp(-r*(t-start)))
+					n = float64(n * detmath.Exp(float64(-r*(t-start))))
 					g = r
 					baselineDone = true
 					continue
 				}
-				n = float64(n * math.Exp(-r*dur))
+				n = float64(n * detmath.Exp(float64(-r*dur)))
 			} else if factor > 0 {
 				n = n / factor
 			}
@@ -175,7 +177,7 @@ func buildEpochs(present float64, events []DemographicEvent) []epoch {
 // sizeOf returns N(t) for an epoch list.
 func sizeOf(epochs []epoch, t float64) float64 {
 	e := epochs[epochIndex(epochs, t)]
-	return float64(e.n0 * math.Exp(-e.g*(t-e.start)))
+	return float64(e.n0 * detmath.Exp(float64(-e.g*(t-e.start))))
 }
 
 // epochIndex returns the index of the epoch containing t.
@@ -192,14 +194,14 @@ func (e epoch) cumHazard(t, u float64) float64 {
 	if math.IsInf(u, 1) {
 		if e.g < 0 {
 			// N grows without bound backwards: finite integral.
-			return math.Exp(e.g*(t-e.start)) / (e.n0 * -e.g)
+			return detmath.Exp(float64(e.g*(t-e.start))) / (e.n0 * -e.g)
 		}
 		return math.Inf(1)
 	}
 	if e.g == 0 {
 		return (u - t) / e.n0
 	}
-	return (math.Exp(e.g*(u-e.start)) - math.Exp(e.g*(t-e.start))) / (e.n0 * e.g)
+	return (detmath.Exp(float64(e.g*(u-e.start))) - detmath.Exp(float64(e.g*(t-e.start)))) / (e.n0 * e.g)
 }
 
 // invertHazard returns u such that ∫_t^u 1/N(s) ds = h inside this epoch, or
@@ -208,11 +210,11 @@ func (e epoch) invertHazard(t, h float64) float64 {
 	if e.g == 0 {
 		return t + float64(h*e.n0)
 	}
-	arg := math.Exp(e.g*(t-e.start)) + float64(h*e.n0*e.g)
+	arg := detmath.Exp(float64(e.g*(t-e.start))) + float64(h*e.n0*e.g)
 	if arg <= 0 {
 		return math.Inf(1)
 	}
-	return e.start + math.Log(arg)/e.g
+	return e.start + detmath.Log(arg)/e.g
 }
 
 // nextEventTime returns the absolute time of the next event of an

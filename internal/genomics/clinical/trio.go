@@ -4,9 +4,9 @@ package clinical
 
 import (
 	"fmt"
-	"math"
 	"math/rand"
 
+	"github.com/scttfrdmn/phantom-science/internal/detmath"
 	"github.com/scttfrdmn/phantom-science/internal/genomics"
 	"github.com/scttfrdmn/phantom-science/internal/population"
 )
@@ -148,7 +148,7 @@ func poissonSample(lambda float64, rng *rand.Rand) int {
 	if lambda <= 0 {
 		return 0
 	}
-	L := math.Exp(-lambda)
+	L := detmath.Exp(-lambda)
 	k := 0
 	p := 1.0
 	for p > L {

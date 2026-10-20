@@ -7,6 +7,8 @@ import (
 	"math/rand/v2"
 	"strconv"
 	"strings"
+
+	"github.com/scttfrdmn/phantom-science/internal/detmath"
 )
 
 // Default expression-model parameters.
@@ -59,13 +61,13 @@ func (m ZipfModel) TPM(r *rand.Rand, n int) (tpm []float64, rank []int) {
 	mx := math.Inf(-1)
 	for i := range n {
 		rank[i] = perm[i] + 1
-		logw[i] = float64(-m.Alpha*math.Log(float64(rank[i]))) + float64(m.Sigma*r.NormFloat64())
+		logw[i] = float64(-m.Alpha*detmath.Log(float64(rank[i]))) + float64(m.Sigma*detmath.NormFloat64(r))
 		mx = max(mx, logw[i])
 	}
 	tpm = make([]float64, n)
 	sum := 0.0
 	for i, lw := range logw {
-		tpm[i] = math.Exp(lw - mx)
+		tpm[i] = detmath.Exp(lw - mx)
 		sum += tpm[i]
 	}
 	for i := range tpm {

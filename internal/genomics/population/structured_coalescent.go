@@ -5,6 +5,8 @@ import (
 	"math"
 	"math/rand/v2"
 	"sort"
+
+	"github.com/scttfrdmn/phantom-science/internal/detmath"
 )
 
 // DefaultLocusLength is the length (bp) of one simulated locus. Loci are
@@ -53,7 +55,7 @@ type PopSpec struct {
 // presentSize returns the present-day size implied by Ne and recent growth.
 func (p PopSpec) presentSize() float64 {
 	if p.GrowthRate != 0 && p.GrowthStart > 0 {
-		return float64(p.Ne * math.Exp(p.GrowthRate*float64(p.GrowthStart)))
+		return float64(p.Ne * detmath.Exp(float64(p.GrowthRate*float64(p.GrowthStart))))
 	}
 	return p.Ne
 }
@@ -499,8 +501,8 @@ func (s *jointLocusSim) simulateTree() {
 				if !active[p] || k < 2 {
 					continue
 				}
-				rate := float64(k*(k-1)) / 4 // k(k−1)/2 pairs, each at 1/(2N)
-				tc := nextEventTime(s.epochsOf[p], rate, t, nextSplit, s.rng.ExpFloat64())
+				rate := float64(float64(k*(k-1)) / 4) // k(k−1)/2 pairs, each at 1/(2N)
+				tc := nextEventTime(s.epochsOf[p], rate, t, nextSplit, detmath.ExpFloat64(s.rng))
 				if tc < best {
 					best, bestPop = tc, p
 				}
@@ -657,7 +659,7 @@ func poissonExact(rng *rand.Rand, lambda float64) int {
 	for lambda > 0 {
 		l := math.Min(lambda, 20)
 		lambda -= l
-		limit := math.Exp(-l)
+		limit := detmath.Exp(-l)
 		p := rng.Float64()
 		for p > limit {
 			k++
