@@ -60,6 +60,21 @@ type Profile struct {
 	// Reverse walks the sequence 3'→5' (direct RNA). Model k-mers are always
 	// looked up in 5'→3' orientation, as ONT's RNA tables are stored.
 	Reverse bool
+	// LevelTau is the time constant, in samples, of the transition between
+	// consecutive segment levels. 0 gives squigulator's step function: every
+	// sample of a k-mer is centred on its model level. With τ > 0 the mean
+	// level relaxes exponentially from the level reached at the end of the
+	// previous segment, prev, towards the k-mer's level, target: the i-th
+	// sample (0-based) of a segment is centred on
+	//
+	//	target + (prev − target)·exp(−(i+1)/τ)
+	//
+	// a first-order low-pass of the step function. A segment shorter than a
+	// few τ hands an unfinished level to the next one, and a skipped k-mer
+	// (no samples) leaves the level unchanged. The first segment of a read
+	// starts at its own level. Event.LevelPA still records the k-mer's
+	// target level.
+	LevelTau float64
 
 	// Noise.
 	LevelNoiseScale float64 // multiplies the model's per-k-mer stdv (squigulator --amp-noise)
@@ -84,9 +99,13 @@ type Profile struct {
 
 	// Pore-model scaling recommended for this chemistry's ONT
 	// kmer_models table (standardised units → pA), used by ModelOptions.
+	// ModelStdv is the per-sample level stdv, in table units, given to
+	// k-mers of a table without a level_stdv column (ONT's tables have
+	// none); a table's own stdv column takes precedence.
 	ModelK     int
 	ModelScale float64
 	ModelShift float64
+	ModelStdv  float64
 }
 
 // Kit 14 ligation adapter top strand as it appears at the start of R10.4.1
@@ -96,10 +115,11 @@ const kit14Adapter = "TTTTTTTTCCTGTACTTCGTTCAGTTACGTATTGCT"
 
 // Presets. Device values (digitisation, sampling rate, range, offset and
 // median_before distributions) are squigulator v0.4's dna-r10-prom and
-// rna004-prom profiles (src/sim.c). The DNA model scaling for ONT's
+// rna004-prom profiles (src/sim.c). The model scaling for ONT's
 // standardised kmer_models tables is the fixed pA standardisation in
-// Dorado's dna_r10.4.1_e8.2_400bps_sup@v5.2.0 config.toml (mean 93.6924,
-// stdev 23.5067); the RNA004 values are approximate.
+// Dorado's config.toml: mean 93.6924, stdev 23.5067 for
+// dna_r10.4.1_e8.2_400bps_sup@v5.2.0, mean 80, stdev 17 for
+// rna004_130bps_sup@v5.3.0.
 //
 // The DNA dwell, stall, skip and noise values were chosen against real
 // R10.4.1 data (FLO-PRO114M, 5 kHz; ont-open-data pgx_as_2025.07) with
@@ -111,10 +131,38 @@ const kit14Adapter = "TTTTTTTTCCTGTACTTCGTTCAGTTACGTATTGCT"
 // Short dwells cost accuracy (gamma CV 0.5: 88.9%, CV 1.0: 67.8%) and skips
 // are deletions by construction, so the dwell CV is squigulator's 4/13 and
 // the tail comes from stalls; extra white noise and drift lowered identity
-// without a measured basis and are off. The ~7-point gap to real reads is
-// the step-function level model and table, shared with squigulator. The
-// RNA004 dwell, noise, stall/skip and adapter values are uncalibrated
-// starting points.
+// without a measured basis and are off.
+//
+// The remaining DNA gap was ablated in scripts/acceptance/calibrate
+// (results/dna.tsv; 2000 reads per condition, bootstrap 95% CIs; Dorado
+// 2.1.2 SUP v5.2.0 on Metal). Real reads: 98.54% [98.52, 98.58]. Synthetic,
+// this profile: 90.80% on uniform random reads, 91.75% [91.67, 91.82] on
+// GRCh38 pseudo-reads (composition, +0.95). Swapping ONT's 9-mer table for
+// squigulator's built-in R10 levels gives 93.81% (+2.06; squigulator with
+// ONT's table loses the same 2.1 points), and dropping stalls a further
+// +0.15 at the cost of a dwell CV further from real (0.61 vs 1.08). Level
+// smoothing (LevelTau 0.5-8 samples: -0.3 to -19 points), noise matched to
+// real reads (x1.27: -0.17), a +5 pA level shift (-0.04) and a per-k-mer
+// stdv (-0.93) do not help, so LevelTau is 0 and the rest is unchanged.
+// The ~4.6 points left are the k-mer level model: real per-base levels
+// fit the tables at r = 0.70-0.72 against 0.85 for synthetic signal, and
+// CpG k-mers sit 3.8 pA lower in native (methylated) DNA.
+//
+// The RNA004 values were measured on real RNA004 reads (FLO-PRO004RA,
+// 4 kHz; ont-open-data rna-modbase-validation_2025.03 control_rep1, 3000
+// reads, Dorado 2.1.2 rna004_130bps_sup@v5.3.0; results/rna.tsv): the
+// pre-sequence segment Dorado trims is ~0.7 s at ~62 pA with ~1.5 pA
+// noise, per-sample noise in the read is ~3.1 pA, and Dorado's moves give
+// 37.5 samples/base (CV 1.15). On 1200 synthetic reads of the same 100-nt
+// constructs the old values (1.5 s adapter at 100 pA, 1.3 pA model noise
+// plus white noise and drift, skips) left 38% of reads unaligned (63.4%
+// median identity of the rest, 0.12 of the target matched per read); these
+// values align 72% at 72.9% (0.28 matched), against squigulator 0.5.0's
+// 98% at 82.9% (0.39) and real reads' 99.9% at 97.7% (0.84). A per-k-mer
+// stdv (squigulator's RNA004 table: 2.3-6.4 pA, 5-95%, through a pore model with a
+// level_stdv column) lifts that to 97% at 77.8% (0.62); ONT's table has
+// none, so ModelStdv here is one constant (0.176 x 17 = 3.0 pA). Level
+// smoothing did not help.
 var presets = map[string]Profile{
 	PresetDNAR10: {
 		Name:         PresetDNAR10,
@@ -129,22 +177,23 @@ var presets = map[string]Profile{
 		// 0.2 s matches the 0.1–0.3 s adapter time of nanopore.ChannelModel.
 		AdapterSeconds: 0.2, AdapterLevelPA: 110, AdapterNoisePA: 8, AdapterSeq: kit14Adapter,
 		PolyANoisePA: 1.0,
-		ModelK:       9, ModelScale: 23.506, ModelShift: 93.692,
+		ModelK:       9, ModelScale: 23.506, ModelShift: 93.692, ModelStdv: DefaultModelStdv,
 	},
 	PresetRNA004: {
 		Name:         PresetRNA004,
 		SamplingRate: 4000, Digitisation: 2048, Range: 299.432068,
 		OffsetMean: -259.421128, OffsetStd: 16.010841823643,
 		MedianBeforeMean: 205.63935594369, MedianBeforeStd: 8.3994882799157,
-		SpeedBPS: 130, DwellCV: 0.6, Reverse: true,
-		LevelNoiseScale: 1, WhiteNoisePA: 1.0,
-		DriftPA: 1.0, DriftTau: 2.0,
+		SpeedBPS: 130, DwellCV: 0.31, Reverse: true,
+		LevelNoiseScale: 1, WhiteNoisePA: 0,
+		DriftPA: 0, DriftTau: 2.0,
 		ReadShiftSD: 3.0, ReadScaleSD: 0.03,
-		StallProb: 0.004, StallMin: 5, StallMax: 20, SkipProb: 0.004,
-		// Direct-RNA reads begin with a long (~1–2 s) adapter/motor segment.
-		AdapterSeconds: 1.5, AdapterLevelPA: 100, AdapterNoisePA: 8,
+		StallProb: 0.004, StallMin: 5, StallMax: 20, SkipProb: 0,
+		// The segment Dorado trims before the read: median 2800 samples
+		// (0.7 s) at ~62 pA, ~1.5 pA noise, in real RNA004 reads.
+		AdapterSeconds: 0.7, AdapterLevelPA: 62, AdapterNoisePA: 1.5,
 		PolyANoisePA: 1.0,
-		ModelK:       9, ModelScale: 16.0, ModelShift: 79.0,
+		ModelK:       9, ModelScale: 17, ModelShift: 80, ModelStdv: 0.176,
 	},
 }
 
@@ -175,12 +224,12 @@ func (p *Profile) tunable() map[string]*float64 {
 		"drift_pa": &p.DriftPA, "drift_tau": &p.DriftTau,
 		"read_shift_sd": &p.ReadShiftSD, "read_scale_sd": &p.ReadScaleSD,
 		"stall_prob": &p.StallProb, "stall_min": &p.StallMin, "stall_max": &p.StallMax,
-		"skip_prob":       &p.SkipProb,
+		"skip_prob": &p.SkipProb, "level_tau": &p.LevelTau,
 		"adapter_seconds": &p.AdapterSeconds, "adapter_level_pa": &p.AdapterLevelPA,
 		"adapter_noise_pa": &p.AdapterNoisePA, "polya_noise_pa": &p.PolyANoisePA,
 		"offset_mean": &p.OffsetMean, "offset_std": &p.OffsetStd,
 		"median_before_mean": &p.MedianBeforeMean, "median_before_std": &p.MedianBeforeStd,
-		"model_scale": &p.ModelScale, "model_shift": &p.ModelShift,
+		"model_scale": &p.ModelScale, "model_shift": &p.ModelShift, "model_stdv": &p.ModelStdv,
 	}
 }
 
@@ -211,9 +260,10 @@ func (p *Profile) Set(name string, v float64) error {
 func (p Profile) MeanDwell() float64 { return p.SamplingRate / p.SpeedBPS }
 
 // ModelOptions returns load options that convert this chemistry's ONT
-// kmer_models table (standardised units) to pA and check its k.
+// kmer_models table (standardised units) to pA, give its k-mers the
+// profile's ModelStdv, and check its k.
 func (p Profile) ModelOptions() []LoadOption {
-	opts := []LoadOption{WithScaling(p.ModelScale, p.ModelShift)}
+	opts := []LoadOption{WithScaling(p.ModelScale, p.ModelShift), WithDefaultStdv(p.ModelStdv)}
 	if p.ModelK > 0 {
 		opts = append(opts, WithK(p.ModelK))
 	}
@@ -241,9 +291,10 @@ func (p Profile) Validate() error {
 		v    float64
 	}{
 		{"offset_std", p.OffsetStd}, {"median_before_std", p.MedianBeforeStd}, {"dwell_cv", p.DwellCV},
-		{"level_noise_scale", p.LevelNoiseScale}, {"white_noise_pa", p.WhiteNoisePA},
+		{"level_noise_scale", p.LevelNoiseScale}, {"white_noise_pa", p.WhiteNoisePA}, {"level_tau", p.LevelTau},
 		{"drift_pa", p.DriftPA}, {"read_shift_sd", p.ReadShiftSD}, {"read_scale_sd", p.ReadScaleSD},
 		{"adapter_seconds", p.AdapterSeconds}, {"adapter_noise_pa", p.AdapterNoisePA}, {"polya_noise_pa", p.PolyANoisePA},
+		{"model_stdv", p.ModelStdv},
 	}
 	for _, f := range nonneg {
 		if !(f.v >= 0) || math.IsInf(f.v, 0) {

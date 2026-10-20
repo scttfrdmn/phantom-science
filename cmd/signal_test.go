@@ -617,7 +617,17 @@ func TestSignalCommand_ProfileSet(t *testing.T) {
 	if len(m.Signal.ProfileOverrides) != 3 {
 		t.Errorf("manifest overrides %v", m.Signal.ProfileOverrides)
 	}
+	// level_tau smooths the levels but leaves the dwells (and so the sample
+	// count, from the same seed) unchanged.
+	smooth, mt := samples("smooth", "level_tau=4")
+	if smooth != base {
+		t.Errorf("level_tau=4: %d samples, want %d (dwells unchanged)", smooth, base)
+	}
+	if got := mt.Signal.ProfileOverrides; len(got) != 4 || got["level_tau"] != 4 {
+		t.Errorf("manifest overrides %v, want level_tau=4", got)
+	}
 	for set, msg := range map[string]string{
+		"level_tau=-1":       "level_tau",
 		"dwell_cv=-1":        "dwell_cv",
 		"sampling_rate=4000": "unknown signal profile parameter",
 		"speed_bps":          "NAME=VALUE",

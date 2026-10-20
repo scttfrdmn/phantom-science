@@ -9,6 +9,7 @@ is missing.
 |---|---|---|---|
 | `slow5_validate.sh` | BLOW5/SLOW5 files pass slow5tools and convert to pod5 | #15 | Passed: 132/132 checks with slow5tools 1.5.0 and blue-crab 0.6.0 (recorded in #15) |
 | `dorado_identity.sh` | Dorado basecalls of synthetic signal match the source sequences | #14 | Passed: 90.79% median identity against a squigulator baseline of 91.47% (threshold 90.46%), Dorado 2.1.2 SUP v5.2.0 |
+| `calibrate/` | Ablation of the synthetic-vs-real basecalling gap, DNA R10.4.1 and RNA004 | #28 | Run 2026-10-20: results in `calibrate/results/` (see below) |
 | `transcriptome_bambu.sh` | Bambu quantification and novel-isoform discovery on simulated cDNA | #13 | Completed on GRCh38 chr22 / GENCODE v49: count Pearson 0.872, Spearman 0.832; novel precision 0.90, recall 0.55 |
 | `pycoqc.sh` | PycoQC reads a generated `sequencing_summary.txt` | #16 | Passed: PycoQC 2.5.2 counted all 537 reads |
 | `../fetch-pore-model.sh` | Downloads an ONT k-mer pore model for `signal` | #14 | Used for the end-to-end example below |
@@ -119,6 +120,106 @@ real data, e.g. a pod5 file from `s3://ont-open-data/pgx_as_2025.07`
   Either pass one chunk, raise `--reads-per-file` so the run fits in one
   file, or merge the chunks first:
   `slow5tools merge sig/ -o sig.blow5`.
+
+## calibrate/ (#28)
+
+Measures where the identity gap between synthetic and real signal comes
+from. Each condition is a truth read set plus a simulator (`signal` with
+`--profile-set` overrides, squigulator, or a real pod5). `eval.sh` converts
+the signal to pod5, basecalls it with Dorado (`--emit-moves`), aligns the
+calls to the truth with minimap2 and appends one row to a results TSV:
+median identity with a bootstrap 95% CI over reads (1000 resamples), Dorado
+move-table dwell statistics, signal statistics measured the same way on
+synthetic and real reads (robust per-sample noise, lag-1 autocorrelation
+of first differences, per-base level spread, and the correlation of
+per-base levels with the k-mer table), the git SHA, the `TOOLS.lock`
+sha256, the device and the date. Intermediates are deleted once a row is
+written.
+
+- Files: `conditions.tsv` (DNA) and `conditions_rna.tsv` (RNA004) list the
+  conditions and pin the inputs by sha256; `run_conditions.sh` runs them in
+  order and skips rows already in the results; `make_inputs.py` builds the
+  truth sets (`regions.tsv` pins the 2000 GRCh38 regions); `measure.py`
+  scores one condition; `squig_table.py` recovers squigulator's built-in
+  level tables from `--ideal`/`--ideal-time` signal of a de Bruijn
+  sequence; `fit_table.py` and `kmer_noise.py` compare per-k-mer levels and
+  noise between real and synthetic reads.
+- Tools: those of `dorado_identity.sh` plus squigulator, `pod5` and numpy
+  (the blue-crab venv). Paths default to the `/tmp/ps-accept` layout; see
+  the script headers.
+- Inputs: DNA, 2000 GRCh38 pseudo-reads of 2-8 kb (10.0 Mb, GC 40.9%) and
+  2000 uniform random reads of the same lengths from `generate`; real reads
+  from `pgx_as_2025.07` (all 5325, MAPQ >= 20 against GRCh38). RNA004, 1200
+  reads of the 6 control constructs of `rna-modbase-validation_2025.03`
+  and the first 3000 reads of its `control_rep1.pod5`.
+
+DNA, Dorado 2.1.2 `dna_r10.4.1_e8.2_400bps_sup@v5.2.0` on Metal
+(`results/dna.tsv`; the profile is the `dna_r10.4.1_e8.2_400bps_5khz`
+preset unless stated):
+
+| Condition | Median identity [95% CI] |
+|---|---|
+| Real reads | 98.54% [98.52, 98.58] |
+| Uniform random reads | 90.80% [90.76, 90.82] |
+| GRCh38 reads | 91.75% [91.67, 91.82] |
+| squigulator 0.5.0, uniform / GRCh38 | 91.50% / 93.74% |
+| squigulator with ONT's table, GRCh38 | 91.63% |
+| GRCh38, squigulator's levels (constant stdv) | 93.81% [93.74, 93.87] |
+| ... and no stalls | 93.96% [93.90, 94.00] |
+| GRCh38, squigulator's levels and per-k-mer stdv | 92.88% |
+| `level_tau` 0.5 / 1 / 2 / 4 samples | 91.49% / 91.29% / 87.77% / 72.90% |
+| `level_tau` 8 | 254 of 2000 reads aligned |
+| `level_noise_scale` 1.2 / 0.5 | 91.59% / 5 of 2000 aligned |
+| +5.2 pA level shift (`model_shift` 98.921) | 91.71% |
+| ONT's table refit to real reads (`fit_table.py`) | 77.54% |
+
+- Composition is worth about 1 point with ONT's table (2 with
+  squigulator's levels), and the level table about 2 points; everything
+  else is worth at most 0.2 points or makes identity worse. Level smoothing
+  lowers identity even at τ = 0.5 samples, where the autocorrelation of
+  first differences already matches real reads (+0.046 vs +0.048).
+- The remaining 4.6 points are shared with squigulator and are the k-mer
+  level model: real per-base levels fit the tables at r = 0.70 (ONT) and
+  0.72 (squigulator) against 0.85 for synthetic signal, and CpG k-mers sit
+  3.8 pA lower in native, methylated DNA. Refitting the table from
+  Dorado's move segmentation made things worse; that needs a resquiggler.
+- Dwell from Dorado's moves: real 13.12 samples/base, CV 1.08; the preset
+  gives 13.12, CV 0.94. Without stalls the CV drops to 0.61, so stalls stay.
+- squigulator's built-in R10 table is a different table from ONT's
+  `9mer_levels_v1` (r = 0.994, 2.6 pA RMS apart after a linear fit). Its
+  RNA004 table is ONT's `rna004` table at 17.57 x + 84.04 pA with a
+  per-k-mer stdv. Pass either to `signal --pore-model` after recovering it
+  with `squig_table.py`.
+
+RNA004, Dorado 2.1.2 `rna004_130bps_sup@v5.3.0` (`results/rna.tsv`;
+aligned with `minimap2 -x map-ont -k5 -w1 -m10 -s15 -n2`, because at
+`-k10 -w5` only about 1% of synthetic reads of the 100-nt constructs
+align). Columns: aligned reads, median identity of aligned reads, and the
+median over all reads of matched bases / construct length:
+
+| Condition | Aligned | Median identity | Matched |
+|---|---|---|---|
+| Real reads | 99.9% | 97.67% [97.65, 97.70] | 0.84 |
+| squigulator 0.5.0 | 97.9% | 82.86% | 0.39 |
+| Old `rna004_130bps_4khz` preset | 61.7% | 63.41% | 0.12 |
+| Calibrated preset (`rna_cal`) | 72.1% | 72.92% [72.09, 73.75] | 0.28 |
+| ... with squigulator's per-k-mer stdv | 96.8% | 77.78% | 0.62 |
+
+The calibrated values (adapter 0.7 s at 62 pA, Dorado's 17/80 pA scaling,
+3.0 pA per-sample noise and no white noise or drift, dwell CV 0.31, no
+skips) are measured on the real reads; `rna_preset` reruns the committed
+preset without overrides and reproduces `rna_cal` exactly. Within the CIs,
+speed (115 instead of 130 bps: 72.08%), no stalls (73.33%, but dwell CV
+0.60 against 1.15 for real reads) and level smoothing (`level_tau` 0.5:
+73.17%) do not change identity. The main measured lever is a per-k-mer
+stdv, which ONT's RNA004 table does not carry.
+
+```sh
+scripts/acceptance/calibrate/run_conditions.sh --inputs          # DNA
+scripts/acceptance/calibrate/run_conditions.sh \
+    --conditions scripts/acceptance/calibrate/conditions_rna.tsv \
+    --results scripts/acceptance/calibrate/results/rna.tsv       # RNA004
+```
 
 ## transcriptome_bambu.sh (#13)
 
