@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/scttfrdmn/phantom-science/pkg/types"
+	"io"
 	"time"
 )
 
@@ -200,6 +201,9 @@ type RunSimulator struct {
 	FileCallback     func(filename string, batchNum int, readNum int)
 	ProgressCallback func(stage string, percent float64, eta time.Duration)
 	ErrorCallback    func(err error)
+	// Log receives the run summary line; nil discards it (the TUI owns
+	// the terminal, so the simulator never prints).
+	Log io.Writer
 }
 
 // NewRunSimulator creates a new run simulator
@@ -310,8 +314,10 @@ func (rs *RunSimulator) Run(ctx context.Context) error {
 	}
 
 	actualDuration := time.Since(startTime)
-	fmt.Printf("Run completed in %v (compressed from %v at %dx speed)\n",
-		actualDuration, realDuration, rs.Compression)
+	if rs.Log != nil {
+		fmt.Fprintf(rs.Log, "Run completed in %v (compressed from %v at %dx speed)\n",
+			actualDuration, realDuration, rs.Compression)
+	}
 
 	return nil
 }
