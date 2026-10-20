@@ -4,16 +4,22 @@ package genomics
 
 import (
 	"bytes"
+	"io"
 	"math"
+	"os"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/scttfrdmn/phantom-science/internal/genomics/nanopore/errmodel"
 	"github.com/scttfrdmn/phantom-science/pkg/types"
 )
 
+// tierConfig is an ONT run with basecaller tier (#27: tiers apply only to
+// platform ont).
 func tierConfig(t *testing.T, tier string) types.SequencerConfig {
 	c := goldenConfig(t.TempDir())
+	c.Platform, c.Illumina = "ont", types.IlluminaSpec{}
 	c.ReadLength = 2000
 	c.ReadsPerBatch = 100
 	c.TotalBatches = 2
@@ -41,11 +47,11 @@ func phred(qual string) []byte {
 	return q
 }
 
-// TestErrorModel_TierOnIlluminaPath runs GenerateToWriter with each tier:
+// TestErrorModel_TierOnStreamPath runs GenerateToWriter with each tier:
 // read lengths shift by the tier's insertion − deletion rate, per-read ONT
 // mean qualities peak at the tier mode (ordered sup > hac > fast), the output
 // differs from the error-free run with the same seed, and it is reproducible.
-func TestErrorModel_TierOnIlluminaPath(t *testing.T) {
+func TestErrorModel_TierOnStreamPath(t *testing.T) {
 	plain := parseFASTQ(t, string(streamOutput(t, tierConfig(t, ""), GenerateOpts{})))
 	for _, r := range plain {
 		if len(r.seq) != 2000 || len(r.qual) != 2000 {
@@ -113,10 +119,10 @@ func TestErrorModel_TierOnIlluminaPath(t *testing.T) {
 }
 
 // TestErrorModel_TierFileOutput checks the file path (Generate) applies the
-// tier too, and paired-end mates both get errors.
+// tier too.
 func TestErrorModel_TierFileOutput(t *testing.T) {
 	c := tierConfig(t, "fast")
-	c.ReadLength, c.ReadsPerBatch, c.PairedEnd = 500, 20, true
+	c.ReadLength, c.ReadsPerBatch = 500, 20
 	files := fileOutputs(t, c)
 	if len(files) == 0 {
 		t.Fatal("no files written")
@@ -137,8 +143,31 @@ func TestErrorModel_TierFileOutput(t *testing.T) {
 	}
 }
 
-// TestErrorModel_NoTierUnchanged pins the default: no tier means the
-// linear-decay qualities and fixed-length reads.
+// TestErrorModel_TierNeedsONT: a basecaller tier on Illumina is a
+// configuration error (#27; it used to apply the ONT model to Illumina
+// reads), on both output paths.
+func TestErrorModel_TierNeedsONT(t *testing.T) {
+	c := goldenConfig(t.TempDir())
+	c.ErrorModel.Tier = "hac"
+	for _, run := range []func(*Engine) error{
+		func(e *Engine) error { return e.GenerateToWriter(io.Discard, GenerateOpts{}) },
+		func(e *Engine) error { return e.Generate() },
+	} {
+		e := NewEngine(c)
+		err := run(e)
+		e.Close()
+		if err == nil || !strings.Contains(err.Error(), "platform ont") {
+			t.Errorf("tier on illumina: err = %v, want a platform error", err)
+		}
+	}
+	if entries, _ := os.ReadDir(c.OutputDir); len(entries) != 0 {
+		t.Errorf("rejected config wrote %d files", len(entries))
+	}
+}
+
+// TestErrorModel_NoTierUnchanged pins the linear model: no tier and
+// quality_model linear give the linear-decay qualities, no errors and
+// fixed-length reads.
 func TestErrorModel_NoTierUnchanged(t *testing.T) {
 	c := goldenConfig(t.TempDir())
 	c.Seed = 9

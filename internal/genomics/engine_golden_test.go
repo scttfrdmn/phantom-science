@@ -26,8 +26,13 @@ var illuminaHeader = regexp.MustCompile(`^@([^:]+):(\d+):HXXXXXX:(\d+):1101:(\d+
 
 var acgt = regexp.MustCompile(`^[ACGT]+$`)
 
+// goldenConfig is a small Illumina run with the linear quality model and no
+// sequencing errors (#27 made binned qualities and errors the default), so
+// the golden tests can pin exact qualities and error-free bases. The binned
+// default has its own tests (engine_illumina_test.go).
 func goldenConfig(dir string) types.SequencerConfig {
 	return types.SequencerConfig{
+		Illumina:      types.IlluminaSpec{QualityModel: types.IlluminaQualityLinear},
 		SampleName:    "Gold",
 		Lane:          3,
 		OutputDir:     dir,

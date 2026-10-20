@@ -8,72 +8,79 @@
 package genomics
 
 import (
-    "bufio"
-    "fmt"
-    "io"
-    "math/rand/v2"
-    "os"
-    "path/filepath"
-    "sync"
-    "sync/atomic"
+	"bufio"
+	"fmt"
+	"io"
+	"math/rand/v2"
+	"os"
+	"path/filepath"
+	"sync"
+	"sync/atomic"
 
-    "github.com/scttfrdmn/phantom-science/internal/fingerprinting"
-    "github.com/scttfrdmn/phantom-science/internal/genomics/authenticity"
-    "github.com/scttfrdmn/phantom-science/internal/genomics/manifest"
-    "github.com/scttfrdmn/phantom-science/internal/security"
-    "github.com/scttfrdmn/phantom-science/internal/storage/s3sink"
-    "github.com/scttfrdmn/phantom-science/pkg/types"
+	"github.com/scttfrdmn/phantom-science/internal/fingerprinting"
+	"github.com/scttfrdmn/phantom-science/internal/genomics/authenticity"
+	"github.com/scttfrdmn/phantom-science/internal/genomics/manifest"
+	"github.com/scttfrdmn/phantom-science/internal/security"
+	"github.com/scttfrdmn/phantom-science/internal/storage/s3sink"
+	"github.com/scttfrdmn/phantom-science/pkg/types"
 )
 
 type Engine struct {
-    config               types.SequencerConfig
-    fingerprintingEngine fingerprinting.Engine
-    hmmModel             authenticity.SequenceGenerator // nil = uniform random bases
+	config               types.SequencerConfig
+	fingerprintingEngine fingerprinting.Engine
+	hmmModel             authenticity.SequenceGenerator // nil = uniform random bases
 
-    // seed is the run seed (SequencerConfig.Seed, or drawn when unset);
-    // seedDrawn reports a drawn seed, which is logged once to logw.
-    seed        uint64
-    seedDrawn   bool
-    seedErr     error
-    seedLogOnce sync.Once
-    // logw receives diagnostics (seed, HMM model loading). It is stderr so
-    // that FASTQ streamed to stdout stays clean.
-    logw io.Writer
+	// seed is the run seed (SequencerConfig.Seed, or drawn when unset);
+	// seedDrawn reports a drawn seed, which is logged once to logw.
+	seed        uint64
+	seedDrawn   bool
+	seedErr     error
+	seedLogOnce sync.Once
+	// logw receives diagnostics (seed, HMM model loading, warnings). It is
+	// stderr unless set with NewEngineLog, so that FASTQ streamed to stdout
+	// stays clean.
+	logw io.Writer
 
-    // rawMu guards rawRand, the stream behind GenerateRawSequence.
-    rawMu   sync.Mutex
-    rawRand *rand.Rand
+	// customerID is the customer written in read-ID fingerprint tags.
+	customerID string
+	// fragments, when set, supplies read and fragment bases (see
+	// FragmentSampler); nil uses the HMM model or uniform bases.
+	fragments FragmentSampler
 
-    // overlapSkips counts positioned variants skipped because they overlap
-    // a variant already applied to the same read.
-    overlapSkips atomic.Int64
+	// rawMu guards rawRand, the stream behind GenerateRawSequence.
+	rawMu   sync.Mutex
+	rawRand *rand.Rand
 
-    // Files written by Generate and GenerateFASTQFile, in order.
-    filesMu sync.Mutex
-    files   []string
+	// overlapSkips counts positioned variants skipped because they overlap
+	// a variant already applied to the same read.
+	overlapSkips atomic.Int64
 
-    // keyErr records a fingerprint key that could not be loaded; encrypted
-    // reports whether quality-score fingerprints are encrypted with a key.
-    keyErr    error
-    encrypted bool
+	// Files written by Generate and GenerateFASTQFile, in order.
+	filesMu sync.Mutex
+	files   []string
 
-    // One fingerprint per engine, shared by every file it writes.
-    fingerprintOnce sync.Once
-    fingerprint     string
-    fingerprintErr  error
+	// keyErr records a fingerprint key that could not be loaded; encrypted
+	// reports whether quality-score fingerprints are encrypted with a key.
+	keyErr    error
+	encrypted bool
 
-    // modelPath is the HMM model file hmmModel was loaded from; file output
-    // loads a fresh instance per file from it (models are not safe to share
-    // between parallel workers, and adaptive models carry state).
-    modelPath string
-    // parent is the run's engine when this one generates one flow cell of
-    // it; the run fingerprint is the parent's.
-    parent *Engine
-    // toolVersion is recorded in the manifest; uploader receives S3 output.
-    toolVersion string
-    uploader    s3sink.Uploader
-    // manifest describes the last completed Generate run.
-    manifest *manifest.Manifest
+	// One fingerprint per engine, shared by every file it writes.
+	fingerprintOnce sync.Once
+	fingerprint     string
+	fingerprintErr  error
+
+	// modelPath is the HMM model file hmmModel was loaded from; file output
+	// loads a fresh instance per file from it (models are not safe to share
+	// between parallel workers, and adaptive models carry state).
+	modelPath string
+	// parent is the run's engine when this one generates one flow cell of
+	// it; the run fingerprint is the parent's.
+	parent *Engine
+	// toolVersion is recorded in the manifest; uploader receives S3 output.
+	toolVersion string
+	uploader    s3sink.Uploader
+	// manifest describes the last completed Generate run.
+	manifest *manifest.Manifest
 }
 
 // SetToolVersion sets the tool version recorded in run manifests.
@@ -93,109 +100,120 @@ const qualityLayer = "quality_scores"
 // qualityFingerprintingEnabled reports whether output files must carry a
 // quality-score fingerprint.
 func (e *Engine) qualityFingerprintingEnabled() bool {
-    if !e.config.Fingerprinting.Enable {
-        return false
-    }
-    for _, layer := range e.config.Fingerprinting.SteganographyLayers {
-        if layer == qualityLayer {
-            return true
-        }
-    }
-    return false
+	if !e.config.Fingerprinting.Enable {
+		return false
+	}
+	for _, layer := range e.config.Fingerprinting.SteganographyLayers {
+		if layer == qualityLayer {
+			return true
+		}
+	}
+	return false
 }
 
 // fileFingerprinter returns the engine's file-level fingerprinter, or an error
 // when the fingerprinting engine cannot embed into files (CGO disabled, release
 // build, or stegano library unavailable).
 func (e *Engine) fileFingerprinter() (fingerprinting.FileFingerprinter, error) {
-    if ff, ok := e.fingerprintingEngine.(fingerprinting.FileFingerprinter); ok {
-        return ff, nil
-    }
-    return nil, fmt.Errorf("steganography layer %q needs the stegano library: build with CGO after `make stegano`, or remove %q from steganography_layers", qualityLayer, qualityLayer)
+	if ff, ok := e.fingerprintingEngine.(fingerprinting.FileFingerprinter); ok {
+		return ff, nil
+	}
+	return nil, fmt.Errorf("steganography layer %q needs the stegano library: build with CGO after `make stegano`, or remove %q from steganography_layers", qualityLayer, qualityLayer)
 }
 
 // checkQualityFingerprinting reports why quality-score fingerprints cannot be
 // written, or nil when they can: the stegano library must be available, and
 // the fingerprint must be encrypted with a key unless plaintext is allowed.
 func (e *Engine) checkQualityFingerprinting() error {
-    if _, err := e.fileFingerprinter(); err != nil {
-        return err
-    }
-    if e.keyErr != nil {
-        return e.keyErr
-    }
-    if !e.encrypted && !e.config.Fingerprinting.Plaintext {
-        return fmt.Errorf("steganography layer %q needs an encryption key: set fingerprinting.key_file or %s, or set plaintext: true to embed readable fingerprints", qualityLayer, fingerprinting.KeyEnvVar)
-    }
-    return nil
+	if _, err := e.fileFingerprinter(); err != nil {
+		return err
+	}
+	if e.keyErr != nil {
+		return e.keyErr
+	}
+	if !e.encrypted && !e.config.Fingerprinting.Plaintext {
+		return fmt.Errorf("steganography layer %q needs an encryption key: set fingerprinting.key_file or %s, or set plaintext: true to embed readable fingerprints", qualityLayer, fingerprinting.KeyEnvVar)
+	}
+	return nil
 }
 
 // runFingerprint returns the fingerprint for this engine's run, generating it
 // on first use.
 func (e *Engine) runFingerprint() (string, error) {
-    if e.parent != nil {
-        return e.parent.runFingerprint()
-    }
-    e.fingerprintOnce.Do(func() {
-        e.fingerprint, e.fingerprintErr = e.fingerprintingEngine.GenerateFingerprint(e.config.DatasetID)
-    })
-    return e.fingerprint, e.fingerprintErr
+	if e.parent != nil {
+		return e.parent.runFingerprint()
+	}
+	e.fingerprintOnce.Do(func() {
+		e.fingerprint, e.fingerprintErr = e.fingerprintingEngine.GenerateFingerprint(e.config.DatasetID)
+	})
+	return e.fingerprint, e.fingerprintErr
 }
 
 // embedFileFingerprint embeds the run fingerprint into the finished FASTQ file
 // at filename. On failure the unmarked file is removed, so output never
 // silently lacks a requested fingerprint.
 func (e *Engine) embedFileFingerprint(filename string) error {
-    ff, err := e.fileFingerprinter()
-    if err == nil {
-        var fp string
-        if fp, err = e.runFingerprint(); err == nil {
-            err = ff.EmbedInFASTQFile(filename, filename, fp)
-        }
-    }
-    if err != nil {
-        os.Remove(filename) // #nosec G104 -- best effort; the embed error is returned
-        return fmt.Errorf("fingerprinting %s: %w", filepath.Base(filename), err)
-    }
-    return nil
+	ff, err := e.fileFingerprinter()
+	if err == nil {
+		var fp string
+		if fp, err = e.runFingerprint(); err == nil {
+			err = ff.EmbedInFASTQFile(filename, filename, fp)
+		}
+	}
+	if err != nil {
+		os.Remove(filename) // #nosec G104 -- best effort; the embed error is returned
+		return fmt.Errorf("fingerprinting %s: %w", filepath.Base(filename), err)
+	}
+	return nil
 }
 
 // NewEngine creates an engine for config. It resolves the run seed (drawing
 // one when config.Seed is zero) and loads the HMM model when configured.
-// Diagnostics go to stderr.
+// Diagnostics go to stderr (see NewEngineLog).
 func NewEngine(config types.SequencerConfig) *Engine {
-    // Initialize fingerprinting engine with customer ID from config
-    customerID := "phantom-science" // Default customer ID
-    if config.Enterprise.CustomerID != "" {
-        customerID = config.Enterprise.CustomerID
-    }
+	return NewEngineLog(config, os.Stderr)
+}
 
-    e := &Engine{config: config, logw: os.Stderr}
-    e.seed, e.seedDrawn, e.seedErr = ResolveSeed(config.Seed)
-    var fpOpts []fingerprinting.Option
-    if config.Fingerprinting.Enable {
-        key, err := fingerprinting.ResolveKey(config.Fingerprinting.KeyFile)
-        if err != nil {
-            e.keyErr = err
-        } else if key != nil {
-            fpOpts = append(fpOpts, fingerprinting.WithKey(key))
-            e.encrypted = true
-        }
-    }
-    e.fingerprintingEngine = fingerprinting.New(customerID, fpOpts...)
-    if modelPath := resolveModelPath(config); modelPath != "" {
-        m, err := authenticity.LoadModel(modelPath)
-        if err != nil {
-            fmt.Fprintf(e.logw, "   [warn] HMM model load failed (%s): %v — using uniform random bases\n",
-                modelPath, err)
-        } else {
-            e.hmmModel = m
-            e.modelPath = modelPath
-            e.reseedModel(newStream(e.seed, rawStream))
-            fmt.Fprintf(e.logw, "   [info] Loaded HMM model from %s\n", modelPath)
-        }
-    }
-    return e
+// NewEngineLog is NewEngine with diagnostics (the drawn seed, HMM model
+// loading, skipped variants, the output cap) written to logw instead of
+// stderr, for callers such as the TUI that own the terminal. A nil logw
+// discards them.
+func NewEngineLog(config types.SequencerConfig, logw io.Writer) *Engine {
+	if logw == nil {
+		logw = io.Discard
+	}
+	// Initialize fingerprinting engine with customer ID from config
+	customerID := "phantom-science" // Default customer ID
+	if config.Enterprise.CustomerID != "" {
+		customerID = config.Enterprise.CustomerID
+	}
+
+	e := &Engine{config: config, logw: logw, customerID: customerID}
+	e.seed, e.seedDrawn, e.seedErr = ResolveSeed(config.Seed)
+	var fpOpts []fingerprinting.Option
+	if config.Fingerprinting.Enable {
+		key, err := fingerprinting.ResolveKey(config.Fingerprinting.KeyFile)
+		if err != nil {
+			e.keyErr = err
+		} else if key != nil {
+			fpOpts = append(fpOpts, fingerprinting.WithKey(key))
+			e.encrypted = true
+		}
+	}
+	e.fingerprintingEngine = fingerprinting.New(customerID, fpOpts...)
+	if modelPath := resolveModelPath(config); modelPath != "" {
+		m, err := authenticity.LoadModel(modelPath)
+		if err != nil {
+			fmt.Fprintf(e.logw, "   [warn] HMM model load failed (%s): %v — using uniform random bases\n",
+				modelPath, err)
+		} else {
+			e.hmmModel = m
+			e.modelPath = modelPath
+			e.reseedModel(newStream(e.seed, rawStream))
+			fmt.Fprintf(e.logw, "   [info] Loaded HMM model from %s\n", modelPath)
+		}
+	}
+	return e
 }
 
 // resolveModelPath returns the effective HMM model file path for config.
@@ -204,95 +222,95 @@ func NewEngine(config types.SequencerConfig) *Engine {
 //  2. ModelDir/<Population>.hmm.json — when both Population and ModelDir are set.
 //  3. Empty string — engine uses uniform random bases.
 func resolveModelPath(config types.SequencerConfig) string {
-    if config.HMMModelPath != "" {
-        return config.HMMModelPath
-    }
-    if config.Population != "" && config.ModelDir != "" {
-        return filepath.Join(config.ModelDir, config.Population+".hmm.json")
-    }
-    return ""
+	if config.HMMModelPath != "" {
+		return config.HMMModelPath
+	}
+	if config.Population != "" && config.ModelDir != "" {
+		return filepath.Join(config.ModelDir, config.Population+".hmm.json")
+	}
+	return ""
 }
 
 func (e *Engine) Generate() error {
-    // Validate configuration
-    if e.config.ReadLength <= 0 {
-        return fmt.Errorf("invalid read length: must be greater than 0, got %d", e.config.ReadLength)
-    }
-    if e.config.ReadsPerBatch <= 0 {
-        return fmt.Errorf("invalid reads per batch: must be greater than 0, got %d", e.config.ReadsPerBatch)
-    }
-    if err := e.checkBatches(); err != nil {
-        return err
-    }
-    if e.config.SampleName == "" {
-        return fmt.Errorf("sample name cannot be empty")
-    }
-    if e.config.OutputDir == "" {
-        return fmt.Errorf("output directory cannot be empty")
-    }
-    if err := e.checkExtensions(); err != nil {
-        return err
-    }
-    if e.qualityFingerprintingEnabled() {
-        if err := e.checkQualityFingerprinting(); err != nil {
-            return err
-        }
-    }
-    e.logSeed()
+	// Validate configuration
+	if e.config.ReadLength <= 0 {
+		return fmt.Errorf("invalid read length: must be greater than 0, got %d", e.config.ReadLength)
+	}
+	if e.config.ReadsPerBatch <= 0 {
+		return fmt.Errorf("invalid reads per batch: must be greater than 0, got %d", e.config.ReadsPerBatch)
+	}
+	if err := e.checkBatches(); err != nil {
+		return err
+	}
+	if e.config.SampleName == "" {
+		return fmt.Errorf("sample name cannot be empty")
+	}
+	if e.config.OutputDir == "" {
+		return fmt.Errorf("output directory cannot be empty")
+	}
+	if err := e.checkExtensions(); err != nil {
+		return err
+	}
+	if e.qualityFingerprintingEnabled() {
+		if err := e.checkQualityFingerprinting(); err != nil {
+			return err
+		}
+	}
+	e.logSeed()
 
-    c := e.config
-    fmt.Println("🧬 Initializing genomics simulation engine...")
-    fmt.Printf("   Sample: %s\n", c.SampleName)
-    fmt.Printf("   Reads per batch: %d\n", c.ReadsPerBatch)
-    switch {
-    case c.TotalBases > 0:
-        fmt.Printf("   Target bases: %d\n", c.TotalBases)
-    case c.TotalReads > 0:
-        fmt.Printf("   Target reads: %d\n", c.TotalReads)
-    default:
-        fmt.Printf("   Total batches: %d\n", c.TotalBatches)
-        fmt.Printf("   Total reads to generate: %d\n", c.TotalBatches*c.ReadsPerBatch)
-    }
-    if c.FlowCells > 1 {
-        fmt.Printf("   Flow cells: %d\n", c.FlowCells)
-    }
-    if c.Workers > 1 {
-        fmt.Printf("   Workers: %d\n", c.Workers)
-    }
+	c := e.config
+	fmt.Println("🧬 Initializing genomics simulation engine...")
+	fmt.Printf("   Sample: %s\n", c.SampleName)
+	fmt.Printf("   Reads per batch: %d\n", c.ReadsPerBatch)
+	switch {
+	case c.TotalBases > 0:
+		fmt.Printf("   Target bases: %d\n", c.TotalBases)
+	case c.TotalReads > 0:
+		fmt.Printf("   Target reads: %d\n", c.TotalReads)
+	default:
+		fmt.Printf("   Total batches: %d\n", c.TotalBatches)
+		fmt.Printf("   Total reads to generate: %d\n", c.TotalBatches*c.ReadsPerBatch)
+	}
+	if c.FlowCells > 1 {
+		fmt.Printf("   Flow cells: %d\n", c.FlowCells)
+	}
+	if c.Workers > 1 {
+		fmt.Printf("   Workers: %d\n", c.Workers)
+	}
 
-    before := len(e.GeneratedFiles())
-    if err := e.generateRun(); err != nil {
-        return err
-    }
-    fmt.Printf("   ✅ Generated %d FASTQ files in %s\n", len(e.GeneratedFiles())-before, c.OutputDir)
-    return nil
+	before := len(e.GeneratedFiles())
+	if err := e.generateRun(); err != nil {
+		return err
+	}
+	fmt.Printf("   ✅ Generated %d FASTQ files in %s\n", len(e.GeneratedFiles())-before, c.OutputDir)
+	return nil
 }
 
 // checkBatches validates the batch count, which output-size targets replace.
 func (e *Engine) checkBatches() error {
-    c := e.config
-    if c.TotalBases == 0 && c.TotalReads == 0 && c.TotalBatches <= 0 {
-        return fmt.Errorf("invalid total batches: must be greater than 0, got %d", c.TotalBatches)
-    }
-    return nil
+	c := e.config
+	if c.TotalBases == 0 && c.TotalReads == 0 && c.TotalBatches <= 0 {
+		return fmt.Errorf("invalid total batches: must be greater than 0, got %d", c.TotalBatches)
+	}
+	return nil
 }
 
 // closeObserver closes obs when it is not nil.
 func closeObserver(obs ReadObserver) error {
-    if obs == nil {
-        return nil
-    }
-    if err := obs.Close(); err != nil {
-        return fmt.Errorf("closing read observer: %w", err)
-    }
-    return nil
+	if obs == nil {
+		return nil
+	}
+	if err := obs.Close(); err != nil {
+		return fmt.Errorf("closing read observer: %w", err)
+	}
+	return nil
 }
 
 // Close cleans up engine resources
 func (e *Engine) Close() {
-    if e.fingerprintingEngine != nil {
-        e.fingerprintingEngine.Close()
-    }
+	if e.fingerprintingEngine != nil {
+		e.fingerprintingEngine.Close()
+	}
 }
 
 // GenerateFASTQFile generates a single FASTQ file (public method for TUI).
@@ -303,130 +321,132 @@ func (e *Engine) Close() {
 // Generate run. Output-size targets and flow cells do not apply; the file
 // holds ReadsPerBatch reads.
 func (e *Engine) GenerateFASTQFile(filename string, batch, read int) error {
-    if err := e.checkExtensions(); err != nil {
-        return err
-    }
-    if s3sink.IsURI(e.config.OutputDir) {
-        return fmt.Errorf("GenerateFASTQFile writes local files: output_dir %s is an S3 URI", e.config.OutputDir)
-    }
-    obs, err := e.observer()
-    if err != nil {
-        return err
-    }
-    final, err := e.generateFASTQFile(fileJob{path: filename, batch: batch, mate: read, reads: e.config.ReadsPerBatch, obs: obs})
-    if err != nil {
-        closeObserver(obs) // #nosec G104 -- the generation error is returned
-        return err
-    }
-    e.filesMu.Lock()
-    e.files = append(e.files, final)
-    e.filesMu.Unlock()
-    return closeObserver(obs)
+	if err := e.checkExtensions(); err != nil {
+		return err
+	}
+	if s3sink.IsURI(e.config.OutputDir) {
+		return fmt.Errorf("GenerateFASTQFile writes local files: output_dir %s is an S3 URI", e.config.OutputDir)
+	}
+	obs, err := e.observer()
+	if err != nil {
+		return err
+	}
+	final, err := e.generateFASTQFile(fileJob{path: filename, batch: batch, mate: read, reads: e.config.ReadsPerBatch, obs: obs})
+	if err != nil {
+		closeObserver(obs) // #nosec G104 -- the generation error is returned
+		return err
+	}
+	e.filesMu.Lock()
+	e.files = append(e.files, final)
+	e.filesMu.Unlock()
+	return closeObserver(obs)
 }
 
 // fileJob describes one FASTQ file to write.
 type fileJob struct {
-    path               string
-    batch, mate, reads int
-    obs                ReadObserver
-    tally              func(bases int) // told each written read's length
-    abort              *atomic.Bool    // stops the file with errAborted when set
+	path               string
+	batch, mate, reads int
+	obs                ReadObserver
+	tally              func(bases int) // told each written read's length
+	abort              *atomic.Bool    // stops the file with errAborted when set
 }
 
 // generateFASTQFile writes and finalizes one file and returns its final path.
 func (e *Engine) generateFASTQFile(j fileJob) (string, error) {
-    // Validate file path against the configured output directory
-    if err := security.ValidateFilePath(j.path, e.config.OutputDir); err != nil {
-        return "", fmt.Errorf("invalid file path: %w", err)
-    }
+	// Validate file path against the configured output directory
+	if err := security.ValidateFilePath(j.path, e.config.OutputDir); err != nil {
+		return "", fmt.Errorf("invalid file path: %w", err)
+	}
 
-    if e.qualityFingerprintingEnabled() {
-        if err := e.checkQualityFingerprinting(); err != nil {
-            return "", err
-        }
-    }
+	if e.qualityFingerprintingEnabled() {
+		if err := e.checkQualityFingerprinting(); err != nil {
+			return "", err
+		}
+	}
 
-    file, err := security.SecureFileCreate(j.path, e.config.OutputDir)
-    if err != nil {
-        return "", err
-    }
-    if err := e.writeFileStream(file, j); err != nil {
-        file.Close()      // #nosec G104 -- the write error is returned
-        os.Remove(j.path) // #nosec G104 -- best effort cleanup of a partial file
-        return "", err
-    }
-    if err := file.Close(); err != nil {
-        return "", fmt.Errorf("closing %s: %w", filepath.Base(j.path), err)
-    }
-    return e.finalize(j.path)
+	file, err := security.SecureFileCreate(j.path, e.config.OutputDir)
+	if err != nil {
+		return "", err
+	}
+	if err := e.writeFileStream(file, j); err != nil {
+		file.Close()      // #nosec G104 -- the write error is returned
+		os.Remove(j.path) // #nosec G104 -- best effort cleanup of a partial file
+		return "", err
+	}
+	if err := file.Close(); err != nil {
+		return "", fmt.Errorf("closing %s: %w", filepath.Base(j.path), err)
+	}
+	return e.finalize(j.path)
 }
 
 // GeneratedFiles returns the FASTQ files this engine has written, in order
 // (s3:// URIs for S3 output).
 func (e *Engine) GeneratedFiles() []string {
-    e.filesMu.Lock()
-    defer e.filesMu.Unlock()
-    return append([]string(nil), e.files...)
+	e.filesMu.Lock()
+	defer e.filesMu.Unlock()
+	return append([]string(nil), e.files...)
 }
 
 // SkippedVariantOverlaps returns how many positioned variant applications
 // were skipped because the variant overlapped another variant already
 // applied to the same read.
 func (e *Engine) SkippedVariantOverlaps() int64 {
-    return e.overlapSkips.Load()
+	return e.overlapSkips.Load()
 }
 
 // writeFileStream writes one file's batch of FASTQ records (one mate) to w.
 // The file gets its own HMM model instance, seeded from its stream.
 func (e *Engine) writeFileStream(w io.Writer, j fileJob) error {
-    p, err := e.newPipeline(GenerateOpts{}, j.obs)
-    if err != nil {
-        return err
-    }
-    p.tally, p.abort = j.tally, j.abort
-    if p.model, err = e.streamModel(); err != nil {
-        return err
-    }
-    ww, err := e.wrapOutput(w)
-    if err != nil {
-        return err
-    }
-    r := newStream(e.seed, streamID(j.batch, j.mate))
-    reseed(p.model, r)
-    shared := r
-    if e.config.PairedEnd {
-        shared = newStream(e.seed, streamID(j.batch, pairMate))
-    }
-    bw := bufio.NewWriterSize(ww, 256*1024)
-    var serial int64
-    spec := batchSpec{batch: j.batch, reads: j.reads, mates: []int{j.mate}, file: j.path, shared: shared}
-    if _, err := p.writeBatch(bw, r, spec, &serial); err != nil {
-        return err
-    }
-    if err := bw.Flush(); err != nil {
-        return fmt.Errorf("writing FASTQ record: %w", err)
-    }
-    return ww.Close()
+	p, err := e.newPipeline(GenerateOpts{}, j.obs)
+	if err != nil {
+		return err
+	}
+	p.tally, p.abort = j.tally, j.abort
+	if p.model, err = e.streamModel(); err != nil {
+		return err
+	}
+	ww, err := e.wrapOutput(w)
+	if err != nil {
+		return err
+	}
+	r := newStream(e.seed, streamID(j.batch, j.mate))
+	shared := r
+	if e.config.PairedEnd {
+		// Both mate files regenerate the batch's fragments from the pair
+		// stream, so the model that generates them is seeded from it too.
+		shared = newStream(e.seed, streamID(j.batch, pairMate))
+	}
+	reseed(p.model, shared)
+	bw := bufio.NewWriterSize(ww, 256*1024)
+	var serial int64
+	spec := batchSpec{batch: j.batch, reads: j.reads, mates: []int{j.mate}, file: j.path, shared: shared}
+	if _, err := p.writeBatch(bw, r, spec, &serial); err != nil {
+		return err
+	}
+	if err := bw.Flush(); err != nil {
+		return fmt.Errorf("writing FASTQ record: %w", err)
+	}
+	return ww.Close()
 }
 
 // streamModel returns the HMM model for one output file: a fresh instance
 // loaded from the model path, so files do not depend on each other or on
 // scheduling. Without a path it is the engine's shared model (or nil).
 func (e *Engine) streamModel() (authenticity.SequenceGenerator, error) {
-    if e.hmmModel == nil || e.modelPath == "" {
-        return e.hmmModel, nil
-    }
-    m, err := authenticity.LoadModel(e.modelPath)
-    if err != nil {
-        return nil, fmt.Errorf("loading HMM model %s: %w", e.modelPath, err)
-    }
-    return m, nil
+	if e.hmmModel == nil || e.modelPath == "" {
+		return e.hmmModel, nil
+	}
+	m, err := authenticity.LoadModel(e.modelPath)
+	if err != nil {
+		return nil, fmt.Errorf("loading HMM model %s: %w", e.modelPath, err)
+	}
+	return m, nil
 }
 
 // reseedModel reseeds the engine's shared HMM model from r. Streamed output
 // (GenerateToWriter) uses the shared model, one stream at a time.
 func (e *Engine) reseedModel(r *rand.Rand) {
-    reseed(e.hmmModel, r)
+	reseed(e.hmmModel, r)
 }
 
 // generateWith returns n bases and their Phred qualities. It uses the HMM
@@ -434,40 +454,41 @@ func (e *Engine) reseedModel(r *rand.Rand) {
 // r when there is none or it fails; qualities are then nil, and the pipeline
 // applies the quality model.
 func (e *Engine) generateWith(r *rand.Rand, n int) ([]byte, []byte, error) {
-    return generateFrom(e.hmmModel, r, n)
+	return generateFrom(e.hmmModel, r, n)
 }
 
 // VariantRecord holds a single variant for controlled injection into synthetic reads.
 // Ref and Alt must be non-empty ACGT strings. Freq is the injection probability in [0,1].
 type VariantRecord struct {
-    Ref        string
-    Alt        string
-    Freq       float64
-    Chromosome string // "" → position-blind (legacy)
-    Position   int64  // 0 → position-blind; 1-based VCF when > 0
+	Ref        string
+	Alt        string
+	Freq       float64
+	Chromosome string // "" → position-blind (legacy)
+	Position   int64  // 0 → position-blind; 1-based VCF when > 0
 }
 
 // GenomicRegion is a half-open [Start, End) interval in 0-based coordinates.
 // When set in GenerateOpts, reads are positioned within this region and
 // coordinate-aware injection is used for VariantRecords with Chromosome+Position set.
 type GenomicRegion struct {
-    Chromosome string
-    Start      int64 // 0-based inclusive
-    End        int64 // 0-based exclusive; must be > Start + ReadLength
+	Chromosome string
+	Start      int64 // 0-based inclusive
+	End        int64 // 0-based exclusive; must be > Start + ReadLength
 }
 
 // GenerateOpts holds optional parameters for GenerateToWriter.
 type GenerateOpts struct {
-    // Variants are injected into each read with probability Freq.
-    Variants []VariantRecord
-    // SampleID, when non-empty, appends "\tRG:Z:<id>" to every read header.
-    // BWA passes FASTQ comments to SAM when invoked with -C.
-    SampleID string
-    // RefRegion, when non-nil, enables coordinate-aware injection. Reads are
-    // assigned random start positions within the region, and variants with
-    // Chromosome+Position set (on the region's chromosome) are injected at
-    // their exact genomic offsets; position-blind variants are ignored.
-    RefRegion *GenomicRegion // nil → legacy position-blind injection
+	// Variants are injected into each read with probability Freq.
+	Variants []VariantRecord
+	// SampleID, when non-empty, appends "\tRG:Z:<id>" to every read header
+	// comment (before any fingerprint tags).
+	// BWA passes FASTQ comments to SAM when invoked with -C.
+	SampleID string
+	// RefRegion, when non-nil, enables coordinate-aware injection. Reads are
+	// assigned random start positions within the region, and variants with
+	// Chromosome+Position set (on the region's chromosome) are injected at
+	// their exact genomic offsets; position-blind variants are ignored.
+	RefRegion *GenomicRegion // nil → legacy position-blind injection
 }
 
 // GenerateToWriter streams all synthetic FASTQ reads to w without writing local
@@ -477,83 +498,83 @@ type GenerateOpts struct {
 // TotalBases and the max-output cap apply as for Generate (one stream, so
 // Workers does not apply); flow cells need file output.
 func (e *Engine) GenerateToWriter(w io.Writer, opts GenerateOpts) error {
-    if e.config.ReadLength <= 0 {
-        return fmt.Errorf("invalid read length: %d", e.config.ReadLength)
-    }
-    if e.config.ReadsPerBatch <= 0 {
-        return fmt.Errorf("invalid reads per batch: %d", e.config.ReadsPerBatch)
-    }
-    if err := e.checkBatches(); err != nil {
-        return err
-    }
-    if e.config.FlowCells > 1 {
-        return fmt.Errorf("flow_cells %d needs file output: each flow cell is written to its own directory", e.config.FlowCells)
-    }
-    if e.qualityFingerprintingEnabled() {
-        return fmt.Errorf("steganography layer %q needs file output: a fingerprint cannot be embedded in streamed output; write files instead, or remove %q from steganography_layers", qualityLayer, qualityLayer)
-    }
-    if err := e.checkExtensions(); err != nil {
-        return err
-    }
-    e.logSeed()
+	if e.config.ReadLength <= 0 {
+		return fmt.Errorf("invalid read length: %d", e.config.ReadLength)
+	}
+	if e.config.ReadsPerBatch <= 0 {
+		return fmt.Errorf("invalid reads per batch: %d", e.config.ReadsPerBatch)
+	}
+	if err := e.checkBatches(); err != nil {
+		return err
+	}
+	if e.config.FlowCells > 1 {
+		return fmt.Errorf("flow_cells %d needs file output: each flow cell is written to its own directory", e.config.FlowCells)
+	}
+	if e.qualityFingerprintingEnabled() {
+		return fmt.Errorf("steganography layer %q needs file output: a fingerprint cannot be embedded in streamed output; write files instead, or remove %q from steganography_layers", qualityLayer, qualityLayer)
+	}
+	if err := e.checkExtensions(); err != nil {
+		return err
+	}
+	e.logSeed()
 
-    obs, err := e.observer()
-    if err != nil {
-        return err
-    }
-    before := e.SkippedVariantOverlaps()
-    if err := e.writeStreams(w, opts, obs); err != nil {
-        closeObserver(obs) // #nosec G104 -- the generation error is returned
-        return err
-    }
-    if n := e.SkippedVariantOverlaps() - before; n > 0 {
-        fmt.Fprintf(e.logw, "   [warn] %d variant applications skipped: the variant overlapped another variant in the same read\n", n)
-    }
-    return closeObserver(obs)
+	obs, err := e.observer()
+	if err != nil {
+		return err
+	}
+	before := e.SkippedVariantOverlaps()
+	if err := e.writeStreams(w, opts, obs); err != nil {
+		closeObserver(obs) // #nosec G104 -- the generation error is returned
+		return err
+	}
+	if n := e.SkippedVariantOverlaps() - before; n > 0 {
+		fmt.Fprintf(e.logw, "   [warn] %d variant applications skipped: the variant overlapped another variant in the same read\n", n)
+	}
+	return closeObserver(obs)
 }
 
 // writeStreams writes every batch to w, one RNG stream per batch.
 func (e *Engine) writeStreams(w io.Writer, opts GenerateOpts, obs ReadObserver) error {
-    ww, err := e.wrapOutput(w)
-    if err != nil {
-        return err
-    }
-    // Reuse the caller's buffer when the output is passed through unchanged.
-    var bw *bufio.Writer
-    if nw, isNop := ww.(nopWriteCloser); isNop {
-        bw, _ = nw.Writer.(*bufio.Writer)
-    }
-    if bw == nil {
-        bw = bufio.NewWriterSize(ww, 256*1024)
-    }
-    mates := e.mates()
-    plan := e.outputPlan()
-    b := &budget{p: plan}
-    var serial int64
-    for batch := 1; plan.has(batch); batch++ {
-        p, err := e.newPipeline(opts, obs)
-        if err != nil {
-            return err
-        }
-        p.model, p.admit = e.hmmModel, b.admit
-        r := newStream(e.seed, streamID(batch, 0))
-        e.reseedModel(r)
-        spec := batchSpec{batch: batch, reads: plan.reads(batch), mates: mates, shared: r}
-        stopped, err := p.writeBatch(bw, r, spec, &serial)
-        if err != nil {
-            return err
-        }
-        if stopped || (plan.bases > 0 && b.bases >= plan.bases) {
-            break
-        }
-    }
-    if b.capped {
-        fmt.Fprintf(e.logw, "   [warn] output stopped at the max output of %d bases (max_output_gb / max_output_tb)\n", plan.cap)
-    }
-    if err := bw.Flush(); err != nil {
-        return fmt.Errorf("writing FASTQ record: %w", err)
-    }
-    return ww.Close()
+	ww, err := e.wrapOutput(w)
+	if err != nil {
+		return err
+	}
+	// Reuse the caller's buffer when the output is passed through unchanged.
+	var bw *bufio.Writer
+	if nw, isNop := ww.(nopWriteCloser); isNop {
+		bw, _ = nw.Writer.(*bufio.Writer)
+	}
+	if bw == nil {
+		bw = bufio.NewWriterSize(ww, 256*1024)
+	}
+	mates := e.mates()
+	plan := e.outputPlan()
+	b := &budget{p: plan}
+	var serial int64
+	for batch := 1; plan.has(batch); batch++ {
+		p, err := e.newPipeline(opts, obs)
+		if err != nil {
+			return err
+		}
+		p.model, p.admit = e.hmmModel, b.admit
+		r := newStream(e.seed, streamID(batch, 0))
+		e.reseedModel(r)
+		spec := batchSpec{batch: batch, reads: plan.reads(batch), mates: mates, shared: r}
+		stopped, err := p.writeBatch(bw, r, spec, &serial)
+		if err != nil {
+			return err
+		}
+		if stopped || (plan.bases > 0 && b.bases >= plan.bases) {
+			break
+		}
+	}
+	if b.capped {
+		fmt.Fprintf(e.logw, "   [warn] output stopped at the max output of %d bases (max_output_gb / max_output_tb)\n", plan.cap)
+	}
+	if err := bw.Flush(); err != nil {
+		return fmt.Errorf("writing FASTQ record: %w", err)
+	}
+	return ww.Close()
 }
 
 // GenerateRawSequence exposes the internal sequence generator for packages that
@@ -562,16 +583,16 @@ func (e *Engine) writeStreams(w io.Writer, opts GenerateOpts, obs ReadObserver) 
 // It draws from an engine-wide stream; GenerateRawSequenceWith takes the
 // generator explicitly.
 func (e *Engine) GenerateRawSequence(readLength int) ([]byte, []byte, error) {
-    e.rawMu.Lock()
-    defer e.rawMu.Unlock()
-    if e.rawRand == nil {
-        e.rawRand = newStream(e.seed, rawStream|1)
-    }
-    return e.generateWith(e.rawRand, readLength)
+	e.rawMu.Lock()
+	defer e.rawMu.Unlock()
+	if e.rawRand == nil {
+		e.rawRand = newStream(e.seed, rawStream|1)
+	}
+	return e.generateWith(e.rawRand, readLength)
 }
 
 // GenerateRawSequenceWith is GenerateRawSequence drawing uniform bases from r
 // (for example a generator from Engine.Rand).
 func (e *Engine) GenerateRawSequenceWith(r *rand.Rand, readLength int) ([]byte, []byte, error) {
-    return e.generateWith(r, readLength)
+	return e.generateWith(r, readLength)
 }

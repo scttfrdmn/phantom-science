@@ -5,18 +5,35 @@ package genomics
 //
 // Per output stream the hooks are instantiated once (lengthSampler,
 // qualityModel, errorModel, headerFormatter; see engine_readlen.go,
-// engine_errors.go and engine_output.go). Then, per read:
+// engine_errors.go and engine_output.go). Then, per read (pair), in this
+// draw order:
 //
-//	sample length L → (region) draw read start → per mate:
-//	generate L+slack bases → inject variants → trim to L →
-//	apply error model → format header → write → notify observer
+// Single-end, legacy qualities (ONT, and Illumina quality_model linear):
 //
-// Each stream draws only from its own generator (see rng.go), in that order,
-// so output is a pure function of (seed, configuration, stream ID). The
-// per-read values both mates share (L and the read start) come from the
-// pair's "shared" generator: the stream itself when one stream holds both
-// mates (interleaved output) or the read is single-end, else the batch's
-// pair stream, so the R1 and R2 files of a batch agree on them.
+//	shared: L → (region) read start
+//	r:      L+slack bases → qualities (unless HMM gave them) → variants →
+//	        trim to L → errors → header
+//
+// Single-end, binned Illumina qualities:
+//
+//	shared: L → (region) read start
+//	r:      L+slack bases → variants → trim to L → qualities → errors → header
+//
+// Paired-end (Illumina): each pair is the two ends of one fragment.
+//
+//	shared: L → insert size F (≥ L) → (region) fragment start →
+//	        F+slack fragment bases → variants, applied once → trim to F
+//	per mate, from r: R1 = frag[:L], R2 = revcomp(frag[F−L:]) →
+//	        qualities (of that mate) → errors → header
+//
+// Each stream draws only from its own generator (see rng.go), so output is a
+// pure function of (seed, configuration, stream ID). The "shared" generator
+// is the stream itself when one stream holds both mates (interleaved
+// output) or the read is single-end, else the batch's pair stream, so the R1
+// and R2 files of a batch regenerate the same fragments independently. For
+// paired file output the HMM model (when configured) is seeded from the pair
+// stream for the same reason. Fragment HMM qualities are not used: each
+// mate's qualities come from the quality model.
 //
 // Output-size targets, flow cells and parallel file generation (#16) are at
 // the end of this file (see generateRun).
@@ -37,6 +54,7 @@ import (
 	"time"
 
 	"github.com/scttfrdmn/phantom-science/internal/genomics/authenticity"
+	"github.com/scttfrdmn/phantom-science/internal/genomics/illumina"
 	"github.com/scttfrdmn/phantom-science/internal/genomics/manifest"
 	"github.com/scttfrdmn/phantom-science/internal/genomics/nanopore"
 	"github.com/scttfrdmn/phantom-science/internal/genomics/seqread"
@@ -100,11 +118,23 @@ type readPipeline struct {
 	e            *Engine
 	sampleLength func(r *rand.Rand) int
 	fixedLength  bool
-	qualities    func(r *rand.Rand, n int) []byte
+	qualities    func(r *rand.Rand, n, mate int) []byte
 	applyErrors  func(r *rand.Rand, seq, qual []byte) ([]byte, []byte)
 	header       func(r *rand.Rand, rec *seqread.Record) (string, string)
 	observer     ReadObserver
 	maxPhred     byte
+	// legacy selects the single-end flow that draws qualities before variant
+	// injection (ONT, linear Illumina qualities); binned Illumina qualities
+	// are drawn per read after it.
+	legacy bool
+	// inserts samples paired-end fragment lengths (nil for single-end).
+	inserts *illumina.InsertSampler
+	// fragments, when set, supplies fragment bases (and their reference
+	// position) in place of the HMM model or uniform bases.
+	fragments FragmentSampler
+	// tags is appended to every header comment: the read-ID fingerprint
+	// tags ("\tXC:Z:<customer>\tXD:Z:<dataset>"), or "".
+	tags string
 
 	// model generates bases (nil: uniform random bases). It is the
 	// stream's own instance for file output.
@@ -132,9 +162,18 @@ type readPipeline struct {
 	pending []seqread.Record // the mates of the read being written
 }
 
+// FragmentSampler supplies the bases of one fragment (or single-end read)
+// of n bases: seq is the fragment as read 1 reads it, chrom and start (0-based)
+// its reference position, and minus reports that seq is the reverse
+// complement of the reference there. It must draw only from r. It is the
+// hook for sampling reads from a reference genome; nil (the default) uses
+// the HMM model or uniform bases.
+type FragmentSampler func(r *rand.Rand, n int) (chrom string, start int64, minus bool, seq []byte, err error)
+
 // newPipeline instantiates the hooks for one output stream.
 func (e *Engine) newPipeline(opts GenerateOpts, obs ReadObserver) (*readPipeline, error) {
-	p := &readPipeline{e: e, observer: obs, sampleID: opts.SampleID, region: opts.RefRegion, maxPhred: e.maxPhred(), fixedLength: e.fixedLengthReads()}
+	p := &readPipeline{e: e, observer: obs, sampleID: opts.SampleID, region: opts.RefRegion, maxPhred: e.maxPhred(),
+		fixedLength: e.fixedLengthReads(), legacy: !e.binnedQualities(), fragments: e.fragments, tags: e.readTags()}
 	var err error
 	if p.sampleLength, err = e.lengthSampler(); err != nil {
 		return nil, err
@@ -147,6 +186,11 @@ func (e *Engine) newPipeline(opts GenerateOpts, obs ReadObserver) (*readPipeline
 	}
 	if p.header, err = e.headerFormatter(); err != nil {
 		return nil, err
+	}
+	if e.config.PairedEnd {
+		if p.inserts, err = illumina.NewInsertSampler(e.illuminaSpec().InsertSize); err != nil {
+			return nil, err
+		}
 	}
 	for _, v := range opts.Variants {
 		if len(v.Ref) == 0 || len(v.Alt) == 0 {
@@ -193,8 +237,9 @@ type batchSpec struct {
 	reads int   // reads (pairs) to write
 	mates []int // {1} or {2} for one file of a batch, {1, 2} for interleaved pairs
 	file  string
-	// shared draws the per-read values both mates share: the read length
-	// and, in region mode, the read start.
+	// shared draws the per-read values both mates share: the read length,
+	// and for paired-end reads the fragment (insert size, start, bases and
+	// variant alleles); for single-end reads, in region mode, the read start.
 	shared *rand.Rand
 }
 
@@ -212,30 +257,39 @@ func (p *readPipeline) writeBatch(bw *bufio.Writer, r *rand.Rand, s batchSpec, s
 			return false, errAborted
 		}
 		length := p.sampleLength(s.shared)
+		// frag is the pair's fragment, or for single-end reads from a
+		// FragmentSampler the read itself; nil for other single-end reads.
+		var frag []byte
 		var readStart int64
-		if p.region != nil {
-			span := p.region.End - p.region.Start - int64(length)
-			if span <= 0 {
-				return false, fmt.Errorf("region [%s:%d-%d) too small for read length %d",
-					p.region.Chromosome, p.region.Start, p.region.End, length)
-			}
-			readStart = p.region.Start + s.shared.Int64N(span)
+		switch {
+		case p.inserts != nil:
+			frag, readStart, err = p.fragment(s.shared, length, &rec)
+		case p.fragments != nil:
+			frag, readStart, err = p.sampled(s.shared, length, &rec)
+		case p.region != nil:
+			readStart, err = p.start(s.shared, length)
 		}
+		if err != nil {
+			return false, err
+		}
+		rec.RefStart = readStart
 		p.pending = p.pending[:0]
 		var bases int
 		for i, mate := range s.mates {
-			seq, qual, err := p.read(r, length, readStart)
-			if err != nil {
+			var seq, qual []byte
+			if frag != nil {
+				seq, qual = p.mate(r, frag, length, mate)
+			} else if seq, qual, err = p.read(r, length, readStart); err != nil {
 				return false, err
 			}
-			rec.Index, rec.Mate, rec.Serial, rec.RefStart = readNum, mate, *serial+int64(i), readStart
+			rec.Index, rec.Mate, rec.Serial = readNum, mate, *serial+int64(i)
 			rec.Seq, rec.Qual = seq, qual
 			rec.Name, rec.Comment = p.header(r, &rec)
 			if p.sampleID != "" {
-				if rec.Comment != "" {
-					rec.Comment += "\t"
-				}
-				rec.Comment += "RG:Z:" + p.sampleID
+				rec.Comment = joinComment(rec.Comment, "RG:Z:"+p.sampleID)
+			}
+			if p.tags != "" {
+				rec.Comment = joinComment(rec.Comment, p.tags)
 			}
 			p.pending = append(p.pending, rec)
 			bases += len(seq)
@@ -261,53 +315,158 @@ func (p *readPipeline) writeBatch(bw *bufio.Writer, r *rand.Rand, s batchSpec, s
 	return false, nil
 }
 
-// read produces the final bases and Phred qualities of one read.
-func (p *readPipeline) read(r *rand.Rand, length int, readStart int64) ([]byte, []byte, error) {
+// joinComment appends tab-separated fields to a header comment.
+func joinComment(comment, fields string) string {
+	if comment == "" {
+		return fields
+	}
+	return comment + "\t" + fields
+}
+
+// start draws the 0-based start of a read (or fragment) of n bases in the
+// region.
+func (p *readPipeline) start(r *rand.Rand, n int) (int64, error) {
+	span := p.region.End - p.region.Start - int64(n)
+	if span <= 0 {
+		return 0, fmt.Errorf("region [%s:%d-%d) too small for a read or fragment of %d bases",
+			p.region.Chromosome, p.region.Start, p.region.End, n)
+	}
+	return p.region.Start + r.Int64N(span), nil
+}
+
+// fragment draws one paired-end fragment from r (the pair's shared stream):
+// its insert size F >= length, its start in region mode, F bases with the
+// variants applied once, trimmed back to F. With a FragmentSampler the bases
+// and position come from it instead, and rec's position is set.
+func (p *readPipeline) fragment(r *rand.Rand, length int, rec *seqread.Record) ([]byte, int64, error) {
+	n := p.inserts.Sample(r, length)
+	if p.fragments != nil {
+		return p.sampled(r, n, rec)
+	}
+	var start int64
+	if p.region != nil {
+		var err error
+		if start, err = p.start(r, n); err != nil {
+			return nil, 0, err
+		}
+	}
+	seq, _, err := p.bases(r, n, start, true, nil)
+	return seq, start, err
+}
+
+// sampled returns n bases from the FragmentSampler and records their
+// position on rec.
+func (p *readPipeline) sampled(r *rand.Rand, n int, rec *seqread.Record) ([]byte, int64, error) {
+	chrom, start, _, seq, err := p.fragments(r, n)
+	if err != nil {
+		return nil, 0, fmt.Errorf("sampling a fragment: %w", err)
+	}
+	if len(seq) != n {
+		return nil, 0, fmt.Errorf("fragment sampler returned %d bases, want %d", len(seq), n)
+	}
+	rec.Positioned, rec.Chromosome, rec.RefStart = true, chrom, start
+	return seq, start, nil
+}
+
+// mate returns the bases and qualities of one mate of frag: R1 reads the
+// first length bases, R2 the reverse complement of the last length bases.
+// Qualities and errors come from r, the mate's stream.
+func (p *readPipeline) mate(r *rand.Rand, frag []byte, length, mate int) ([]byte, []byte) {
+	var seq []byte
+	if mate == 2 {
+		seq = seqread.ReverseComplement(frag[len(frag)-length:])
+	} else {
+		seq = append([]byte(nil), frag[:length]...)
+	}
+	qual := p.qualities(r, length, mate)
+	if p.applyErrors != nil {
+		seq, qual = p.applyErrors(r, seq, qual)
+	}
+	return seq, qual
+}
+
+// bases generates the bases of a read or fragment of length bases starting
+// at the 0-based reference position start, from r: length plus slack bases
+// (enough to absorb the deletions that can apply), then the variants, then,
+// when trim is set, trimmed back to length. qualFn, when set, gives the
+// qualities of bases without HMM qualities; they are generated before the
+// variants and kept aligned with the bases (the legacy order). Without
+// qualFn the returned qualities are nil.
+func (p *readPipeline) bases(r *rand.Rand, length int, start int64, trim bool, qualFn func(n int) []byte) ([]byte, []byte, error) {
 	e := p.e
 	n := length
 	var local []VariantRecord // positioned variants that can touch this read
 	if len(p.positioned) > 0 {
-		hi := readStart + int64(length)
-		if p.fixedLength {
+		hi := start + int64(length)
+		if trim {
 			hi += int64(p.maxSlack)
 		}
 		var spans []seqread.Span
-		local, spans = p.window(readStart, hi)
-		if p.fixedLength {
-			n += seqread.WindowSlack(readStart, length, spans)
+		local, spans = p.window(start, hi)
+		if trim {
+			n += seqread.WindowSlack(start, length, spans)
 		}
-	} else if p.fixedLength && p.region == nil {
+	} else if trim && p.region == nil {
 		n += p.blindSlack
 	}
-	seq, qual, err := generateFrom(p.model, r, n)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to generate sequence: %w", err)
+	gen := func(n int) ([]byte, []byte, error) {
+		seq, qual, err := generateFrom(p.model, r, n)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to generate sequence: %w", err)
+		}
+		switch {
+		case qualFn == nil:
+			qual = nil
+		case len(qual) != len(seq):
+			qual = qualFn(len(seq))
+		}
+		return seq, qual, nil
 	}
-	if len(qual) != len(seq) {
-		qual = p.qualities(r, len(seq))
+	seq, qual, err := gen(n)
+	if err != nil {
+		return nil, nil, err
 	}
 	switch {
 	case len(local) > 0:
 		var skipped int
-		seq, qual, skipped = injectAtPosition(r, seq, qual, readStart, local)
+		seq, qual, skipped = injectAtPosition(r, seq, qual, start, local)
 		if skipped > 0 {
 			e.overlapSkips.Add(int64(skipped))
 		}
 	case len(p.blind) > 0:
 		seq, qual = injectVariants(r, seq, qual, p.blind)
 	}
-	if p.fixedLength {
+	if trim {
 		if len(seq) < length { // cannot happen with correct slack; never pad with N
-			extra, extraQ, err := generateFrom(p.model, r, length-len(seq))
+			extra, extraQ, err := gen(length - len(seq))
 			if err != nil {
-				return nil, nil, fmt.Errorf("failed to generate sequence: %w", err)
+				return nil, nil, err
 			}
-			if len(extraQ) != len(extra) {
-				extraQ = p.qualities(r, len(extra))
+			seq = append(seq, extra...)
+			if qual != nil {
+				qual = append(qual, extraQ...)
 			}
-			seq, qual = append(seq, extra...), append(qual, extraQ...)
 		}
-		seq, qual = seq[:length], qual[:length]
+		seq = seq[:length]
+		if qual != nil {
+			qual = qual[:length]
+		}
+	}
+	return seq, qual, nil
+}
+
+// read produces the final bases and Phred qualities of one single-end read,
+// drawing everything from r.
+func (p *readPipeline) read(r *rand.Rand, length int, readStart int64) ([]byte, []byte, error) {
+	var seq, qual []byte
+	var err error
+	if p.legacy {
+		seq, qual, err = p.bases(r, length, readStart, p.fixedLength, func(n int) []byte { return p.qualities(r, n, 1) })
+	} else if seq, _, err = p.bases(r, length, readStart, p.fixedLength, nil); err == nil {
+		qual = p.qualities(r, len(seq), 1)
+	}
+	if err != nil {
+		return nil, nil, err
 	}
 	if p.applyErrors != nil {
 		seq, qual = p.applyErrors(r, seq, qual)
@@ -315,19 +474,9 @@ func (p *readPipeline) read(r *rand.Rand, length int, readStart int64) ([]byte, 
 	return seq, qual, nil
 }
 
-// writeRecord writes rec as a FASTQ record, applying read-ID fingerprinting.
+// writeRecord writes rec as a FASTQ record.
 func (p *readPipeline) writeRecord(bw *bufio.Writer, rec *seqread.Record) error {
-	e := p.e
-	header := rec.Header()
-	if e.config.Fingerprinting.Enable && e.fingerprintingEngine != nil {
-		if e.config.Fingerprinting.CustomerFingerprint {
-			header = e.fingerprintingEngine.EmbedCustomerID(header)
-		}
-		if e.config.Fingerprinting.DatasetFingerprint && e.config.DatasetID != "" {
-			header = e.fingerprintingEngine.EmbedDatasetFingerprint(header, e.config.DatasetID)
-		}
-	}
-	bw.WriteString(header) // #nosec G104 -- bufio errors are sticky and surface below
+	bw.WriteString(rec.Header()) // #nosec G104 -- bufio errors are sticky and surface below
 	bw.WriteByte('\n')
 	bw.Write(rec.Seq)
 	bw.WriteString("\n+\n")
@@ -667,6 +816,7 @@ func (e *Engine) flowCellEngine(k, n int, spool string, seen map[string]bool) (*
 		config: c, parent: e, logw: e.logw, seed: e.seed,
 		fingerprintingEngine: e.fingerprintingEngine, keyErr: e.keyErr, encrypted: e.encrypted,
 		hmmModel: e.hmmModel, modelPath: e.modelPath, toolVersion: e.toolVersion,
+		customerID: e.customerID, fragments: e.fragments,
 	}
 	rel := ""
 	if n > 1 {

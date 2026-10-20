@@ -93,9 +93,22 @@ func TestScale_WorkersByteIdentical(t *testing.T) {
 	model := trainedModel(t)
 	cases := map[string]func(*types.SequencerConfig){
 		"illumina fixed paired": func(c *types.SequencerConfig) { c.PairedEnd = true; c.TotalBatches = 9 },
-		"illumina lognormal tier": func(c *types.SequencerConfig) {
+		// The #27 default: binned qualities, quality-matched errors and
+		// paired fragments regenerated in each mate file.
+		"illumina binned paired": func(c *types.SequencerConfig) {
+			c.Illumina = types.IlluminaSpec{}
+			c.PairedEnd = true
+			c.TotalBatches = 9
+		},
+		"illumina binned paired region-free hmm": func(c *types.SequencerConfig) {
+			c.Illumina = types.IlluminaSpec{}
+			c.HMMModelPath = model
+			c.PairedEnd = true
+			c.TotalReads = 40
+		},
+		"illumina lognormal binned": func(c *types.SequencerConfig) {
+			c.Illumina = types.IlluminaSpec{}
 			c.ReadLengthDistribution = types.ReadLengthSpec{Dist: types.ReadLengthLognormal, N50: 200, Median: 120}
-			c.ErrorModel.Tier = "fast"
 			c.TotalBases = 9000
 		},
 		"illumina hmm paired lognormal": func(c *types.SequencerConfig) {

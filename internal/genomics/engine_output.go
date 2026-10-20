@@ -14,7 +14,9 @@ package genomics
 //     "@name comment". It may also set platform fields on rec (Channel,
 //     StartTime, Duration) for observers. It must draw only from r. The
 //     pipeline appends "\tRG:Z:<id>" to the comment when a read group is set,
-//     then applies read-ID fingerprinting to the whole line. The default
+//     then, with read-ID fingerprinting enabled, the tab-separated SAM-style
+//     fields "\tXC:Z:<customer>" and "\tXD:Z:<dataset>" (see
+//     fingerprinting.ReadTags); the read name is never changed. The default
 //     writes Illumina headers "<sample>:<lane>:HXXXXXX:<batch>:1101:<x>:<y>"
 //     "<mate>:N:0:1"; x/y are read*1000/read*2000, or, for reads placed on a
 //     region, start%1e5 and (start/1e5)%1e5.
@@ -42,8 +44,8 @@ package genomics
 //   - Headers are MinKNOW's: "@<uuid4> runid=<hex> read=<n> ch=<channel>
 //     start_time=<RFC 3339> flow_cell_id=<id> protocol_group_id=<id>
 //     sample_id=<id>" (see package nanopore for the per-channel timing
-//     model). Read-ID fingerprint tags, when enabled, are appended to the end
-//     of the line, so they extend the sample_id field, never the read ID.
+//     model). Read-ID fingerprint tags, when enabled, follow as tab-separated
+//     SAM-style fields (XC:Z:, XD:Z:), as for Illumina.
 //   - Reads are single-end; paired_end is rejected. Phred scores are capped
 //     at 50 (Dorado's maximum) instead of Illumina's 41.
 //   - The observer writes sequencing_summary.txt: for file output to
@@ -81,6 +83,7 @@ import (
 
 	"math/rand/v2"
 
+	"github.com/scttfrdmn/phantom-science/internal/fingerprinting"
 	"github.com/scttfrdmn/phantom-science/internal/genomics/nanopore"
 	"github.com/scttfrdmn/phantom-science/internal/genomics/seqread"
 	"github.com/scttfrdmn/phantom-science/internal/security"
@@ -147,6 +150,9 @@ func (e *Engine) compressAfterEmbed() bool {
 
 // checkOutput validates the platform and output configuration.
 func (e *Engine) checkOutput() error {
+	if err := e.checkIllumina(); err != nil {
+		return err
+	}
 	switch e.platform() {
 	case platformIllumina:
 	case platformONT:
@@ -230,6 +236,24 @@ func (e *Engine) headerFormatter() (func(r *rand.Rand, rec *seqread.Record) (nam
 		return fmt.Sprintf("%s:%d:HXXXXXX:%d:1101:%d:%d", sample, lane, rec.Batch, x, y),
 			fmt.Sprintf("%d:N:0:1", rec.Mate)
 	}, nil
+}
+
+// readTags returns the read-ID fingerprint fields appended to every header
+// comment ("\tXC:Z:<customer>\tXD:Z:<dataset>" without the leading tab), or
+// "" when read-ID fingerprinting is off.
+func (e *Engine) readTags() string {
+	fp := e.config.Fingerprinting
+	if !fp.Enable {
+		return ""
+	}
+	var cust, ds string
+	if fp.CustomerFingerprint {
+		cust = e.customerID
+	}
+	if fp.DatasetFingerprint {
+		ds = e.config.DatasetID
+	}
+	return strings.Join(fingerprinting.ReadTags(cust, ds), "\t")
 }
 
 // maxPhred returns the highest Phred score encoded in FASTQ output.

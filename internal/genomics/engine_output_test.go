@@ -24,7 +24,7 @@ import (
 
 // ontHeader matches a MinKNOW header; the sample_id field may carry
 // read-ID fingerprint tags appended to the line.
-var ontHeader = regexp.MustCompile(`^@([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}) runid=([0-9a-f]{40}) read=(\d+) ch=(\d+) start_time=(\S+) flow_cell_id=(\S+) protocol_group_id=(\S+) sample_id=(\S+)$`)
+var ontHeader = regexp.MustCompile(`^@([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}) runid=([0-9a-f]{40}) read=(\d+) ch=(\d+) start_time=(\S+) flow_cell_id=(\S+) protocol_group_id=(\S+) sample_id=(\S+)(\tRG:Z:\S+)?(\tXC:Z:\S+)?(\tXD:Z:\S+)?$`)
 
 func ontConfig(dir string) types.SequencerConfig {
 	return types.SequencerConfig{
@@ -356,8 +356,12 @@ func TestONT_ReadIDFingerprintKeepsReadID(t *testing.T) {
 		t.Fatal(err)
 	}
 	recs := parseFASTQ(t, string(readMaybeGzip(t, e.GeneratedFiles()[0])))
-	if !strings.Contains(recs[0].header, "ds9") {
-		t.Fatalf("header %q lacks the dataset tag", recs[0].header)
+	// The tags are SAM-style fields after the MinKNOW comment (#27): the
+	// read ID and sample_id are unchanged.
+	for _, r := range recs {
+		if !strings.HasSuffix(r.header, " sample_id=ontS\tXC:Z:cust7\tXD:Z:ds9") {
+			t.Fatalf("header %q: want sample_id=ontS then the XC/XD tags", r.header)
+		}
 	}
 	checkONTRun(t, e, c, e.GeneratedFiles(), filepath.Join(c.OutputDir, nanopore.SummaryFileName))
 }

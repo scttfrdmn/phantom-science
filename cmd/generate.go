@@ -75,7 +75,11 @@ func init() {
 	f.Int("read-length-median", 0, "Median read length for the lognormal distribution")
 	f.Float64("read-length-mean", 0, "Mean read length")
 	f.Float64("read-length-sd", 0, "Read-length standard deviation")
-	f.String("basecaller-tier", "", "ONT basecaller tier for the error model: sup, hac or fast")
+	f.String("basecaller-tier", "", "ONT basecaller tier for the error model: sup, hac or fast (platform ont only)")
+	f.String("quality-model", "", "Illumina quality model: binned (default; RTA3 bins Q2/Q12/Q23/Q37) or linear (base_quality - cycle*quality_decay)")
+	f.String("illumina-errors", "", "Illumina sequencing errors: quality (default for binned; substitutions at 10^(-Q/10), Q2 as N) or none")
+	f.Float64("insert-size-mean", 0, "Mean paired-end insert (fragment) size in bases (default 350)")
+	f.Float64("insert-size-sd", 0, "Standard deviation of the paired-end insert size (default 50)")
 	f.String("compress", "", "Output compression: none (default) or gzip")
 	addScaleFlags(f)
 	f.Int64("total-reads", 0, "Target number of reads (read pairs for paired-end) per flow cell, replacing total_batches")
@@ -224,6 +228,18 @@ func applyGenerateFlags(cmd *cobra.Command, config *types.SequencerConfig) error
 	}
 	if set("basecaller-tier") {
 		config.ErrorModel.Tier, _ = flags.GetString("basecaller-tier")
+	}
+	if set("quality-model") {
+		config.Illumina.QualityModel, _ = flags.GetString("quality-model")
+	}
+	if set("illumina-errors") {
+		config.Illumina.Errors, _ = flags.GetString("illumina-errors")
+	}
+	if set("insert-size-mean") {
+		config.Illumina.InsertSize.Mean, _ = flags.GetFloat64("insert-size-mean")
+	}
+	if set("insert-size-sd") {
+		config.Illumina.InsertSize.SD, _ = flags.GetFloat64("insert-size-sd")
 	}
 	if set("compress") {
 		config.Output.Compression, _ = flags.GetString("compress")

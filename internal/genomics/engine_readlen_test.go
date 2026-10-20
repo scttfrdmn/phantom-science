@@ -126,41 +126,64 @@ func TestReadLen_EnginePaired(t *testing.T) {
 	}
 }
 
-// Fixed mode is byte-identical to the output before #10 (hashes recorded
-// from main at 88fe7e5).
+// Fixed mode is byte-identical to the output before #10. Since #27 this
+// holds for single-end output with quality_model linear (goldenConfig) and
+// for ONT: their hashes below were recorded from main at fb54e79, before
+// #27, and are unchanged. Paired-end output changed in #27 (each pair is now
+// the two ends of one fragment), so its hashes were re-pinned then.
 func TestReadLen_FixedModeUnchanged(t *testing.T) {
-	c := goldenConfig(t.TempDir())
-	c.Seed = 3
-	c.PairedEnd = true
 	sum := func(b []byte) string { h := sha256.Sum256(b); return hex.EncodeToString(h[:]) }
-	const wantStream = "ca0fde4f46c349a7bb79d03af3eca2862950683d7020238ac0f41ac05532fd62"
-	for _, dist := range []string{"", types.ReadLengthFixed} {
-		c.ReadLengthDistribution.Dist = dist
-		got := sum(streamOutput(t, c, GenerateOpts{SampleID: "s1", Variants: []VariantRecord{{Ref: "AC", Alt: "A", Freq: 0.5}}}))
-		if got != wantStream {
-			t.Errorf("dist %q: stream output hash %s, want %s", dist, got, wantStream)
+	filesHash := func(files map[string][]byte) string {
+		names := make([]string, 0, len(files))
+		for n := range files {
+			names = append(names, n)
+		}
+		sort.Strings(names)
+		h := sha256.New()
+		for _, n := range names {
+			h.Write([]byte(n))
+			h.Write(files[n])
+		}
+		return hex.EncodeToString(h.Sum(nil))
+	}
+	blind := GenerateOpts{SampleID: "s1", Variants: []VariantRecord{{Ref: "AC", Alt: "A", Freq: 0.5}}}
+	region := GenerateOpts{RefRegion: &GenomicRegion{Chromosome: "chr1", Start: 1000, End: 5000},
+		Variants: []VariantRecord{{Chromosome: "chr1", Position: 3000, Ref: "ACGT", Alt: "A", Freq: 0.5}}}
+	for _, tc := range []struct {
+		name                          string
+		paired                        bool
+		wantStream, wantRegion, files string
+	}{
+		{"single-end linear (pre-#27)", false,
+			"80f61e1c8210aad398d38c1298467776d4c293aabd6ab3acbcf51a1652c2622b",
+			"219f343a7cd54353cff58649b79e3f6768d6d1d0d3b87cadc811ae780cbe0881",
+			"214c36b82f0b8a0a5238ba06373b6f1b8d36a79608e1978e0d23b4961c429096"},
+		{"paired linear (re-pinned in #27: fragment model)", true,
+			"7846ad0f69f85a4bd223ba04efdaa416864e522bb3eae67194833476d5589f3d",
+			"49eca4018346fbd5de77f7f880f4a4e67f4a64a4f3ddb7f5cd92d997acfadc6a",
+			"a29ed34b62fc0d77a2aa9bee27aac59910cd3862a523f2bfdd52e19e709c9631"},
+	} {
+		c := goldenConfig(t.TempDir())
+		c.Seed = 3
+		c.PairedEnd = tc.paired
+		for _, dist := range []string{"", types.ReadLengthFixed} {
+			c.ReadLengthDistribution.Dist = dist
+			if got := sum(streamOutput(t, c, blind)); got != tc.wantStream {
+				t.Errorf("%s, dist %q: stream output hash %s, want %s", tc.name, dist, got, tc.wantStream)
+			}
+		}
+		if got := sum(streamOutput(t, c, region)); got != tc.wantRegion {
+			t.Errorf("%s: region stream output hash %s, want %s", tc.name, got, tc.wantRegion)
+		}
+		if got := filesHash(fileOutputs(t, c)); got != tc.files {
+			t.Errorf("%s: file output hash %s, want %s", tc.name, got, tc.files)
 		}
 	}
-	region := &GenomicRegion{Chromosome: "chr1", Start: 1000, End: 5000}
-	const wantRegion = "6932a4f95a3a73241ae9b4918000c00af6242788b89ea3228bacc3690a5e74a8"
-	got := sum(streamOutput(t, c, GenerateOpts{RefRegion: region, Variants: []VariantRecord{{Chromosome: "chr1", Position: 3000, Ref: "ACGT", Alt: "A", Freq: 0.5}}}))
-	if got != wantRegion {
-		t.Errorf("region stream output hash %s, want %s", got, wantRegion)
-	}
-	files := fileOutputs(t, c)
-	names := make([]string, 0, len(files))
-	for n := range files {
-		names = append(names, n)
-	}
-	sort.Strings(names)
-	h := sha256.New()
-	for _, n := range names {
-		h.Write([]byte(n))
-		h.Write(files[n])
-	}
-	const wantFiles = "cfe66cc418a7100e234f03a1a0c2c0a92d54d4b694669fc66b4d721dbebb3748"
-	if got := hex.EncodeToString(h.Sum(nil)); got != wantFiles {
-		t.Errorf("file output hash %s, want %s", got, wantFiles)
+	o := tierConfig(t, "hac")
+	o.ReadsPerBatch = 20
+	const wantONT = "d3125bb4bf68bcf2689b0216a9dd5ba3554bab049ca02dc37385c1b7ad8767aa" // pre-#27
+	if got := sum(streamOutput(t, o, GenerateOpts{})); got != wantONT {
+		t.Errorf("ONT tier stream output hash %s, want %s", got, wantONT)
 	}
 }
 

@@ -50,8 +50,10 @@ func TestSeed_StreamByteIdentical(t *testing.T) {
 	c.PairedEnd = true
 	c.Seed = 42
 	opts := GenerateOpts{
-		SampleID:  "s1",
-		RefRegion: &GenomicRegion{Chromosome: "chr2", Start: 1000, End: 1400},
+		SampleID: "s1",
+		// Paired reads are fragments of 350 ± 50 bases (#27): the region
+		// must hold one.
+		RefRegion: &GenomicRegion{Chromosome: "chr2", Start: 1000, End: 2000},
 		Variants: []VariantRecord{
 			{Chromosome: "chr2", Position: 1100, Ref: "A", Alt: "T", Freq: 0.5},
 			{Chromosome: "chr2", Position: 1150, Ref: "ACGT", Alt: "A", Freq: 0.3},
@@ -203,6 +205,28 @@ func TestNewEngine_HMMMessagesNotOnStdout(t *testing.T) {
 	}
 }
 
+// NewEngineLog sends every diagnostic (here the HMM load warning and the
+// drawn seed) to its writer, so the TUI can keep them off the terminal; a
+// nil writer discards them.
+func TestNewEngineLog_DiagnosticsToWriter(t *testing.T) {
+	c := goldenConfig(t.TempDir())
+	c.HMMModelPath = filepath.Join(t.TempDir(), "missing.hmm.json")
+	var log bytes.Buffer
+	e := NewEngineLog(c, &log)
+	if err := e.GenerateToWriter(io.Discard, GenerateOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	e.Close()
+	if s := log.String(); !strings.Contains(s, "HMM model load failed") || !strings.Contains(s, "--seed ") {
+		t.Errorf("log %q lacks the HMM warning or the drawn seed", s)
+	}
+	e = NewEngineLog(c, nil)
+	defer e.Close()
+	if err := e.GenerateToWriter(io.Discard, GenerateOpts{}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // The #16 settings are implemented: none returns ErrNotImplemented, and
 // Workers does not change streamed output.
 func TestScaleSettings_Implemented(t *testing.T) {
@@ -254,8 +278,13 @@ func TestUnknownValues_Rejected(t *testing.T) {
 	for name, edit := range map[string]func(*types.SequencerConfig){
 		"platform": func(c *types.SequencerConfig) { c.Platform = "pacbio-hifi" },
 		"dist":     func(c *types.SequencerConfig) { c.ReadLengthDistribution.Dist = "weibull" },
-		"tier":     func(c *types.SequencerConfig) { c.ErrorModel.Tier = "ultra" },
-		"compress": func(c *types.SequencerConfig) { c.Output.Compression = "zstd" },
+		"tier": func(c *types.SequencerConfig) {
+			c.Platform, c.Illumina, c.ErrorModel.Tier = "ont", types.IlluminaSpec{}, "ultra"
+		},
+		"illumina quality": func(c *types.SequencerConfig) { c.Illumina.QualityModel = "rta2" },
+		"illumina errors":  func(c *types.SequencerConfig) { c.Illumina.Errors = "indel" },
+		"insert dist":      func(c *types.SequencerConfig) { c.Illumina.InsertSize.Dist = "uniform" },
+		"compress":         func(c *types.SequencerConfig) { c.Output.Compression = "zstd" },
 	} {
 		c := goldenConfig(t.TempDir())
 		edit(&c)

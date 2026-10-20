@@ -50,7 +50,7 @@ func writeGenerateConfig(t *testing.T, readLength, reads int) string {
 
 func TestGenerateCommand_NewFlags(t *testing.T) {
 	for _, name := range []string{"seed", "platform", "read-length-dist", "read-length-n50", "read-length-median",
-		"read-length-mean", "read-length-sd", "basecaller-tier", "compress", "region", "total-bases", "total-reads", "workers", "flow-cells", "output"} {
+		"read-length-mean", "read-length-sd", "basecaller-tier", "quality-model", "illumina-errors", "insert-size-mean", "insert-size-sd", "compress", "region", "total-bases", "total-reads", "workers", "flow-cells", "output"} {
 		if generateCmd.Flags().Lookup(name) == nil {
 			t.Errorf("generateCmd should have --%s flag", name)
 		}
@@ -124,6 +124,7 @@ func TestGenerateStdout_PositionedVCF(t *testing.T) {
 	}
 	setGenerateFlags(t, map[string]string{
 		"config": writeGenerateConfig(t, readLength, 400), "stdout": "true", "variants": vcf, "seed": "11",
+		"illumina-errors": "none", // exact alleles: no sequencing errors
 	})
 	var out bytes.Buffer
 	if err := runGenerate(generateCmd, &out); err != nil {
