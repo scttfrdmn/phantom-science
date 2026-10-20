@@ -8,12 +8,14 @@ import (
 	"flag"
 	"fmt"
 	"go/ast"
+	"go/constant"
 	"go/format"
 	"go/importer"
 	"go/parser"
 	"go/token"
 	"go/types"
 	"io"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -24,8 +26,10 @@ import (
 
 // outputPackages are the packages whose floating-point arithmetic affects
 // generated output (sequences, qualities, read lengths, signal, expression,
-// genotypes). Keep this list in step with the generation path.
+// genotypes), and internal/detmath, which computes their elementary
+// functions. Keep this list in step with the generation path.
 var outputPackages = []string{
+	"./internal/detmath",
 	"./internal/genomics",
 	"./internal/genomics/authenticity",
 	"./internal/genomics/clinical",
@@ -269,7 +273,7 @@ func (c *checker) floatType(e ast.Expr) (types.Type, bool) {
 func (c *checker) visit(n ast.Node, stack []ast.Node) {
 	switch e := n.(type) {
 	case *ast.BinaryExpr:
-		if e.Op != token.MUL || c.isConst(e) {
+		if c.isConst(e) || (e.Op != token.MUL && !c.isPow2Quotient(e)) {
 			return
 		}
 		typ, ok := c.floatType(e)
@@ -277,6 +281,9 @@ func (c *checker) visit(n ast.Node, stack []ast.Node) {
 			return
 		}
 		if why := c.unsafeConsumer(stack); why != "" {
+			if e.Op == token.QUO {
+				why = "quotient by a power of two is compiled as a product, and " + why
+			}
 			c.report(e, typ, why, stack)
 		}
 	case *ast.AssignStmt:
@@ -337,6 +344,9 @@ func (c *checker) unsafeConsumer(stack []ast.Node) string {
 		return ""
 	case *ast.CallExpr:
 		if c.isConversion(p) {
+			if c.isUnsignedConversion(p) {
+				return "product is converted to an unsigned integer, which ppc64, riscv64 and loong64 lower to a subtract that may be fused"
+			}
 			return ""
 		}
 		if c.isSafeCallee(p) {
@@ -388,9 +398,42 @@ func (c *checker) unsafeConsumer(stack []ast.Node) string {
 	return "product escapes the expression"
 }
 
+// isPow2Quotient reports whether e is x / c for a constant c = ±2^k. The
+// compiler rewrites such a quotient as x * (1/c), an ordinary product that
+// it can then fuse into an add.
+func (c *checker) isPow2Quotient(e *ast.BinaryExpr) bool {
+	if e.Op != token.QUO {
+		return false
+	}
+	tv, ok := c.p.info.Types[e.Y]
+	if !ok || tv.Value == nil {
+		return false
+	}
+	f, ok := constant.Float64Val(constant.ToFloat(tv.Value))
+	if !ok || f == 0 || math.IsInf(f, 0) {
+		return false
+	}
+	frac, _ := math.Frexp(math.Abs(f))
+	return frac == 0.5
+}
+
 func (c *checker) isConversion(call *ast.CallExpr) bool {
 	tv, ok := c.p.info.Types[call.Fun]
 	return ok && tv.IsType()
+}
+
+// isUnsignedConversion reports whether call converts to an unsigned integer
+// type. A float-to-uint64 conversion is not a rounding barrier: where the
+// hardware has no direct instruction the compiler subtracts 2^63 first, and
+// that subtract can absorb the product (seen as FMSUB on ppc64le, riscv64
+// and loong64). Convert the product to float64 first.
+func (c *checker) isUnsignedConversion(call *ast.CallExpr) bool {
+	tv, ok := c.p.info.Types[call.Fun]
+	if !ok || !tv.IsType() {
+		return false
+	}
+	b, ok := tv.Type.Underlying().(*types.Basic)
+	return ok && b.Info()&types.IsUnsigned != 0
 }
 
 // isSafeCallee reports whether a product passed to call cannot be fused by
@@ -458,7 +501,10 @@ func (c *checker) readIsUnsafe(stack []ast.Node) bool {
 		if p.Fun == child {
 			return false
 		}
-		return !c.isConversion(p) && !c.isSafeCallee(p)
+		if c.isConversion(p) {
+			return c.isUnsignedConversion(p)
+		}
+		return !c.isSafeCallee(p)
 	case *ast.AssignStmt:
 		switch p.Tok {
 		case token.ADD_ASSIGN, token.SUB_ASSIGN:
@@ -594,7 +640,13 @@ func f(a, b, c float64, s []float64, q pA) (float64, float64) {
 	r9 := k + c   // safe: constant product
 	i := 3*4 + 1  // safe: integer
 	_ = ok
-	_, _, _, _, _, _, _, _, _, _, _ = r1, r2, r3, r4, r5, r7, r8, q2, r9, i, acc
+	j := uint64(a * b)          // flag: unsigned conversion
+	j2 := uint64(float64(a * b)) // safe
+	j3 := int64(a * b)           // safe: signed conversion
+	h1 := a/2 + c                // flag: compiled as a*0.5 + c
+	h2 := a/3 + c                // safe: a true division
+	h3 := float64(a/2) + c       // safe
+	_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _ = r1, r2, r3, r4, r5, r7, r8, q2, r9, i, acc, j, j2, j3, h1, h2, h3
 	return r6, a * b // flag: returned
 }
 `
@@ -621,7 +673,7 @@ func f(a, b, c float64, s []float64, q pA) (float64, float64) {
 	for _, f := range checkPackage(t, p) {
 		got = append(got, f.pos.Line)
 	}
-	want := []int{10, 11, 14, 16, 18, 22, 24, 25, 31}
+	want := []int{10, 11, 14, 16, 18, 22, 24, 25, 30, 33, 37}
 	if fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Errorf("flagged lines %v, want %v", got, want)
 	}

@@ -52,6 +52,22 @@ jobs:
       - name: go test
         run: CGO_ENABLED=0 go test -tags '!release' ./... -timeout 15m
 
+  # The same tests on arm64, where the compiler fuses multiply-adds and the
+  # math package's assembly differs from amd64. The pinned output hashes
+  # (TestCrossArchGolden, internal/detmath TestPinnedBits and the engine and
+  # signal pins) must pass unchanged on both, so any dependence of output on
+  # the CPU architecture fails CI (docs/CHARTER.md, principle 4).
+  test-nocgo-arm64:
+    name: Test (CGO_ENABLED=0, arm64)
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: go test
+        run: CGO_ENABLED=0 go test -tags '!release' ./... -timeout 15m
+
   release-build:
     name: Release build
     runs-on: ubuntu-latest
