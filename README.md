@@ -427,6 +427,7 @@ TUI: `generate` writes as fast as it can, and `batch_interval` has no effect.
 
 ## Documentation
 
+- [docs/CHARTER.md](docs/CHARTER.md): the principles that decide design questions (data fidelity, fingerprints that never alter the data, measured claims)
 - [docs/SCIENTIFIC_VALIDATION.md](docs/SCIENTIFIC_VALIDATION.md): the statistics, the HMM and the coalescent, and what is and is not validated
 - [docs/development/DEVELOPMENT.md](docs/development/DEVELOPMENT.md): building, testing and contributing
 - [docs/VERSIONING_AND_CI.md](docs/VERSIONING_AND_CI.md): versioning, changelog and CI
