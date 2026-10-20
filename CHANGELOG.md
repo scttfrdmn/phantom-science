@@ -126,6 +126,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The TUI's run timer printed a summary into the terminal (#27).
 - Paired-end mates could carry different alleles at a planted variant (#27).
 
+### Security
+- Known limitation: with the default binned Illumina qualities, the quality-score fingerprint moves 360–412 qualities per file off the four bins (for example Q38 `G`), so fingerprinted binned files are detectable from their quality histogram. Bin-aware embedding is requested in scttfrdmn/stegano#107; `illumina.quality_model: linear` avoids it (#27).
+
 ## [0.9.0] - 2026-10-19
 
 ### Added

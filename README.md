@@ -290,6 +290,14 @@ The rules:
   hold the fingerprint (the file is removed). With a short customer ID an
   encrypted fingerprint fits in six 150 bp reads or eight 100 bp reads. The
   minimum grows with the fingerprint's length.
+- **Binned qualities:** embedding changes a few hundred qualities per file
+  by ±1, all in the first records. With the default binned Illumina qualities
+  these become values outside the four bins (for example Q38 `G`), which real
+  NovaSeq data never contains, so a fingerprinted binned file can be spotted
+  by its quality histogram. Measured on 2×150 output: 360–412 changed values
+  per 20,000-read file. Bin-aware embedding is requested in
+  [scttfrdmn/stegano#107](https://github.com/scttfrdmn/stegano/issues/107);
+  `illumina.quality_model: linear` avoids the problem.
 - **gzip:** the fingerprint is embedded before compression. `verify` and
   `validate` read `.fastq.gz`.
 - **Streaming:** `generate --stdout` cannot carry a fingerprint and refuses to
