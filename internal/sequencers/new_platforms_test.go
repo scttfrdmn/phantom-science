@@ -1,14 +1,11 @@
 // Package sequencers holds only tests. They check the per-platform timing
 // profiles in internal/timing (run time, files per hour, throughput) and
 // the timing simulator's output estimates for PacBio Revio, MGI
-// DNBSEQ-T20x2, Element AVITI and ONT PromethION 24. Some tests only assert
-// on values written into a literal SequencerConfig in the test itself and
-// so exercise no production code.
+// DNBSEQ-T20x2, Element AVITI and ONT PromethION 24.
 package sequencers
 
 import (
 	"github.com/scttfrdmn/phantom-science/internal/timing"
-	"github.com/scttfrdmn/phantom-science/pkg/types"
 	"testing"
 	"time"
 )
@@ -65,68 +62,6 @@ func TestMGIDNBSeqTiming(t *testing.T) {
 	}
 
 	t.Logf("MGI DNBSEQ-T20×2 timing validation passed: %+v", timingProfile)
-}
-
-func TestPacBioRevioConfiguration(t *testing.T) {
-	// Test PacBio Revio configuration loading and validation
-	config := types.SequencerConfig{
-		SequencerModel: "PacBio Revio",
-		FlowCellType:   "SMRT",
-		SampleName:     "Test_HiFi_Sample",
-		Lane:           1,
-		ReadLength:     17500, // Average HiFi read length
-		PairedEnd:      false, // HiFi reads are single-end
-		BaseQuality:    30,    // Q30 median
-		Q30Percentage:  90.0,  // 90% Q30+
-		TotalBatches:   10,
-		ReadsPerBatch:  100000,
-	}
-
-	// Validate configuration makes sense for PacBio
-	if config.ReadLength < 10000 {
-		t.Errorf("PacBio read length should be >10kb, got %d", config.ReadLength)
-	}
-
-	if config.PairedEnd {
-		t.Error("PacBio HiFi reads should be single-end")
-	}
-
-	if config.BaseQuality < 25 {
-		t.Errorf("PacBio HiFi should have high quality, got Q%d", config.BaseQuality)
-	}
-
-	t.Logf("PacBio Revio configuration validation passed")
-}
-
-func TestMGIDNBSeqConfiguration(t *testing.T) {
-	// Test MGI DNBSEQ-T20×2 configuration loading and validation
-	config := types.SequencerConfig{
-		SequencerModel: "DNBSEQ-T20x2",
-		FlowCellType:   "DNB",
-		SampleName:     "Test_Ultra_High_Throughput",
-		Lane:           1,
-		ReadLength:     150,     // PE150
-		PairedEnd:      true,    // Paired-end sequencing
-		BaseQuality:    30,      // Q30 initial
-		Q30Percentage:  85.0,    // 85% Q30+
-		TotalBatches:   100,     // High throughput
-		ReadsPerBatch:  1000000, // 1M reads per batch
-	}
-
-	// Validate configuration makes sense for MGI ultra-high throughput
-	if config.ReadLength != 150 && config.ReadLength != 100 {
-		t.Errorf("MGI should use PE100 or PE150, got %d", config.ReadLength)
-	}
-
-	if !config.PairedEnd {
-		t.Error("MGI DNBSEQ typically uses paired-end sequencing")
-	}
-
-	if config.ReadsPerBatch < 500000 {
-		t.Errorf("MGI ultra-high throughput should have high reads per batch, got %d", config.ReadsPerBatch)
-	}
-
-	t.Logf("MGI DNBSEQ-T20×2 configuration validation passed")
 }
 
 func TestTimeCompressionForNewPlatforms(t *testing.T) {
@@ -213,41 +148,6 @@ func TestPlatformComparison(t *testing.T) {
 		t.Logf("%-15s %-8s: %2dh runtime, %6.0f MB/s, %d files/hour",
 			platform.model, platform.flowCellType, timingProfile.TotalRunTimeHours,
 			throughputMBps, timingProfile.FilesPerHour)
-	}
-}
-
-func TestReadLengthValidation(t *testing.T) {
-	// Test that read length validation works for different platform types
-	testCases := []struct {
-		platform    string
-		readLength  int
-		shouldPass  bool
-		description string
-	}{
-		{"PacBio Revio", 17500, true, "PacBio typical HiFi read"},
-		{"PacBio Revio", 150, false, "PacBio with short read"},
-		{"DNBSEQ-T20x2", 150, true, "MGI typical PE150"},
-		{"DNBSEQ-T20x2", 20000, false, "MGI with long read"},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.description, func(t *testing.T) {
-			// No production code validates read length per platform; this
-			// only checks the consistency of the table above.
-			isLongRead := tc.readLength > 1000
-			isPacBio := tc.platform == "PacBio Revio"
-
-			if isPacBio && !isLongRead && tc.shouldPass {
-				t.Error("PacBio should require long reads")
-			}
-
-			if !isPacBio && isLongRead && tc.shouldPass {
-				t.Error("Short-read platforms should not use long reads")
-			}
-
-			t.Logf("Read length validation: %s with %d bp reads: %v",
-				tc.platform, tc.readLength, tc.shouldPass)
-		})
 	}
 }
 

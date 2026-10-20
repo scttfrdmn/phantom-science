@@ -4,428 +4,224 @@
 package main
 
 import (
+	"bytes"
+	"encoding/csv"
+	"encoding/json"
 	"math"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
-	"time"
 
 	phantomtesting "github.com/scttfrdmn/phantom-science/internal/testing"
 )
 
-func TestCalculateMean_Empty(t *testing.T) {
-	if got := calculateMean([]float64{}); got != 0.0 {
-		t.Errorf("calculateMean([]) = %f, want 0.0", got)
+func TestParsePlatformList(t *testing.T) {
+	if got := parsePlatformList("all"); len(got) != 7 {
+		t.Errorf("all: %d platforms, want 7", len(got))
+	}
+	if got := parsePlatformList("illumina"); len(got) != 3 {
+		t.Errorf("illumina: %d platforms, want 3", len(got))
+	}
+	if got := parsePlatformList("novaseq, illumina,novaseq"); len(got) != 3 || got[0] != phantomtesting.IlluminaNovaSeq6000 {
+		t.Errorf("duplicates: %v", got)
+	}
+	if got := parsePlatformList("nonsense"); len(got) != 0 {
+		t.Errorf("nonsense: %v", got)
 	}
 }
 
-func TestCalculateMean_Single(t *testing.T) {
-	if got := calculateMean([]float64{5.0}); got != 5.0 {
-		t.Errorf("calculateMean([5.0]) = %f, want 5.0", got)
+func TestValidateArgs(t *testing.T) {
+	ok := &CommandLineArgs{platforms: "novaseq", outputDir: t.TempDir(), report: true, seed: 1}
+	if err := validateArgs(ok); err != nil {
+		t.Errorf("valid args: %v", err)
 	}
-}
-
-func TestCalculateMean_Multiple(t *testing.T) {
-	got := calculateMean([]float64{1.0, 2.0, 3.0, 4.0})
-	if math.Abs(got-2.5) > 1e-9 {
-		t.Errorf("calculateMean([1,2,3,4]) = %f, want 2.5", got)
+	bad := []*CommandLineArgs{
+		{platforms: "novaseq", report: true, seed: 1},
+		{platforms: "bogus", seed: 1},
+		{platforms: "novaseq", seed: 0},
+		{platforms: "novaseq", seed: 1, realFASTQ: filepath.Join(t.TempDir(), "missing.fastq")},
 	}
-}
-
-func TestCalculateStdDev_Empty(t *testing.T) {
-	if got := calculateStdDev([]float64{}, 0.0); got != 0.0 {
-		t.Errorf("calculateStdDev([], 0) = %f, want 0.0", got)
-	}
-}
-
-func TestCalculateStdDev_AllSame(t *testing.T) {
-	values := []float64{5.0, 5.0, 5.0}
-	got := calculateStdDev(values, 5.0)
-	if got != 0.0 {
-		t.Errorf("calculateStdDev([5,5,5], 5.0) = %f, want 0.0", got)
-	}
-}
-
-func TestParsePlatformList_All(t *testing.T) {
-	platforms := parsePlatformList("all")
-	if len(platforms) == 0 {
-		t.Error("parsePlatformList(all) returned empty list")
-	}
-}
-
-func TestParsePlatformList_Illumina(t *testing.T) {
-	platforms := parsePlatformList("illumina")
-	if len(platforms) != 3 {
-		t.Errorf("parsePlatformList(illumina) = %d platforms, want 3", len(platforms))
-	}
-}
-
-func TestParsePlatformList_PacBio(t *testing.T) {
-	platforms := parsePlatformList("pacbio")
-	if len(platforms) != 1 || platforms[0] != phantomtesting.PacBioRevio {
-		t.Errorf("parsePlatformList(pacbio) = %v", platforms)
-	}
-}
-
-func TestParsePlatformList_NoDuplicates(t *testing.T) {
-	platforms := parsePlatformList("all,novaseq")
-	seen := make(map[phantomtesting.SequencingPlatform]bool)
-	for _, p := range platforms {
-		if seen[p] {
-			t.Errorf("duplicate platform %q in result", p)
+	for i, a := range bad {
+		if err := validateArgs(a); err == nil {
+			t.Errorf("case %d: want error for %+v", i, a)
 		}
-		seen[p] = true
-	}
-}
-
-func TestParsePopulationList_All(t *testing.T) {
-	pops := parsePopulationList("all")
-	if len(pops) == 0 {
-		t.Error("parsePopulationList(all) returned empty list")
-	}
-}
-
-func TestParsePopulationList_African(t *testing.T) {
-	pops := parsePopulationList("african")
-	if len(pops) != 3 {
-		t.Errorf("parsePopulationList(african) = %d populations, want 3", len(pops))
-	}
-}
-
-func TestParsePopulationList_SpecificCode(t *testing.T) {
-	pops := parsePopulationList("yri")
-	if len(pops) != 1 || pops[0] != "YRI" {
-		t.Errorf("parsePopulationList(yri) = %v, want [YRI]", pops)
-	}
-}
-
-func TestParsePopulationList_NoDuplicates(t *testing.T) {
-	pops := parsePopulationList("all,african")
-	seen := make(map[string]bool)
-	for _, p := range pops {
-		if seen[p] {
-			t.Errorf("duplicate population %q in result", p)
-		}
-		seen[p] = true
-	}
-}
-
-func TestCalculateConsistencyScore_SinglePlatform(t *testing.T) {
-	scores := map[phantomtesting.SequencingPlatform][]float64{
-		phantomtesting.IlluminaNovaSeq6000: {80.0, 82.0, 81.0},
-	}
-	got := calculateConsistencyScore(scores)
-	if got != 100.0 {
-		t.Errorf("calculateConsistencyScore(single platform) = %f, want 100.0", got)
-	}
-}
-
-func TestCalculateConsistencyScore_Empty(t *testing.T) {
-	got := calculateConsistencyScore(map[phantomtesting.SequencingPlatform][]float64{})
-	if got != 100.0 {
-		t.Errorf("calculateConsistencyScore(empty) = %f, want 100.0", got)
-	}
-}
-
-func TestCalculateAuthenticityVariance_Empty(t *testing.T) {
-	got := calculateAuthenticityVariance(map[phantomtesting.SequencingPlatform][]float64{})
-	if got != 0.0 {
-		t.Errorf("calculateAuthenticityVariance(empty) = %f, want 0.0", got)
-	}
-}
-
-func TestCalculateAuthenticityVariance_SingleScore(t *testing.T) {
-	scores := map[phantomtesting.SequencingPlatform][]float64{
-		phantomtesting.IlluminaNovaSeq6000: {80.0},
-	}
-	got := calculateAuthenticityVariance(scores)
-	if got != 0.0 {
-		t.Errorf("calculateAuthenticityVariance(single score) = %f, want 0.0", got)
-	}
-}
-
-func TestValidateArgs_EmptyOutputDir(t *testing.T) {
-	args := &CommandLineArgs{
-		outputDir:   "",
-		platforms:   "all",
-		populations: "all",
-	}
-	if err := validateArgs(args); err == nil {
-		t.Error("validateArgs with empty outputDir should return an error")
-	}
-}
-
-func TestValidateArgs_EmptyPlatforms(t *testing.T) {
-	args := &CommandLineArgs{
-		outputDir:   "/tmp",
-		platforms:   "invalid_platform",
-		populations: "all",
-	}
-	if err := validateArgs(args); err == nil {
-		t.Error("validateArgs with invalid platform should return an error")
-	}
-}
-
-func TestValidateArgs_Valid(t *testing.T) {
-	args := &CommandLineArgs{
-		outputDir:   "/tmp",
-		platforms:   "all",
-		populations: "all",
-	}
-	if err := validateArgs(args); err != nil {
-		t.Errorf("validateArgs with valid args should not return an error, got: %v", err)
-	}
-}
-
-func TestCalculateOverallScore_Empty(t *testing.T) {
-	results := &TestResults{
-		PlatformResults: map[phantomtesting.SequencingPlatform]*PlatformTestResult{},
-	}
-	got := calculateOverallScore(results)
-	if got != 0.0 {
-		t.Errorf("calculateOverallScore(empty) = %f, want 0.0", got)
-	}
-}
-
-func TestCalculateOverallScore_WithResult(t *testing.T) {
-	results := &TestResults{
-		PlatformResults: map[phantomtesting.SequencingPlatform]*PlatformTestResult{
-			phantomtesting.IlluminaNovaSeq6000: {
-				SuccessRate:         1.0,
-				AverageAuthenticity: 80.0,
-			},
-		},
-	}
-	got := calculateOverallScore(results)
-	if got <= 0 {
-		t.Errorf("calculateOverallScore with one result = %f, want > 0", got)
-	}
-}
-
-func TestCalculateConsistencyScore_TwoPlatforms(t *testing.T) {
-	scores := map[phantomtesting.SequencingPlatform][]float64{
-		phantomtesting.IlluminaNovaSeq6000: {80.0, 81.0, 80.5},
-		phantomtesting.IlluminaNextSeq2000: {80.0, 81.0, 80.5},
-	}
-	got := calculateConsistencyScore(scores)
-	if got < 90.0 {
-		t.Errorf("calculateConsistencyScore with similar scores = %f, want >= 90.0", got)
-	}
-}
-
-func TestCalculateAuthenticityVariance_MultipleScores(t *testing.T) {
-	scores := map[phantomtesting.SequencingPlatform][]float64{
-		phantomtesting.IlluminaNovaSeq6000: {80.0, 82.0},
-		phantomtesting.IlluminaNextSeq2000: {78.0, 81.0},
-	}
-	got := calculateAuthenticityVariance(scores)
-	if got < 0 {
-		t.Errorf("calculateAuthenticityVariance = %f, want >= 0", got)
-	}
-}
-
-func TestPrintBanner_NoCrash(t *testing.T) {
-	printBanner()
-}
-
-func TestPrintUsage_NoCrash(t *testing.T) {
-	printUsage()
-}
-
-func makeTestResults(overallScore float64) *TestResults {
-	return &TestResults{
-		Platforms:   []phantomtesting.SequencingPlatform{phantomtesting.IlluminaNovaSeq6000},
-		Populations: []string{"YRI", "CEU"},
-		PlatformResults: map[phantomtesting.SequencingPlatform]*PlatformTestResult{
-			phantomtesting.IlluminaNovaSeq6000: {
-				SuccessRate:         0.95,
-				AverageAuthenticity: 80.0,
-				TestDuration:        time.Second * 5,
-				ErrorCount:          1,
-			},
-		},
-		BenchmarkResults: map[phantomtesting.SequencingPlatform]*phantomtesting.PlatformBenchmark{},
-		OverallScore:     overallScore,
-		TotalDuration:    time.Second * 30,
-	}
-}
-
-func TestGenerateJSONReport_NoCrash(t *testing.T) {
-	results := makeTestResults(85.0)
-	args := &CommandLineArgs{outputDir: "/tmp/e2e_test"}
-	generateJSONReport(results, args)
-}
-
-func TestGenerateHTMLReport_NoCrash(t *testing.T) {
-	results := makeTestResults(85.0)
-	args := &CommandLineArgs{outputDir: "/tmp/e2e_test"}
-	generateHTMLReport(results, args)
-}
-
-func TestGenerateCSVSummary_NoCrash(t *testing.T) {
-	results := makeTestResults(85.0)
-	args := &CommandLineArgs{outputDir: "/tmp/e2e_test"}
-	generateCSVSummary(results, args)
-}
-
-func TestGenerateReports_NoCrash(t *testing.T) {
-	results := makeTestResults(85.0)
-	args := &CommandLineArgs{outputDir: "/tmp/e2e_test"}
-	generateReports(results, args)
-}
-
-func TestPrintTestSummary_Excellent(t *testing.T) {
-	results := makeTestResults(95.0) // >= 90 → EXCELLENT
-	args := &CommandLineArgs{outputDir: "/tmp", report: true}
-	printTestSummary(results, args)
-}
-
-func TestPrintTestSummary_Good(t *testing.T) {
-	results := makeTestResults(78.0) // >= 75 → GOOD
-	args := &CommandLineArgs{outputDir: "/tmp"}
-	printTestSummary(results, args)
-}
-
-func TestPrintTestSummary_Fair(t *testing.T) {
-	results := makeTestResults(65.0) // >= 60 → FAIR
-	args := &CommandLineArgs{outputDir: "/tmp"}
-	printTestSummary(results, args)
-}
-
-func TestPrintTestSummary_Poor(t *testing.T) {
-	results := makeTestResults(45.0) // < 60 → POOR
-	args := &CommandLineArgs{outputDir: "/tmp"}
-	printTestSummary(results, args)
-}
-
-func TestPrintTestSummary_WithCalibrationResults(t *testing.T) {
-	results := makeTestResults(85.0)
-	results.AuthenticityResults = &AuthenticityResult{
-		Platforms: map[phantomtesting.SequencingPlatform]*PlatformCalibration{
-			phantomtesting.IlluminaNovaSeq6000: gradeCalibration(0.5, 0.99, authHoldoutPerClass),
-		},
-	}
-	results.CrossPlatformResults = &CrossPlatformResult{
-		ConsistencyScore:     95.0,
-		AuthenticityVariance: 0.001,
-	}
-	args := &CommandLineArgs{outputDir: "/tmp"}
-	printTestSummary(results, args)
-}
-
-func TestPrintTestSummary_CalibrationError(t *testing.T) {
-	results := makeTestResults(50.0)
-	results.AuthenticityResults = &AuthenticityResult{
-		Platforms: map[phantomtesting.SequencingPlatform]*PlatformCalibration{
-			phantomtesting.IlluminaNovaSeq6000: {Err: "generate training data: boom"},
-		},
-	}
-	printTestSummary(results, &CommandLineArgs{})
-}
-
-// TestNullBand checks the band is 4 binomial standard deviations of the
-// holdout accuracy under H0: 4*sqrt(0.25/2000) ~= 0.0447 for 1000 reads/class.
-func TestNullBand(t *testing.T) {
-	got := nullBand(1000)
-	want := 4 * math.Sqrt(0.25/2000)
-	if math.Abs(got-want) > 1e-12 {
-		t.Errorf("nullBand(1000) = %f, want %f", got, want)
-	}
-	if nullBand(100) <= got {
-		t.Errorf("band should shrink as the holdout grows: nullBand(100)=%f, nullBand(1000)=%f", nullBand(100), got)
 	}
 }
 
 func TestGradeCalibration(t *testing.T) {
-	band := nullBand(authHoldoutPerClass)
-	tests := []struct {
-		name           string
-		null, control  float64
-		wantNull       bool
-		wantControl    bool
-		wantPlatformOK bool
+	band := 4 * math.Sqrt(0.25/1000)
+	cases := []struct {
+		null, control      float64
+		nullPass, ctrlPass bool
 	}{
-		{"chance and detected control", 0.5, 0.99, true, true, true},
-		{"just inside upper band", 0.5 + band*0.99, 0.95, true, true, true},
-		{"just inside lower band", 0.5 - band*0.99, 0.95, true, true, true},
-		// 0.06 from chance is more than 5 sigma out at n=2000.
-		{"outside band high", 0.56, 0.99, false, true, false},
-		{"outside band low", 0.44, 0.99, false, true, false},
-		// 0.55 is 0.05 from chance, beyond the 0.0447 band at n=2000.
-		{"just outside band", 0.55, 0.99, false, true, false},
-		{"control below threshold", 0.5, 0.85, true, false, false},
-		{"control exactly at threshold fails", 0.5, positiveControlMin, true, false, false},
-		{"both fail", 0.7, 0.5, false, false, false},
+		{0.5, 0.99, true, true},
+		{0.5 + band*0.99, 0.91, true, true},
+		{0.5 - band*1.01, 0.99, false, true},
+		{0.5, 0.9, true, false},
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			c := gradeCalibration(tt.null, tt.control, authHoldoutPerClass)
-			if c.NullPass != tt.wantNull {
-				t.Errorf("NullPass = %v, want %v (null=%.4f, band=%.4f)", c.NullPass, tt.wantNull, tt.null, c.Band)
-			}
-			if c.ControlPass != tt.wantControl {
-				t.Errorf("ControlPass = %v, want %v (control=%.4f)", c.ControlPass, tt.wantControl, tt.control)
-			}
-			if c.Passed() != tt.wantPlatformOK {
-				t.Errorf("Passed() = %v, want %v", c.Passed(), tt.wantPlatformOK)
-			}
-		})
+	for _, c := range cases {
+		g := gradeCalibration(1000, 1000, c.null, c.control)
+		if g.NullPass != c.nullPass || g.ControlPass != c.ctrlPass || g.Passed() != (c.nullPass && c.ctrlPass) {
+			t.Errorf("null %.4f control %.2f: pass %v/%v, want %v/%v", c.null, c.control, g.NullPass, g.ControlPass, c.nullPass, c.ctrlPass)
+		}
+		if math.Abs(g.Band-band) > 1e-15 {
+			t.Errorf("band %v, want %v", g.Band, band)
+		}
 	}
 }
 
-func TestAuthenticityResult_Passed(t *testing.T) {
-	ok := gradeCalibration(0.5, 0.99, authHoldoutPerClass)
-	bad := gradeCalibration(0.6, 0.99, authHoldoutPerClass)
-	errored := &PlatformCalibration{Err: "boom", NullPass: true, ControlPass: true}
+// quickArgs returns arguments for a fast run.
+func quickArgs(t *testing.T) *CommandLineArgs {
+	return &CommandLineArgs{outputDir: t.TempDir(), seed: 1, quick: true, benchmark: true, authenticity: true, report: true}
+}
 
-	if (&AuthenticityResult{}).Passed() {
-		t.Error("an empty result must not pass")
+// TestRunPlatform_Measured runs a modeled platform end to end and checks
+// the reported values come from the generated reads.
+func TestRunPlatform_Measured(t *testing.T) {
+	f := phantomtesting.NewE2EFramework()
+	args := quickArgs(t)
+	for _, p := range []phantomtesting.SequencingPlatform{phantomtesting.IlluminaNovaSeq6000, phantomtesting.ONTPromethION24} {
+		r := runPlatform(f, p, nil, args)
+		if r.Status != statusMeasured || len(r.Errors) != 0 {
+			t.Fatalf("%s: status %s, errors %v", p, r.Status, r.Errors)
+		}
+		c := f.CreatePlatformConfig(p, "CEU")
+		data, err := f.GenerateSyntheticData(c)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if *r.Reads != data.Stats {
+			t.Errorf("%s: reported reads %+v, want the seed-%d data's stats %+v", p, *r.Reads, c.Seed, data.Stats)
+		}
+		if r.Benchmark == nil || r.Benchmark.WallSeconds <= 0 || r.Benchmark.BasesPerSecond <= 0 {
+			t.Errorf("%s: benchmark %+v, want measured positive values", p, r.Benchmark)
+		}
+		if r.Calibration == nil || !r.Calibration.Passed() {
+			t.Errorf("%s: calibration %+v, want both checks passed", p, r.Calibration)
+		}
+		if r.Calibration != nil && r.Calibration.Holdout != quickCalibrationReads {
+			t.Errorf("%s: holdout %d, want %d (half of each %d-read set)", p, r.Calibration.Holdout, quickCalibrationReads, quickCalibrationReads)
+		}
+		if r.Realism != nil {
+			t.Errorf("%s: realism reported without real reads", p)
+		}
 	}
-	all := &AuthenticityResult{Platforms: map[phantomtesting.SequencingPlatform]*PlatformCalibration{
-		phantomtesting.IlluminaNovaSeq6000: ok,
-		phantomtesting.IlluminaMiSeq:       ok,
+}
+
+// TestRunPlatform_NotModeled checks that unmodeled platforms are reported
+// as such, with nothing measured and no failure.
+func TestRunPlatform_NotModeled(t *testing.T) {
+	f := phantomtesting.NewE2EFramework()
+	for _, p := range []phantomtesting.SequencingPlatform{phantomtesting.PacBioRevio, phantomtesting.MGI_DNBSEQ_T20x2, phantomtesting.ElementAVITI} {
+		r := runPlatform(f, p, nil, quickArgs(t))
+		if r.Status != statusNotModeled || r.Reads != nil || r.Benchmark != nil || r.Calibration != nil || r.failures() != 0 {
+			t.Errorf("%s: %+v, want not_modeled with nothing measured and no failure", p, r)
+		}
+	}
+}
+
+// TestRunAll_RealFASTQ checks the real-versus-generated comparison on a
+// supplied FASTQ (here generated reads, standing in for real ones).
+func TestRunAll_RealFASTQ(t *testing.T) {
+	f := phantomtesting.NewE2EFramework()
+	c := f.CreatePlatformConfig(phantomtesting.IlluminaNovaSeq6000, "CEU")
+	c.Seed, c.Reads = 99, 300
+	stand, err := f.GenerateSyntheticData(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "real.fastq")
+	if err := f.WriteFASTQ(phantomtesting.GCSkewed(stand, 0.7, 1), path, filepath.Join(dir, "r2.fastq")); err != nil {
+		t.Fatal(err)
+	}
+
+	args := quickArgs(t)
+	args.benchmark, args.authenticity, args.realFASTQ = false, false, path
+	r := runAll(f, []phantomtesting.SequencingPlatform{phantomtesting.IlluminaNovaSeq6000, phantomtesting.PacBioRevio}, args)
+	if r.Failures() != 0 {
+		t.Fatalf("failures %d: %+v", r.Failures(), r.Platforms[0].Errors)
+	}
+	x := r.Platforms[0].Realism
+	if x == nil || x.RealReads != 300 || x.Holdout != 300 {
+		t.Fatalf("realism %+v, want 300 real reads and 300 held out", x)
+	}
+	if x.Accuracy < 0.9 {
+		t.Errorf("GC-skewed stand-in vs generated reads: accuracy %.3f, want > 0.9", x.Accuracy)
+	}
+	if r.Platforms[1].Realism != nil {
+		t.Error("unmodeled platform has a realism result")
+	}
+
+	args.realFASTQ = filepath.Join(dir, "r2.fastq")
+	if err := os.WriteFile(args.realFASTQ, []byte("not fastq\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if r := runAll(f, []phantomtesting.SequencingPlatform{phantomtesting.IlluminaNovaSeq6000}, args); r.RealError == "" || r.Failures() != 1 {
+		t.Errorf("unreadable real FASTQ: RealError %q, failures %d; want an error counted as a failure", r.RealError, r.Failures())
+	}
+}
+
+func TestReportFailures(t *testing.T) {
+	r := &Report{Platforms: []*PlatformResult{
+		{Status: statusNotModeled},
+		{Status: statusMeasured, Calibration: gradeCalibration(1000, 1000, 0.5, 0.99)},
+		{Status: statusMeasured, Calibration: gradeCalibration(1000, 1000, 0.7, 0.99)},
+		{Status: statusError, Errors: []string{"generate: boom"}},
 	}}
-	if !all.Passed() || all.FailedCount() != 0 {
-		t.Errorf("all-pass result: Passed=%v FailedCount=%d", all.Passed(), all.FailedCount())
-	}
-	mixed := &AuthenticityResult{Platforms: map[phantomtesting.SequencingPlatform]*PlatformCalibration{
-		phantomtesting.IlluminaNovaSeq6000: ok,
-		phantomtesting.IlluminaMiSeq:       bad,
-		phantomtesting.PacBioRevio:         errored,
-	}}
-	if mixed.Passed() || mixed.FailedCount() != 2 {
-		t.Errorf("mixed result: Passed=%v FailedCount=%d, want false/2", mixed.Passed(), mixed.FailedCount())
+	if got := r.Failures(); got != 2 {
+		t.Errorf("Failures = %d, want 2 (one failed calibration, one error)", got)
 	}
 }
 
-// TestRunAuthenticityValidation runs the real calibration on one short-read
-// platform: the null comparison must land in the band and the GC-skewed
-// positive control must be detected.
-func TestRunAuthenticityValidation(t *testing.T) {
-	if testing.Short() {
-		t.Skip("generates 4000 reads per platform")
-	}
-	framework := phantomtesting.NewE2EFramework()
-	platform := phantomtesting.IlluminaNovaSeq6000
-	res := runAuthenticityValidation(framework, []phantomtesting.SequencingPlatform{platform}, nil, &CommandLineArgs{})
+// TestPrintAndWriteReports checks that the printed table carries the
+// measured values and no score or verdict, and that the report files are
+// written and parse.
+func TestPrintAndWriteReports(t *testing.T) {
+	f := phantomtesting.NewE2EFramework()
+	args := quickArgs(t)
+	r := runAll(f, []phantomtesting.SequencingPlatform{phantomtesting.IlluminaMiSeq, phantomtesting.ElementAVITI}, args)
 
-	c, ok := res.Platforms[platform]
-	if !ok {
-		t.Fatalf("no calibration result for %s", platform)
+	var out bytes.Buffer
+	printReport(&out, r, args)
+	text := out.String()
+	for _, want := range []string{"illumina_miseq", "NOT MODELED", "PASS", "No real reads supplied", "Failures: 0"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("output lacks %q:\n%s", want, text)
+		}
 	}
-	if c.Err != "" {
-		t.Fatalf("calibration error: %s", c.Err)
+	for _, banned := range []string{"Overall Score", "EXCELLENT", "FAIR", "GOOD:", "POOR", "Authenticity"} {
+		if strings.Contains(text, banned) {
+			t.Errorf("output contains heuristic %q", banned)
+		}
 	}
-	if !c.NullPass {
-		t.Errorf("null accuracy %.3f outside 0.5 ± %.3f", c.NullAccuracy, c.Band)
+
+	files, err := writeReports(r, args.outputDir)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !c.ControlPass {
-		t.Errorf("positive-control accuracy %.3f, want > %.2f", c.ControlAccuracy, positiveControlMin)
+	b, err := os.ReadFile(files[0])
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !res.Passed() {
-		t.Error("expected the calibration to pass")
+	var back Report
+	if err := json.Unmarshal(b, &back); err != nil {
+		t.Fatalf("JSON report does not parse: %v", err)
 	}
-	t.Logf("null %.3f ± %.3f, control %.3f", c.NullAccuracy, c.Band, c.ControlAccuracy)
+	if len(back.Platforms) != 2 || back.Platforms[0].Reads == nil || *back.Platforms[0].Reads != *r.Platforms[0].Reads {
+		t.Errorf("JSON report platforms %+v do not match the run", back.Platforms)
+	}
+	fh, err := os.Open(files[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fh.Close()
+	rows, err := csv.NewReader(fh).ReadAll()
+	if err != nil {
+		t.Fatalf("CSV does not parse: %v", err)
+	}
+	if len(rows) != 3 || rows[1][0] != "illumina_miseq" || rows[2][1] != statusNotModeled {
+		t.Errorf("CSV rows %v", rows)
+	}
 }
-
-// Ensure math and time imports are used
-var _ = math.Abs
-var _ = time.Second

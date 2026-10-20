@@ -1,11 +1,18 @@
+// Command run_workflow_tests runs generated reads through Cromwell (WDL),
+// Nextflow and Snakemake and reports, for each run, the engine's exit
+// status, the wall time and whether the read count the workflow reports
+// matches the reads written. It computes no scores.
 package main
 
 import (
 	"bufio"
 	"context"
+	"encoding/csv"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -18,653 +25,395 @@ import (
 	"github.com/scttfrdmn/phantom-science/internal/testing"
 )
 
-// CommandLineArgs holds command line arguments for workflow testing
+// CommandLineArgs holds command line arguments for workflow testing.
 type CommandLineArgs struct {
-	engines      string
-	platforms    string
-	workflows    string
-	outputDir    string
-	timeout      int
-	parallel     bool
-	verbose      bool
-	dryRun       bool
+	engines         string
+	platforms       string
+	workflows       string
+	outputDir       string
+	timeout         int
+	verbose         bool
+	dryRun          bool
 	skipUnavailable bool
 	generateReport  bool
-	help         bool
+	help            bool
 }
 
 func main() {
 	args := parseCommandLineArgs()
-	
 	if args.help {
 		printUsage()
 		return
 	}
-	
-	// Print banner
-	printBanner()
-	
-	// Validate arguments
 	if err := validateArgs(args); err != nil {
-		log.Fatalf("❌ Invalid arguments: %v", err)
+		log.Fatalf("invalid arguments: %v", err)
 	}
-	
-	// Create output directory
 	if err := os.MkdirAll(args.outputDir, 0750); err != nil {
-		log.Fatalf("❌ Failed to create output directory %s: %v", args.outputDir, err)
+		log.Fatalf("create output directory %s: %v", args.outputDir, err)
 	}
-	
-	// Initialize testing framework
-	framework := testing.NewE2EFramework()
-	if framework == nil {
-		log.Fatalf("❌ Failed to initialize E2E testing framework")
-	}
-	
-	// Parse configuration
-	engines := parseEngineList(args.engines)
-	platforms := parsePlatformList(args.platforms)
-	workflows := parseWorkflowList(args.workflows)
-	
-	if args.verbose {
-		log.Printf("🎯 Testing %d workflow engines across %d platforms with %d workflows", 
-			len(engines), len(platforms), len(workflows))
-		log.Printf("🔧 Engines: %v", engines)
-		log.Printf("📋 Platforms: %v", platforms)
-		log.Printf("⚙️  Workflows: %v", workflows)
-	}
-	
-	// Run workflow integration tests
-	results := runWorkflowTests(framework, engines, platforms, workflows, args)
-	
-	// Generate reports
-	if args.generateReport {
-		generateReports(results, args)
-	}
-	
-	// Print summary
-	printTestSummary(results, args)
 
-	ran, failed, skipped := countWorkflowOutcomes(results)
-	if failed > 0 {
-		log.Fatalf("❌ %d of %d workflow runs failed (%d skipped)", failed, ran, skipped)
+	results := runWorkflowTests(testing.NewE2EFramework(),
+		parseEngineList(args.engines), parsePlatformList(args.platforms), parseWorkflowList(args.workflows), args)
+	printTestSummary(os.Stdout, results, args)
+
+	if args.generateReport {
+		files, err := writeReports(results, args.outputDir)
+		if err != nil {
+			log.Fatalf("write reports: %v", err)
+		}
+		for _, f := range files {
+			fmt.Printf("wrote %s\n", f)
+		}
 	}
-	if ran == 0 {
-		log.Printf("⚠️  No workflows were executed (%d skipped); install cromwell, nextflow or snakemake to test them", skipped)
-		return
+	if c := results.Counts(); c.Failed > 0 {
+		log.Fatalf("%d of %d executed workflow runs failed", c.Failed, c.Passed+c.Failed)
 	}
-	log.Printf("✅ %d workflow runs passed (%d skipped)", ran, skipped)
 }
 
-// parseCommandLineArgs parses command line arguments
+// parseCommandLineArgs parses command line arguments.
 func parseCommandLineArgs() *CommandLineArgs {
 	args := &CommandLineArgs{}
-	
-	flag.StringVar(&args.engines, "engines", "all", 
+	flag.StringVar(&args.engines, "engines", "all",
 		"Comma-separated list of workflow engines to test (all, cromwell, nextflow, snakemake)")
-	flag.StringVar(&args.platforms, "platforms", "major", 
-		"Comma-separated list of platforms to test (all, major, illumina, longread)")
-	flag.StringVar(&args.workflows, "workflows", "basic", 
-		"Comma-separated list of workflow types to test (all, basic, gatk, assembly, variants)")
-	flag.StringVar(&args.outputDir, "output", "./workflow_test_results", 
-		"Output directory for test results and reports")
-	flag.IntVar(&args.timeout, "timeout", 3600, 
-		"Timeout for individual workflow tests in seconds")
-	flag.BoolVar(&args.parallel, "parallel", true, 
-		"Run workflow tests in parallel")
-	flag.BoolVar(&args.verbose, "verbose", false, 
-		"Enable verbose logging")
-	flag.BoolVar(&args.dryRun, "dry-run", false, 
-		"Perform dry run without executing workflows")
-	flag.BoolVar(&args.skipUnavailable, "skip-unavailable", true, 
-		"Skip tests for unavailable workflow engines")
-	flag.BoolVar(&args.generateReport, "report", true, 
-		"Write HTML, JSON and CSV reports")
-	flag.BoolVar(&args.help, "help", false, 
-		"Show this help message")
-	
+	flag.StringVar(&args.platforms, "platforms", "major",
+		"Comma-separated list of platforms to test (all, major, illumina, longread, or a single platform)")
+	flag.StringVar(&args.workflows, "workflows", "basic",
+		"Comma-separated list of workflow names (all, basic, gatk, assembly, variants, qc, population, nfcore, or custom names)")
+	flag.StringVar(&args.outputDir, "output", "./workflow_test_results",
+		"Directory for workspaces and reports")
+	flag.IntVar(&args.timeout, "timeout", 3600, "Timeout for each workflow run in seconds")
+	flag.BoolVar(&args.verbose, "verbose", false, "Enable verbose logging")
+	flag.BoolVar(&args.dryRun, "dry-run", false, "List the runs that would be made without executing them")
+	flag.BoolVar(&args.skipUnavailable, "skip-unavailable", true,
+		"Report runs on engines that are not installed as skipped (false: as failed)")
+	flag.BoolVar(&args.generateReport, "report", true,
+		"Write workflow_results.json and workflow_results.csv to -output")
+	flag.BoolVar(&args.help, "help", false, "Show this help message")
 	flag.Parse()
 	return args
 }
 
-// printUsage prints usage information
+// printUsage prints usage information.
 func printUsage() {
-	fmt.Println(`
-🧬 Phantom Science Workflow Integration Testing Suite
+	fmt.Println(`Usage: run_workflow_tests [OPTIONS]
 
-Usage: run_workflow_tests [OPTIONS]
-
-This tool runs synthetic reads through Cromwell (WDL), Nextflow and Snakemake
-for each selected platform profile and checks the engines' output (see WHAT IS
-EXECUTED below).
+Runs generated reads through Cromwell (WDL), Nextflow and Snakemake for each
+selected engine, platform profile and workflow name.
 
 OPTIONS:`)
 	flag.PrintDefaults()
-	
 	fmt.Print(`
-
-WORKFLOW ENGINE OPTIONS:
-  all       - Cromwell, Nextflow and Snakemake
-  cromwell  - Cromwell (WDL)
-  nextflow  - Nextflow
-  snakemake - Snakemake
-
-PLATFORM OPTIONS:
-  all       - All 7 platform profiles of the E2E framework
-  major     - NovaSeq, PacBio and ONT
-  illumina  - All Illumina platforms (NovaSeq, NextSeq, MiSeq)
-  longread  - Long-read platforms (PacBio, ONT)
-  novaseq   - Illumina NovaSeq 6000 only
-  pacbio    - PacBio Revio only
-  ont       - Oxford Nanopore PromethION only
-
-WORKFLOW TYPE OPTIONS (names only: every type runs the same read-count
-pipeline, see WHAT IS EXECUTED):
+WORKFLOW NAMES:
   all       - basic, gatk, assembly, variants, qc and population
-  basic     - basic
   gatk      - gatk_germline, gatk_somatic
   assembly  - pacbio_assembly, ont_assembly
   variants  - variant_calling, variant_annotation
   qc        - quality_control, multiqc
   population- population_genomics, admixture
+  Every name runs the same read-count pipeline; names only label runs.
 
-EXAMPLES:
-  # Test all engines with major platforms
-  ./run_workflow_tests -engines=all -platforms=major
-
-  # Test Nextflow on the Illumina platform profiles
-  ./run_workflow_tests -engines=nextflow -platforms=illumina
-
-  # Every engine, platform and workflow name, with reports
-  ./run_workflow_tests -engines=all -platforms=all -workflows=all -report
-
-  # Dry run to check configuration
-  ./run_workflow_tests -engines=cromwell -platforms=novaseq -dry-run
-
-  # Test with custom timeout and parallel execution
-  ./run_workflow_tests -engines=all -platforms=major -timeout=7200 -parallel
+PLATFORMS:
+  all, major (NovaSeq, PacBio, ONT), illumina, longread, novaseq, nextseq,
+  miseq, pacbio, ont, dnbseq, aviti. PacBio, MGI and AVITI have no read
+  model in the generator; their runs are reported as skipped.
 
 WHAT IS EXECUTED:
   Each engine found on PATH (cromwell, or java with CROMWELL_JAR set;
-  nextflow; snakemake) really runs a minimal pipeline that reads the
-  synthetic FASTQ and counts its records. A run passes only when the engine
-  exits successfully and the reported read count matches the reads written.
-  Every workflow type currently uses this same read-count pipeline; the type
-  only selects names and grouping.
+  nextflow; snakemake) runs a minimal pipeline that reads the generated FASTQ
+  and writes its record count. A run passes when the engine exits 0 and the
+  count equals the reads written. The table reports, per run: status, wall
+  time (including engine start-up), the engine's exit status, the reads
+  written, the count the workflow reported, and data integrity (the fraction
+  of count outputs that match).
 
-  The "accuracy", memory and CPU figures in the reports, and the scores
-  computed from them, are fixed per-platform estimates, not measurements;
-  only pass/fail and data integrity come from the engine runs.
-
-  Engines that are not installed are reported as SKIPPED, never as passed
-  (with -skip-unavailable=false they are reported as FAILED). The command
-  exits non-zero if any executed workflow fails.
+  Engines that are not installed are reported as SKIPPED (with
+  -skip-unavailable=false, as FAILED). -dry-run lists the runs as PLANNED
+  and executes nothing. The command exits non-zero if any executed run
+  fails.
 `)
 }
 
-// printBanner prints the application banner
-func printBanner() {
-	fmt.Print(`
-╔══════════════════════════════════════════════════════════════════════════════╗
-║               🧬 PHANTOM SCIENCE WORKFLOW INTEGRATION SUITE 🧬               ║
-║                                                                              ║
-║              Real-World Genomics Pipeline Compatibility Testing             ║
-║                     Cromwell (WDL) • Nextflow • Snakemake                    ║
-╚══════════════════════════════════════════════════════════════════════════════╝
-`)
-}
-
-// validateArgs validates command line arguments
+// validateArgs validates command line arguments.
 func validateArgs(args *CommandLineArgs) error {
-	// Validate output directory
 	if args.outputDir == "" {
 		return fmt.Errorf("output directory cannot be empty")
 	}
-	
-	// Validate timeout
 	if args.timeout < 60 {
 		return fmt.Errorf("timeout must be at least 60 seconds")
 	}
-	
-	// Validate engine list
-	engines := parseEngineList(args.engines)
-	if len(engines) == 0 {
+	if len(parseEngineList(args.engines)) == 0 {
 		return fmt.Errorf("no valid workflow engines specified")
 	}
-	
-	// Validate platform list
-	platforms := parsePlatformList(args.platforms)
-	if len(platforms) == 0 {
+	if len(parsePlatformList(args.platforms)) == 0 {
 		return fmt.Errorf("no valid platforms specified")
 	}
-	
-	// Validate workflow list
-	workflows := parseWorkflowList(args.workflows)
-	if len(workflows) == 0 {
+	if len(parseWorkflowList(args.workflows)) == 0 {
 		return fmt.Errorf("no valid workflows specified")
 	}
-	
 	return nil
 }
 
-// parseEngineList parses the workflow engine list argument
+// dedupe returns items without repeats, in first-seen order.
+func dedupe[T comparable](items []T) []T {
+	seen := make(map[T]bool)
+	out := make([]T, 0, len(items))
+	for _, it := range items {
+		if !seen[it] {
+			seen[it] = true
+			out = append(out, it)
+		}
+	}
+	return out
+}
+
+// parseEngineList parses the workflow engine list argument.
 func parseEngineList(enginesArg string) []string {
 	engineMap := map[string][]string{
-		"all": {"cromwell", "nextflow", "snakemake"},
-		"cromwell": {"cromwell"},
-		"nextflow": {"nextflow"},
+		"all":       {"cromwell", "nextflow", "snakemake"},
+		"cromwell":  {"cromwell"},
+		"nextflow":  {"nextflow"},
 		"snakemake": {"snakemake"},
-		"wdl": {"cromwell"},
-		"nf": {"nextflow"},
-		"snake": {"snakemake"},
+		"wdl":       {"cromwell"},
+		"nf":        {"nextflow"},
+		"snake":     {"snakemake"},
 	}
-	
 	var engines []string
-	parts := strings.Split(strings.ToLower(enginesArg), ",")
-	
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		if engineList, exists := engineMap[part]; exists {
-			engines = append(engines, engineList...)
-		}
+	for _, part := range strings.Split(strings.ToLower(enginesArg), ",") {
+		engines = append(engines, engineMap[strings.TrimSpace(part)]...)
 	}
-	
-	// Remove duplicates
-	engineSet := make(map[string]bool)
-	uniqueEngines := make([]string, 0)
-	
-	for _, engine := range engines {
-		if !engineSet[engine] {
-			engineSet[engine] = true
-			uniqueEngines = append(uniqueEngines, engine)
-		}
-	}
-	
-	return uniqueEngines
+	return dedupe(engines)
 }
 
-// parsePlatformList parses the platform list argument
+// parsePlatformList parses the platform list argument.
 func parsePlatformList(platformsArg string) []testing.SequencingPlatform {
 	platformMap := map[string][]testing.SequencingPlatform{
-		"all": {
-			testing.IlluminaNovaSeq6000,
-			testing.IlluminaNextSeq2000,
-			testing.IlluminaMiSeq,
-			testing.PacBioRevio,
-			testing.ONTPromethION24,
-			testing.MGI_DNBSEQ_T20x2,
-			testing.ElementAVITI,
-		},
-		"major": {
-			testing.IlluminaNovaSeq6000,
-			testing.PacBioRevio,
-			testing.ONTPromethION24,
-		},
-		"illumina": {
-			testing.IlluminaNovaSeq6000,
-			testing.IlluminaNextSeq2000,
-			testing.IlluminaMiSeq,
-		},
-		"longread": {
-			testing.PacBioRevio,
-			testing.ONTPromethION24,
-		},
-		"novaseq":    {testing.IlluminaNovaSeq6000},
-		"nextseq":    {testing.IlluminaNextSeq2000},
-		"miseq":      {testing.IlluminaMiSeq},
-		"pacbio":     {testing.PacBioRevio},
-		"ont":        {testing.ONTPromethION24},
-		"dnbseq":     {testing.MGI_DNBSEQ_T20x2},
-		"aviti":      {testing.ElementAVITI},
+		"all":      testing.AllPlatforms,
+		"major":    {testing.IlluminaNovaSeq6000, testing.PacBioRevio, testing.ONTPromethION24},
+		"illumina": {testing.IlluminaNovaSeq6000, testing.IlluminaNextSeq2000, testing.IlluminaMiSeq},
+		"longread": {testing.PacBioRevio, testing.ONTPromethION24},
+		"novaseq":  {testing.IlluminaNovaSeq6000},
+		"nextseq":  {testing.IlluminaNextSeq2000},
+		"miseq":    {testing.IlluminaMiSeq},
+		"pacbio":   {testing.PacBioRevio},
+		"ont":      {testing.ONTPromethION24},
+		"dnbseq":   {testing.MGI_DNBSEQ_T20x2},
+		"aviti":    {testing.ElementAVITI},
 	}
-	
 	var platforms []testing.SequencingPlatform
-	parts := strings.Split(strings.ToLower(platformsArg), ",")
-	
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		if platformList, exists := platformMap[part]; exists {
-			platforms = append(platforms, platformList...)
-		}
+	for _, part := range strings.Split(strings.ToLower(platformsArg), ",") {
+		platforms = append(platforms, platformMap[strings.TrimSpace(part)]...)
 	}
-	
-	// Remove duplicates
-	platformSet := make(map[testing.SequencingPlatform]bool)
-	uniquePlatforms := make([]testing.SequencingPlatform, 0)
-	
-	for _, platform := range platforms {
-		if !platformSet[platform] {
-			platformSet[platform] = true
-			uniquePlatforms = append(uniquePlatforms, platform)
-		}
-	}
-	
-	return uniquePlatforms
+	return dedupe(platforms)
 }
 
-// parseWorkflowList parses the workflow list argument
+// parseWorkflowList parses the workflow list argument. Unknown names are
+// kept as custom workflow names.
 func parseWorkflowList(workflowsArg string) []string {
 	workflowMap := map[string][]string{
-		"all": {
-			"basic", "gatk", "assembly", "variants", "qc", "population",
-		},
-		"basic": {"basic"},
-		"gatk": {"gatk_germline", "gatk_somatic"},
-		"assembly": {"pacbio_assembly", "ont_assembly"},
-		"variants": {"variant_calling", "variant_annotation"},
-		"qc": {"quality_control", "multiqc"},
+		"all":        {"basic", "gatk", "assembly", "variants", "qc", "population"},
+		"basic":      {"basic"},
+		"gatk":       {"gatk_germline", "gatk_somatic"},
+		"assembly":   {"pacbio_assembly", "ont_assembly"},
+		"variants":   {"variant_calling", "variant_annotation"},
+		"qc":         {"quality_control", "multiqc"},
 		"population": {"population_genomics", "admixture"},
-		"nfcore": {"nfcore_sarek", "nfcore_nanoseq", "nfcore_hlatyping"},
+		"nfcore":     {"nfcore_sarek", "nfcore_nanoseq", "nfcore_hlatyping"},
 	}
-	
 	var workflows []string
-	parts := strings.Split(strings.ToLower(workflowsArg), ",")
-	
-	for _, part := range parts {
+	for _, part := range strings.Split(strings.ToLower(workflowsArg), ",") {
 		part = strings.TrimSpace(part)
-		if workflowList, exists := workflowMap[part]; exists {
-			workflows = append(workflows, workflowList...)
-		} else {
-			// Allow custom workflow names
+		if list, ok := workflowMap[part]; ok {
+			workflows = append(workflows, list...)
+		} else if part != "" {
 			workflows = append(workflows, part)
 		}
 	}
-	
-	// Remove duplicates
-	workflowSet := make(map[string]bool)
-	uniqueWorkflows := make([]string, 0)
-	
-	for _, workflow := range workflows {
-		if !workflowSet[workflow] {
-			workflowSet[workflow] = true
-			uniqueWorkflows = append(uniqueWorkflows, workflow)
-		}
-	}
-	
-	return uniqueWorkflows
+	return dedupe(workflows)
 }
 
-// WorkflowTestResults holds comprehensive workflow test results
-type WorkflowTestResults struct {
-	Engines           []string
-	Platforms         []testing.SequencingPlatform
-	Workflows         []string
-	EngineResults     map[string]*EngineTestResult
-	PlatformResults   map[testing.SequencingPlatform]*PlatformTestResult
-	CompatibilityMatrix map[string]map[testing.SequencingPlatform]*WorkflowTestResult
-	OverallScore      float64
-	StartTime         time.Time
-	EndTime           time.Time
-	TotalDuration     time.Duration
-}
+// Run statuses.
+const (
+	statusPassed  = "passed"
+	statusFailed  = "failed"
+	statusSkipped = "skipped"
+	statusPlanned = "planned"
+)
 
-// EngineTestResult holds results for a specific workflow engine
-type EngineTestResult struct {
-	Engine              string
-	Available           bool
-	WorkflowResults     map[string]*WorkflowTestResult
-	AverageExecutionTime time.Duration
-	SuccessRate         float64
-	CompatibilityScore  float64
-}
-
-// PlatformTestResult holds results for a specific platform
-type PlatformTestResult struct {
-	Platform           testing.SequencingPlatform
-	EngineResults      map[string]*WorkflowTestResult
-	AverageExecutionTime time.Duration
-	SuccessRate        float64
-	DataIntegrityScore float64
-}
-
-// WorkflowTestResult holds results for a specific workflow test
+// WorkflowTestResult holds the outcome of one engine run.
 type WorkflowTestResult struct {
-	Engine            string
-	Platform          testing.SequencingPlatform
-	Workflow          string
-	Success           bool
-	ExecutionTime     time.Duration
-	MemoryUsageMB     int64
-	CPUUsagePercent   float64
-	DataIntegrity     float64
-	OutputAccuracy    float64
-	ErrorMessages     []string
-	OutputFiles       []string
-	// Skipped is set when the engine is not installed and -skip-unavailable
-	// is on; a skipped workflow is neither passed nor failed.
-	Skipped bool
+	Engine   string                     `json:"engine"`
+	Platform testing.SequencingPlatform `json:"platform"`
+	Workflow string                     `json:"workflow"`
+	Status   string                     `json:"status"`
+	// Reason explains a skip, a plan note or a failure.
+	Reason string `json:"reason,omitempty"`
+	// WallSeconds is the time from generating the reads to the end of the
+	// engine run, including engine start-up.
+	WallSeconds float64 `json:"wall_seconds"`
+	// ExitStatus is the engine's exit status; nil when it was not run or did
+	// not exit normally (timeout or signal).
+	ExitStatus *int `json:"exit_status,omitempty"`
+	// Reads is the number of reads written for the workflow.
+	Reads int `json:"reads"`
+	// ReportedReads are the counts the workflow wrote, one per output.
+	ReportedReads []string `json:"reported_reads,omitempty"`
+	// DataIntegrity is the fraction of count outputs equal to Reads.
+	DataIntegrity float64  `json:"data_integrity"`
+	OutputFiles   []string `json:"output_files,omitempty"`
 }
 
-// runWorkflowTests runs the comprehensive workflow test suite
+// OutcomeCounts tallies run statuses.
+type OutcomeCounts struct {
+	Passed, Failed, Skipped, Planned int
+}
+
+// WorkflowTestResults holds every run.
+type WorkflowTestResults struct {
+	Engines     []string                     `json:"engines"`
+	Platforms   []testing.SequencingPlatform `json:"platforms"`
+	Workflows   []string                     `json:"workflows"`
+	DryRun      bool                         `json:"dry_run"`
+	StartedAt   time.Time                    `json:"started_at"`
+	WallSeconds float64                      `json:"wall_seconds"`
+	Runs        []*WorkflowTestResult        `json:"runs"`
+}
+
+// Counts tallies the runs by status.
+func (r *WorkflowTestResults) Counts() OutcomeCounts {
+	var c OutcomeCounts
+	for _, run := range r.Runs {
+		switch run.Status {
+		case statusPassed:
+			c.Passed++
+		case statusFailed:
+			c.Failed++
+		case statusSkipped:
+			c.Skipped++
+		case statusPlanned:
+			c.Planned++
+		}
+	}
+	return c
+}
+
+// runWorkflowTests runs (or, with -dry-run, plans) every engine × platform ×
+// workflow combination once.
 func runWorkflowTests(framework *testing.E2EFramework, engines []string, platforms []testing.SequencingPlatform, workflows []string, args *CommandLineArgs) *WorkflowTestResults {
-	startTime := time.Now()
-	
-	results := &WorkflowTestResults{
-		Engines:           engines,
-		Platforms:         platforms,
-		Workflows:         workflows,
-		EngineResults:     make(map[string]*EngineTestResult),
-		PlatformResults:   make(map[testing.SequencingPlatform]*PlatformTestResult),
-		CompatibilityMatrix: make(map[string]map[testing.SequencingPlatform]*WorkflowTestResult),
-		StartTime:         startTime,
-	}
-	
-	log.Printf("🚀 Starting comprehensive workflow integration testing...")
-	log.Printf("📋 Testing %d engines × %d platforms × %d workflows = %d combinations", 
-		len(engines), len(platforms), len(workflows), len(engines)*len(platforms)*len(workflows))
-	
-	// Test each engine
+	start := time.Now()
+	results := &WorkflowTestResults{Engines: engines, Platforms: platforms, Workflows: workflows, DryRun: args.dryRun, StartedAt: start}
 	for _, engine := range engines {
-		log.Printf("🔧 [Engine] Testing workflow engine: %s", engine)
-		
-		engineResult := testWorkflowEngine(framework, engine, platforms, workflows, args)
-		results.EngineResults[engine] = engineResult
-		results.CompatibilityMatrix[engine] = make(map[testing.SequencingPlatform]*WorkflowTestResult)
-		
-		if args.verbose {
-			log.Printf("   ✅ %s completed: %.1f%% success, %.2fs avg time", 
-				engine, engineResult.SuccessRate*100, engineResult.AverageExecutionTime.Seconds())
+		for _, platform := range platforms {
+			for _, workflow := range workflows {
+				var r *WorkflowTestResult
+				if args.dryRun {
+					r = planWorkflowTest(framework, engine, platform, workflow, args)
+				} else {
+					r = runWorkflowTest(framework, engine, platform, workflow, args)
+				}
+				if args.verbose {
+					log.Printf("%s %s %s: %s %s", engine, platform, workflow, r.Status, r.Reason)
+				}
+				results.Runs = append(results.Runs, r)
+			}
 		}
 	}
-	
-	// Test each platform across engines
-	for _, platform := range platforms {
-		log.Printf("🧬 [Platform] Testing platform: %s", platform)
-		
-		platformResult := testPlatformCompatibility(framework, platform, engines, workflows, args)
-		results.PlatformResults[platform] = platformResult
-		
-		if args.verbose {
-			log.Printf("   ✅ %s completed: %.1f%% success, %.2f integrity", 
-				platform, platformResult.SuccessRate*100, platformResult.DataIntegrityScore)
-		}
-	}
-	
-	// Build compatibility matrix
-	buildCompatibilityMatrix(results)
-	
-	// Calculate overall results
-	results.EndTime = time.Now()
-	results.TotalDuration = results.EndTime.Sub(results.StartTime)
-	results.OverallScore = calculateOverallScore(results)
-	
+	results.WallSeconds = time.Since(start).Seconds()
 	return results
 }
 
-// testWorkflowEngine tests a specific workflow engine
-func testWorkflowEngine(framework *testing.E2EFramework, engine string, platforms []testing.SequencingPlatform, workflows []string, args *CommandLineArgs) *EngineTestResult {
-	result := &EngineTestResult{
-		Engine:          engine,
-		Available:       isWorkflowEngineAvailable(engine),
-		WorkflowResults: make(map[string]*WorkflowTestResult),
+// planWorkflowTest records what runWorkflowTest would do, without running
+// anything: skipped where it would skip, planned otherwise.
+func planWorkflowTest(framework *testing.E2EFramework, engine string, platform testing.SequencingPlatform, workflow string, args *CommandLineArgs) *WorkflowTestResult {
+	r := &WorkflowTestResult{Engine: engine, Platform: platform, Workflow: workflow, Status: statusPlanned}
+	if !framework.Modeled(platform) {
+		r.Status, r.Reason = statusSkipped, fmt.Sprintf("%v: %s", testing.ErrPlatformNotModeled, platform)
+		return r
 	}
-	
-	if !result.Available {
-		if args.skipUnavailable {
-			log.Printf("   ⚠️  Engine %s not available, skipping", engine)
-			return result
-		} else {
-			log.Printf("   ❌ Engine %s not available but skip-unavailable=false", engine)
+	if _, _, err := engineCommand(engine); err != nil {
+		if errors.Is(err, errEngineUnavailable) && args.skipUnavailable {
+			r.Status = statusSkipped
 		}
+		r.Reason = err.Error()
 	}
-	
-	totalTime := time.Duration(0)
-	successCount := 0
-	totalTests := 0
-	
-	for _, platform := range platforms {
-		for _, workflow := range workflows {
-			if args.dryRun {
-				log.Printf("   🔍 [DRY RUN] Would test %s workflow on %s platform", workflow, platform)
-				continue
-			}
-			
-			workflowResult := runWorkflowTest(framework, engine, platform, workflow, args)
-			
-			key := fmt.Sprintf("%s_%s", platform, workflow)
-			result.WorkflowResults[key] = workflowResult
-			
-			totalTime += workflowResult.ExecutionTime
-			totalTests++
-			
-			if workflowResult.Success {
-				successCount++
-			}
-			
-			if args.verbose {
-				status := "❌"
-				if workflowResult.Success {
-					status = "✅"
-				}
-				log.Printf("     %s %s on %s: %.1fs, %.1f%% integrity", 
-					status, workflow, platform, workflowResult.ExecutionTime.Seconds(), 
-					workflowResult.DataIntegrity*100)
-			}
-		}
-	}
-	
-	if totalTests > 0 {
-		result.AverageExecutionTime = totalTime / time.Duration(totalTests)
-		result.SuccessRate = float64(successCount) / float64(totalTests)
-		result.CompatibilityScore = calculateEngineCompatibilityScore(result)
-	}
-	
-	return result
+	return r
 }
 
-// testPlatformCompatibility tests platform compatibility across engines
-func testPlatformCompatibility(framework *testing.E2EFramework, platform testing.SequencingPlatform, engines []string, workflows []string, args *CommandLineArgs) *PlatformTestResult {
-	result := &PlatformTestResult{
-		Platform:      platform,
-		EngineResults: make(map[string]*WorkflowTestResult),
-	}
-	
-	totalTime := time.Duration(0)
-	successCount := 0
-	totalTests := 0
-	totalIntegrity := 0.0
-	
-	for _, engine := range engines {
-		if !isWorkflowEngineAvailable(engine) && args.skipUnavailable {
-			continue
-		}
-		
-		// Test representative workflow for this engine-platform combo
-		workflow := selectRepresentativeWorkflow(engine, platform, workflows)
-		
-		if args.dryRun {
-			log.Printf("   🔍 [DRY RUN] Would test %s on %s with %s", workflow, platform, engine)
-			continue
-		}
-		
-		workflowResult := runWorkflowTest(framework, engine, platform, workflow, args)
-		result.EngineResults[engine] = workflowResult
-		
-		totalTime += workflowResult.ExecutionTime
-		totalIntegrity += workflowResult.DataIntegrity
-		totalTests++
-		
-		if workflowResult.Success {
-			successCount++
-		}
-	}
-	
-	if totalTests > 0 {
-		result.AverageExecutionTime = totalTime / time.Duration(totalTests)
-		result.SuccessRate = float64(successCount) / float64(totalTests)
-		result.DataIntegrityScore = totalIntegrity / float64(totalTests)
-	}
-	
-	return result
-}
-
-// runWorkflowTest runs a single workflow test
+// runWorkflowTest generates reads for platform, runs workflow on engine and
+// checks the count it reports.
 func runWorkflowTest(framework *testing.E2EFramework, engine string, platform testing.SequencingPlatform, workflow string, args *CommandLineArgs) *WorkflowTestResult {
 	start := time.Now()
-	
-	result := &WorkflowTestResult{
-		Engine:   engine,
-		Platform: platform,
-		Workflow: workflow,
-	}
+	r := &WorkflowTestResult{Engine: engine, Platform: platform, Workflow: workflow, Status: statusFailed}
+	defer func() { r.WallSeconds = time.Since(start).Seconds() }()
 
 	if _, _, err := engineCommand(engine); err != nil {
 		if errors.Is(err, errEngineUnavailable) && args.skipUnavailable {
-			result.Skipped = true
+			r.Status = statusSkipped
 		}
-		result.ErrorMessages = append(result.ErrorMessages, err.Error())
-		result.ExecutionTime = time.Since(start)
-		return result
+		r.Reason = err.Error()
+		return r
 	}
 
-	// Generate synthetic data for the platform
-	config := framework.CreatePlatformConfig(platform, "CEU")
-	syntheticData, err := framework.GenerateSyntheticData(config)
-	if err != nil {
-		result.ErrorMessages = append(result.ErrorMessages, fmt.Sprintf("Failed to generate synthetic data: %v", err))
-		result.ExecutionTime = time.Since(start)
-		return result
+	data, err := framework.GenerateSyntheticData(framework.CreatePlatformConfig(platform, "CEU"))
+	if errors.Is(err, testing.ErrPlatformNotModeled) {
+		r.Status, r.Reason = statusSkipped, err.Error()
+		return r
 	}
-	
-	// Create test workspace
+	if err != nil {
+		r.Reason = fmt.Sprintf("generate reads: %v", err)
+		return r
+	}
+	r.Reads = len(data.Sequences)
+
 	workDir, err := os.MkdirTemp(args.outputDir, fmt.Sprintf("%s_%s_%s", engine, platform, workflow))
 	if err != nil {
-		result.ErrorMessages = append(result.ErrorMessages, fmt.Sprintf("Failed to create workspace: %v", err))
-		result.ExecutionTime = time.Since(start)
-		return result
+		r.Reason = fmt.Sprintf("create workspace: %v", err)
+		return r
 	}
 	defer os.RemoveAll(workDir)
-	
-	// Execute workflow based on engine type
-	var outputFiles []string
+
+	var outputs []string
 	switch engine {
 	case "cromwell":
-		outputFiles, err = executeCromwellWorkflow(workDir, syntheticData, platform, workflow, args)
+		outputs, err = executeCromwellWorkflow(workDir, data, platform, workflow, args)
 	case "nextflow":
-		outputFiles, err = executeNextflowWorkflow(workDir, syntheticData, platform, workflow, args)
+		outputs, err = executeNextflowWorkflow(workDir, data, platform, workflow, args)
 	case "snakemake":
-		outputFiles, err = executeSnakemakeWorkflow(workDir, syntheticData, platform, workflow, args)
+		outputs, err = executeSnakemakeWorkflow(workDir, data, platform, workflow, args)
 	}
-	result.OutputFiles = outputFiles
-	result.ExecutionTime = time.Since(start)
+	var runErr *engineRunError
+	switch {
+	case errors.As(err, &runErr):
+		r.ExitStatus = runErr.exitStatus
+	case err == nil || errors.Is(err, errNoOutput):
+		zero := 0
+		r.ExitStatus = &zero
+	}
 	if err != nil {
-		result.ErrorMessages = append(result.ErrorMessages, err.Error())
-		return result
+		r.Reason = err.Error()
+		return r
 	}
 
-	// The workflow passes only if the engine's output matches the input.
-	result.DataIntegrity = calculateDataIntegrity(syntheticData, outputFiles)
-	if result.DataIntegrity < 1.0 {
-		result.ErrorMessages = append(result.ErrorMessages, fmt.Sprintf(
-			"read count in engine output does not match the %d reads written (integrity %.2f)",
-			len(syntheticData.Sequences), result.DataIntegrity))
-		return result
+	for _, f := range outputs {
+		r.ReportedReads = append(r.ReportedReads, readOutput(f))
 	}
-	result.Success = true
-	result.OutputAccuracy = calculateOutputAccuracy(platform, workflow, outputFiles)
-	result.MemoryUsageMB = estimateMemoryUsage(platform, workflow)
-	result.CPUUsagePercent = estimateCPUUsage(platform, workflow)
+	r.OutputFiles = outputs
+	r.DataIntegrity = calculateDataIntegrity(data, outputs)
+	if r.DataIntegrity < 1.0 {
+		r.Reason = fmt.Sprintf("reported read count %v does not match the %d reads written", r.ReportedReads, r.Reads)
+		return r
+	}
+	r.Status = statusPassed
+	return r
+}
 
-	return result
+// readOutput returns a count output's trimmed content, or a note when it
+// cannot be read.
+func readOutput(path string) string {
+	b, err := os.ReadFile(path) // #nosec G304 -- engine output inside the test workspace
+	if err != nil {
+		return "unreadable"
+	}
+	return strings.TrimSpace(string(b))
 }
 
 // Workflow execution functions
@@ -676,6 +425,25 @@ func runWorkflowTest(framework *testing.E2EFramework, engine string, platform te
 
 // errEngineUnavailable reports that a workflow engine is not installed.
 var errEngineUnavailable = errors.New("workflow engine not available")
+
+// errNoOutput reports that an engine exited 0 but wrote no count output.
+var errNoOutput = errors.New("workflow produced no read count output")
+
+// engineRunError is returned when an engine run fails.
+type engineRunError struct {
+	engine string
+	// exitStatus is the exit status, or nil when the process did not exit
+	// normally (timeout, signal, or it could not be started).
+	exitStatus *int
+	err        error
+	output     string
+}
+
+func (e *engineRunError) Error() string {
+	return fmt.Sprintf("%s run failed: %v\n%s", e.engine, e.err, e.output)
+}
+
+func (e *engineRunError) Unwrap() error { return e.err }
 
 // lookPath locates executables; tests replace it to simulate missing engines.
 var lookPath = exec.LookPath
@@ -724,7 +492,8 @@ func isWorkflowEngineAvailable(engine string) bool {
 }
 
 // runEngine runs engine with extra arguments in workDir, honouring the
-// -timeout flag, and returns an error carrying the tail of its output on failure.
+// -timeout flag. On failure it returns an *engineRunError carrying the exit
+// status and the tail of the engine's output.
 func runEngine(engine, workDir string, args *CommandLineArgs, env []string, extra ...string) error {
 	program, lead, err := engineCommand(engine)
 	if err != nil {
@@ -741,10 +510,14 @@ func runEngine(engine, workDir string, args *CommandLineArgs, env []string, extr
 	cmd.Env = append(os.Environ(), env...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
+		runErr := &engineRunError{engine: engine, err: err, output: tail(string(out), 40)}
 		if ctx.Err() != nil {
-			err = ctx.Err()
+			runErr.err = ctx.Err()
+		} else if cmd.ProcessState != nil && cmd.ProcessState.Exited() {
+			code := cmd.ProcessState.ExitCode()
+			runErr.exitStatus = &code
 		}
-		return fmt.Errorf("%s run failed: %v\n%s", engine, err, tail(string(out), 40))
+		return runErr
 	}
 	if args != nil && args.verbose {
 		log.Printf("     %s output:\n%s", engine, tail(string(out), 20))
@@ -786,14 +559,15 @@ func writeInputFASTQ(workDir string, data *testing.SyntheticData) (string, error
 	return path, f.Close()
 }
 
-// requireOutputs returns paths unchanged if every path exists, or an error naming the first missing one.
+// requireOutputs returns paths unchanged if every path exists, or an error
+// wrapping errNoOutput naming the first missing one.
 func requireOutputs(engine string, paths []string) ([]string, error) {
 	if len(paths) == 0 {
-		return nil, fmt.Errorf("%s produced no %s", engine, readCountFile)
+		return nil, fmt.Errorf("%w: %s produced no %s", errNoOutput, engine, readCountFile)
 	}
 	for _, p := range paths {
 		if _, err := os.Stat(p); err != nil {
-			return nil, fmt.Errorf("%s did not produce %s: %v", engine, p, err)
+			return nil, fmt.Errorf("%w: %s did not produce %s: %v", errNoOutput, engine, p, err)
 		}
 	}
 	return paths, nil
@@ -858,68 +632,6 @@ func executeSnakemakeWorkflow(workDir string, syntheticData *testing.SyntheticDa
 		return nil, err
 	}
 	return requireOutputs("snakemake", []string{filepath.Join(workDir, readCountFile)})
-}
-
-// countWorkflowOutcomes counts executed, failed and skipped workflow runs
-// across the engine and platform results.
-func countWorkflowOutcomes(results *WorkflowTestResults) (ran, failed, skipped int) {
-	tally := func(r *WorkflowTestResult) {
-		switch {
-		case r.Skipped:
-			skipped++
-		case r.Success:
-			ran++
-		default:
-			ran++
-			failed++
-		}
-	}
-	for _, e := range results.EngineResults {
-		if !e.Available && len(e.WorkflowResults) == 0 {
-			skipped++
-			continue
-		}
-		for _, r := range e.WorkflowResults {
-			tally(r)
-		}
-	}
-	for _, p := range results.PlatformResults {
-		for _, r := range p.EngineResults {
-			tally(r)
-		}
-	}
-	return ran, failed, skipped
-}
-
-func selectRepresentativeWorkflow(engine string, platform testing.SequencingPlatform, workflows []string) string {
-	// Select appropriate workflow based on engine and platform
-	if len(workflows) == 0 {
-		return "basic"
-	}
-	
-	// Platform-specific workflow selection
-	switch platform {
-	case testing.PacBioRevio:
-		for _, w := range workflows {
-			if strings.Contains(w, "assembly") {
-				return w
-			}
-		}
-	case testing.ONTPromethION24:
-		for _, w := range workflows {
-			if strings.Contains(w, "ont") || strings.Contains(w, "nanopore") {
-				return w
-			}
-		}
-	default:
-		for _, w := range workflows {
-			if strings.Contains(w, "gatk") || strings.Contains(w, "variant") {
-				return w
-			}
-		}
-	}
-	
-	return workflows[0]
 }
 
 // wdlIdentifier turns a workflow name into a valid WDL identifier.
@@ -1064,280 +776,103 @@ func calculateDataIntegrity(syntheticData *testing.SyntheticData, outputFiles []
 	return float64(matched) / float64(len(outputFiles))
 }
 
-func calculateOutputAccuracy(platform testing.SequencingPlatform, workflow string, outputFiles []string) float64 {
-	// Calculate output accuracy based on expected outputs for platform/workflow combination
-	baseAccuracy := 0.85
-	
-	// Platform-specific accuracy expectations
-	switch platform {
-	case testing.IlluminaNovaSeq6000, testing.IlluminaNextSeq2000:
-		baseAccuracy = 0.95
-	case testing.PacBioRevio:
-		baseAccuracy = 0.92
-	case testing.ONTPromethION24:
-		baseAccuracy = 0.88
+// printTestSummary prints one row per run and the outcome counts.
+func printTestSummary(w io.Writer, results *WorkflowTestResults, args *CommandLineArgs) {
+	rule := strings.Repeat("-", 110)
+	mode := "executed"
+	if results.DryRun {
+		mode = "dry run, nothing executed"
 	}
-	
-	// Workflow-specific adjustments
-	if strings.Contains(workflow, "assembly") {
-		baseAccuracy -= 0.05 // Assembly is more challenging
-	} else if strings.Contains(workflow, "basic") {
-		baseAccuracy += 0.05 // Basic workflows should be more reliable
-	}
-	
-	return baseAccuracy
-}
-
-func estimateMemoryUsage(platform testing.SequencingPlatform, workflow string) int64 {
-	// Estimate memory usage in MB based on platform and workflow
-	baseMemory := int64(2048) // 2GB base
-	
-	// Platform-specific memory requirements
-	switch platform {
-	case testing.PacBioRevio, testing.ONTPromethION24:
-		baseMemory = 8192 // 8GB for long reads
-	case testing.IlluminaNovaSeq6000:
-		baseMemory = 4096 // 4GB for high-throughput
-	}
-	
-	// Workflow-specific adjustments
-	if strings.Contains(workflow, "assembly") {
-		baseMemory *= 2 // Assembly requires more memory
-	} else if strings.Contains(workflow, "basic") {
-		baseMemory /= 2 // Basic workflows need less
-	}
-	
-	return baseMemory
-}
-
-func estimateCPUUsage(platform testing.SequencingPlatform, workflow string) float64 {
-	// Estimate CPU usage percentage
-	baseCPU := 60.0
-	
-	// Workflow-specific CPU usage
-	if strings.Contains(workflow, "assembly") {
-		baseCPU = 90.0 // Assembly is CPU-intensive
-	} else if strings.Contains(workflow, "basic") {
-		baseCPU = 30.0 // Basic workflows use less CPU
-	}
-	
-	return baseCPU
-}
-
-func buildCompatibilityMatrix(results *WorkflowTestResults) {
-	// Build the compatibility matrix from individual results
-	for engine, engineResult := range results.EngineResults {
-		if results.CompatibilityMatrix[engine] == nil {
-			results.CompatibilityMatrix[engine] = make(map[testing.SequencingPlatform]*WorkflowTestResult)
+	fmt.Fprintf(w, "Workflow runs: %d engine(s) × %d platform(s) × %d workflow(s) (%s), %.1fs\n",
+		len(results.Engines), len(results.Platforms), len(results.Workflows), mode, results.WallSeconds)
+	fmt.Fprintln(w, rule)
+	fmt.Fprintf(w, "%-10s %-22s %-20s %-8s %8s %5s %6s %9s %9s\n",
+		"Engine", "Platform", "Workflow", "Status", "Wall(s)", "Exit", "Reads", "Reported", "Integrity")
+	fmt.Fprintln(w, rule)
+	for _, r := range results.Runs {
+		exit, wall, reads, reported, integrity := "-", "-", "-", "-", "-"
+		if r.ExitStatus != nil {
+			exit = strconv.Itoa(*r.ExitStatus)
 		}
-		
-		for _, platform := range results.Platforms {
-			// Find the best result for this engine-platform combination
-			bestResult := findBestWorkflowResult(engineResult, platform)
-			if bestResult != nil {
-				results.CompatibilityMatrix[engine][platform] = bestResult
-			}
+		if r.Status == statusPassed || r.Status == statusFailed {
+			wall = fmt.Sprintf("%.2f", r.WallSeconds)
+		}
+		if r.Reads > 0 {
+			reads = strconv.Itoa(r.Reads)
+		}
+		if len(r.ReportedReads) > 0 {
+			reported = strings.Join(r.ReportedReads, ",")
+		}
+		if len(r.OutputFiles) > 0 {
+			integrity = fmt.Sprintf("%.2f", r.DataIntegrity)
+		}
+		fmt.Fprintf(w, "%-10s %-22s %-20s %-8s %8s %5s %6s %9s %9s\n",
+			r.Engine, r.Platform, r.Workflow, strings.ToUpper(r.Status), wall, exit, reads, reported, integrity)
+		if r.Reason != "" && r.Status != statusPassed {
+			fmt.Fprintf(w, "    %s\n", firstLine(r.Reason))
 		}
 	}
+	fmt.Fprintln(w, rule)
+
+	c := results.Counts()
+	if results.DryRun {
+		fmt.Fprintf(w, "Dry run: %d planned, %d would be skipped, %d would fail before running; nothing was executed.\n",
+			c.Planned, c.Skipped, c.Failed)
+		return
+	}
+	fmt.Fprintf(w, "Passed %d, failed %d, skipped %d.\n", c.Passed, c.Failed, c.Skipped)
+	if c.Passed+c.Failed == 0 {
+		fmt.Fprintln(w, "No workflow was executed: every run was skipped (install cromwell, nextflow or snakemake to run them).")
+	}
 }
 
-func findBestWorkflowResult(engineResult *EngineTestResult, platform testing.SequencingPlatform) *WorkflowTestResult {
-	var bestResult *WorkflowTestResult
-	// Start below zero so a failed run (score 0) is still reported in the
-	// matrix as a failure rather than as "not tested".
-	bestScore := -1.0
-	
-	for _, result := range engineResult.WorkflowResults {
-		if result.Platform == platform {
-			score := calculateWorkflowScore(result)
-			if score > bestScore {
-				bestScore = score
-				bestResult = result
-			}
+// firstLine returns s up to its first newline.
+func firstLine(s string) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		return s[:i]
+	}
+	return s
+}
+
+// writeReports writes workflow_results.json (every run) and
+// workflow_results.csv (one row per run) to dir and returns their paths.
+func writeReports(results *WorkflowTestResults, dir string) ([]string, error) {
+	if err := os.MkdirAll(dir, 0750); err != nil {
+		return nil, err
+	}
+	jsonPath := filepath.Join(dir, "workflow_results.json")
+	b, err := json.MarshalIndent(results, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(jsonPath, append(b, '\n'), 0600); err != nil {
+		return nil, err
+	}
+
+	csvPath := filepath.Join(dir, "workflow_results.csv")
+	fh, err := os.Create(csvPath) // #nosec G304 -- caller-chosen output directory
+	if err != nil {
+		return nil, err
+	}
+	cw := csv.NewWriter(fh)
+	_ = cw.Write([]string{"engine", "platform", "workflow", "status", "wall_seconds", "exit_status", "reads",
+		"reported_reads", "data_integrity", "reason"})
+	for _, r := range results.Runs {
+		exit := ""
+		if r.ExitStatus != nil {
+			exit = strconv.Itoa(*r.ExitStatus)
 		}
+		_ = cw.Write([]string{r.Engine, string(r.Platform), r.Workflow, r.Status,
+			strconv.FormatFloat(r.WallSeconds, 'f', 3, 64), exit, strconv.Itoa(r.Reads),
+			strings.Join(r.ReportedReads, ";"), strconv.FormatFloat(r.DataIntegrity, 'f', -1, 64), firstLine(r.Reason)})
 	}
-	
-	return bestResult
-}
-
-func calculateWorkflowScore(result *WorkflowTestResult) float64 {
-	if !result.Success {
-		return 0.0
+	cw.Flush()
+	if err := cw.Error(); err != nil {
+		fh.Close()
+		return nil, err
 	}
-	
-	score := result.DataIntegrity * 0.4 + result.OutputAccuracy * 0.4
-	
-	// Time bonus (faster is better, but capped)
-	if result.ExecutionTime < time.Minute {
-		score += 0.2
-	} else if result.ExecutionTime < 5*time.Minute {
-		score += 0.1
+	if err := fh.Close(); err != nil {
+		return nil, err
 	}
-	
-	return score
-}
-
-func calculateEngineCompatibilityScore(result *EngineTestResult) float64 {
-	if !result.Available {
-		return 0.0
-	}
-	
-	return result.SuccessRate * 100.0
-}
-
-func calculateOverallScore(results *WorkflowTestResults) float64 {
-	totalScore := 0.0
-	validEngines := 0
-	
-	for _, engineResult := range results.EngineResults {
-		if engineResult.Available {
-			totalScore += engineResult.CompatibilityScore
-			validEngines++
-		}
-	}
-	
-	if validEngines == 0 {
-		return 0.0
-	}
-	
-	return totalScore / float64(validEngines)
-}
-
-// generateReports generates comprehensive reports
-func generateReports(results *WorkflowTestResults, args *CommandLineArgs) {
-	log.Printf("📊 Generating comprehensive workflow integration reports...")
-	
-	// Generate JSON report
-	generateJSONReport(results, args)
-	
-	// Generate HTML report
-	generateHTMLReport(results, args)
-	
-	// Generate compatibility matrix CSV
-	generateCompatibilityCSV(results, args)
-	
-	log.Printf("   📄 Reports saved to: %s", args.outputDir)
-}
-
-func generateJSONReport(results *WorkflowTestResults, args *CommandLineArgs) {
-	// Generate detailed JSON report
-	log.Printf("   📄 JSON report: %s/workflow_results.json", args.outputDir)
-}
-
-func generateHTMLReport(results *WorkflowTestResults, args *CommandLineArgs) {
-	// Generate interactive HTML report
-	log.Printf("   🌐 HTML report: %s/workflow_results.html", args.outputDir)
-}
-
-func generateCompatibilityCSV(results *WorkflowTestResults, args *CommandLineArgs) {
-	// Generate compatibility matrix CSV
-	log.Printf("   📊 Compatibility matrix: %s/compatibility_matrix.csv", args.outputDir)
-}
-
-// printTestSummary prints a summary of workflow test results
-func printTestSummary(results *WorkflowTestResults, args *CommandLineArgs) {
-	fmt.Println("\n" + strings.Repeat("=", 80))
-	fmt.Println("📊 WORKFLOW INTEGRATION TEST RESULTS SUMMARY")
-	fmt.Println(strings.Repeat("=", 80))
-	
-	fmt.Printf("⏱️  Test Duration: %v\n", results.TotalDuration)
-	fmt.Printf("🔧 Engines Tested: %d\n", len(results.Engines))
-	fmt.Printf("🧬 Platforms Tested: %d\n", len(results.Platforms))
-	fmt.Printf("⚙️  Workflows Tested: %d\n", len(results.Workflows))
-	fmt.Printf("📈 Overall Score: %.1f/100\n", results.OverallScore)
-	
-	fmt.Println("\n🔧 WORKFLOW ENGINE RESULTS:")
-	fmt.Println(strings.Repeat("-", 80))
-	fmt.Printf("%-15s %-10s %-12s %-15s %-10s\n", 
-		"Engine", "Available", "Success Rate", "Avg Time", "Score")
-	fmt.Println(strings.Repeat("-", 80))
-	
-	for _, engine := range results.Engines {
-		if result, exists := results.EngineResults[engine]; exists {
-			if !result.Available && len(result.WorkflowResults) == 0 {
-				fmt.Printf("%-15s %-10s %s\n", engine, "SKIPPED", "not installed")
-				continue
-			}
-			available := "❌"
-			if result.Available {
-				available = "✅"
-			}
-			
-			fmt.Printf("%-15s %-10s %10.1f%% %14v %8.1f\n",
-				engine,
-				available,
-				result.SuccessRate*100,
-				result.AverageExecutionTime.Round(time.Second),
-				result.CompatibilityScore)
-		}
-	}
-	
-	fmt.Println("\n🧬 PLATFORM COMPATIBILITY:")
-	fmt.Println(strings.Repeat("-", 80))
-	fmt.Printf("%-20s %-12s %-12s %-15s\n", 
-		"Platform", "Success Rate", "Integrity", "Avg Time")
-	fmt.Println(strings.Repeat("-", 80))
-	
-	for _, platform := range results.Platforms {
-		if result, exists := results.PlatformResults[platform]; exists {
-			fmt.Printf("%-20s %10.1f%% %10.1f%% %14v\n",
-				platform,
-				result.SuccessRate*100,
-				result.DataIntegrityScore*100,
-				result.AverageExecutionTime.Round(time.Second))
-		}
-	}
-	
-	fmt.Println("\n🎯 COMPATIBILITY MATRIX:")
-	fmt.Println(strings.Repeat("-", 80))
-	
-	// Print compatibility matrix header
-	fmt.Printf("%-20s", "Platform\\Engine")
-	for _, engine := range results.Engines {
-		fmt.Printf(" %-12s", engine)
-	}
-	fmt.Println()
-	fmt.Println(strings.Repeat("-", 80))
-	
-	// Print compatibility matrix rows
-	for _, platform := range results.Platforms {
-		fmt.Printf("%-20s", platform)
-		for _, engine := range results.Engines {
-			if engineMatrix, exists := results.CompatibilityMatrix[engine]; exists {
-				if result, exists := engineMatrix[platform]; exists {
-					if result.Skipped {
-						fmt.Printf(" %-12s", "skipped")
-					} else if result.Success {
-						fmt.Printf(" %-12s", "✅")
-					} else {
-						fmt.Printf(" %-12s", "❌")
-					}
-				} else {
-					fmt.Printf(" %-12s", "➖")
-				}
-			} else {
-				fmt.Printf(" %-12s", "➖")
-			}
-		}
-		fmt.Println()
-	}
-	
-	fmt.Println("\n" + strings.Repeat("=", 80))
-	
-	// Final assessment
-	if ran, _, _ := countWorkflowOutcomes(results); ran == 0 {
-		fmt.Println("➖ NOT TESTED: no workflow engine was available, so nothing was executed")
-	} else if results.OverallScore >= 90.0 {
-		fmt.Println("🎉 EXCELLENT: All workflow engines show outstanding compatibility!")
-	} else if results.OverallScore >= 75.0 {
-		fmt.Println("✅ GOOD: Most workflow engines are compatible with minor issues")
-	} else if results.OverallScore >= 60.0 {
-		fmt.Println("⚠️  FAIR: Some workflow engines need attention for better compatibility")
-	} else {
-		fmt.Println("❌ POOR: Significant compatibility issues detected across workflow engines")
-	}
-	
-	if args.generateReport {
-		fmt.Printf("\n📊 Detailed reports available in: %s\n", args.outputDir)
-	}
+	return []string{jsonPath, csvPath}, nil
 }

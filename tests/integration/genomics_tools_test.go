@@ -56,12 +56,7 @@ func testGATKPipeline(t *testing.T, framework *pt.E2EFramework, platform pt.Sequ
 	t.Logf("🔬 Testing GATK pipeline with %s platform, %s population", platform, population)
 
 	// Step 1: Generate synthetic genomic data
-	config := framework.CreatePlatformConfig(platform, population)
-	require.NotNil(t, config)
-
-	syntheticData, err := framework.GenerateSyntheticData(config)
-	require.NoError(t, err)
-	require.NotNil(t, syntheticData)
+	syntheticData := generateOrSkip(t, framework, platform, population)
 
 	// Step 2: Create temporary working directory
 	workDir, err := os.MkdirTemp("", fmt.Sprintf("gatk_test_%s_%s", platform, population))
@@ -131,9 +126,7 @@ func testBWAAlignment(t *testing.T, framework *pt.E2EFramework, platform pt.Sequ
 	t.Logf("🧬 Testing %s alignment with %s platform", aligner, platform)
 
 	// Generate synthetic data
-	config := framework.CreatePlatformConfig(platform, "CEU")
-	syntheticData, err := framework.GenerateSyntheticData(config)
-	require.NoError(t, err)
+	syntheticData := generateOrSkip(t, framework, platform, "CEU")
 
 	// Create working directory
 	workDir, err := os.MkdirTemp("", fmt.Sprintf("bwa_test_%s", platform))
@@ -181,28 +174,19 @@ func TestBCFtoolsIntegration(t *testing.T) {
 func testBCFtoolsVariantProcessing(t *testing.T, framework *pt.E2EFramework) {
 	t.Log("🧪 Testing BCFtools variant processing workflow")
 
-	// Generate synthetic variants for multiple samples
-	platforms := []pt.SequencingPlatform{
-		pt.IlluminaNovaSeq6000,
-		pt.PacBioRevio,
-	}
+	// Two call sets against one reference: WriteVCF's sites come from the
+	// reference built from the reads, so both files share their sites.
+	syntheticData := generateOrSkip(t, framework, pt.IlluminaNovaSeq6000, "CEU")
 
 	workDir, err := os.MkdirTemp("", "bcftools_test")
 	require.NoError(t, err)
 	defer os.RemoveAll(workDir)
 
-	vcfFiles := make([]string, 0, len(platforms))
-	written := make([]int, 0, len(platforms))
-
-	for i, platform := range platforms {
-		config := framework.CreatePlatformConfig(platform, "CEU")
-		syntheticData, err := framework.GenerateSyntheticData(config)
-		require.NoError(t, err)
-
-		// Generate VCF file
-		vcfFile := filepath.Join(workDir, fmt.Sprintf("sample_%d.vcf", i+1))
-		err = framework.WriteVCF(syntheticData, vcfFile)
-		require.NoError(t, err)
+	var vcfFiles []string
+	var written []int
+	for i := 1; i <= 2; i++ {
+		vcfFile := filepath.Join(workDir, fmt.Sprintf("sample_%d.vcf", i))
+		require.NoError(t, framework.WriteVCF(syntheticData, vcfFile))
 		vcfFiles = append(vcfFiles, vcfFile)
 		stats, err := parseVCFStatistics(vcfFile)
 		require.NoError(t, err)
@@ -290,6 +274,18 @@ type VariantStatistics struct {
 }
 
 // Implementation functions
+
+// generateOrSkip generates reads for platform, skipping the test when the
+// generator has no read model for it (pt.ErrPlatformNotModeled).
+func generateOrSkip(t *testing.T, framework *pt.E2EFramework, platform pt.SequencingPlatform, population string) *pt.SyntheticData {
+	t.Helper()
+	data, err := framework.GenerateSyntheticData(framework.CreatePlatformConfig(platform, population))
+	if errors.Is(err, pt.ErrPlatformNotModeled) {
+		t.Skipf("%s: %v", platform, err)
+	}
+	require.NoError(t, err)
+	return data
+}
 
 func isToolAvailable(tool string) bool {
 	_, err := exec.LookPath(tool)
@@ -429,9 +425,7 @@ func runBCFtoolsOperations(t *testing.T, workDir string, vcfFiles []string) *BCF
 func testSamtoolsBAMProcessing(t *testing.T, framework *pt.E2EFramework) {
 	t.Log("🔧 Testing Samtools BAM processing")
 
-	config := framework.CreatePlatformConfig(pt.IlluminaNovaSeq6000, "CEU")
-	syntheticData, err := framework.GenerateSyntheticData(config)
-	require.NoError(t, err)
+	syntheticData := generateOrSkip(t, framework, pt.IlluminaNovaSeq6000, "CEU")
 
 	workDir, err := os.MkdirTemp("", "samtools_test")
 	require.NoError(t, err)
@@ -501,8 +495,9 @@ func validateAlignmentResults(t *testing.T, results *AlignmentResults, synthetic
 }
 
 // validateBCFtoolsResults checks the merge against the inputs. WriteVCF
-// writes A>G SNVs at positions 1000, 2000, ..., so the merged file holds the
-// largest input's sites, all of them transitions.
+// writes one transition SNV per 1000 bp of the reference, and both inputs
+// share those sites, so the merged file holds the largest input's sites,
+// all of them transitions.
 func validateBCFtoolsResults(t *testing.T, results *BCFtoolsResults, written []int) {
 	want := 0
 	for _, n := range written {
@@ -513,7 +508,7 @@ func validateBCFtoolsResults(t *testing.T, results *BCFtoolsResults, written []i
 	assert.Equal(t, want, results.VariantStats.TotalVariants, "bcftools stats record count")
 	assert.Equal(t, want, results.VariantStats.SNPCount, "every input record is a SNP")
 	assert.Equal(t, 0, results.VariantStats.IndelCount)
-	assert.Equal(t, want, results.VariantStats.TransitionCount, "A>G is a transition")
+	assert.Equal(t, want, results.VariantStats.TransitionCount, "every input record is a transition")
 	assert.Equal(t, 0, results.VariantStats.TransversionCount)
 	assert.Equal(t, want, results.MergedVCFStats.VariantCount, "merged VCF record count")
 	assert.Equal(t, 1.0, results.MergedVCFStats.FilterPassRate, "all input records PASS")
@@ -702,9 +697,7 @@ func testSamtoolsOperations(t *testing.T, workDir, bamFile string, wantReads int
 func testPicardQualityMetrics(t *testing.T, framework *pt.E2EFramework) {
 	t.Log("📊 Testing Picard quality metrics")
 
-	config := framework.CreatePlatformConfig(pt.IlluminaNovaSeq6000, "CEU")
-	syntheticData, err := framework.GenerateSyntheticData(config)
-	require.NoError(t, err)
+	syntheticData := generateOrSkip(t, framework, pt.IlluminaNovaSeq6000, "CEU")
 
 	workDir, err := os.MkdirTemp("", "picard_test")
 	require.NoError(t, err)
@@ -765,9 +758,7 @@ func tailLines(s string, n int) string {
 func testSamtoolsStatistics(t *testing.T, framework *pt.E2EFramework) {
 	t.Log("📊 Testing Samtools statistics generation")
 
-	config := framework.CreatePlatformConfig(pt.IlluminaNovaSeq6000, "CEU")
-	syntheticData, err := framework.GenerateSyntheticData(config)
-	require.NoError(t, err)
+	syntheticData := generateOrSkip(t, framework, pt.IlluminaNovaSeq6000, "CEU")
 
 	workDir, err := os.MkdirTemp("", "samtools_stats_test")
 	require.NoError(t, err)
