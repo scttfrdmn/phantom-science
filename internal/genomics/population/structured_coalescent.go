@@ -172,6 +172,11 @@ type JointSite struct {
 	// individuals of Populations[i] (haplotypes 2k and 2k+1 form individual
 	// k). Nil for a population with an odd haplotype count.
 	Genotypes [][]int
+	// Carriers[i][h] is 1 when haplotype h of Populations[i] carries the
+	// derived allele and 0 otherwise: the phased haplotype matrix of the
+	// sample at this site (one row per population, one column per
+	// haplotype).
+	Carriers [][]byte
 }
 
 // JointPanel is a sample from several populations simulated on shared
@@ -600,15 +605,18 @@ func (s *jointLocusSim) addMutations(jp *JointPanel, locus int, mu float64, locu
 			Age:          lo + s.rng.Float64()*(hi-lo),
 			DerivedCount: make([]int, s.nSampled),
 			Genotypes:    make([][]int, s.nSampled),
+			Carriers:     make([][]byte, s.nSampled),
 		}
 		for i, n := range jp.Haplotypes {
 			if n%2 == 0 {
 				site.Genotypes[i] = make([]int, n/2)
 			}
+			site.Carriers[i] = make([]byte, n)
 		}
 		s.forLeavesBelow(v, func(leaf int) {
 			si := s.leafSample[leaf]
 			site.DerivedCount[si]++
+			site.Carriers[si][leafHap[leaf]] = 1
 			if g := site.Genotypes[si]; g != nil {
 				g[leafHap[leaf]/2]++
 			}

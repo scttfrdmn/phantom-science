@@ -276,7 +276,7 @@ func TestRun_HPOResolvedManifest(t *testing.T) {
 		},
 	}
 	cfg := &types.SequencerConfig{SampleName: "cf", Lane: 1, ReadLength: 100, BaseQuality: 30, Seed: 5}
-	m, err := NewScenarioGenerator(cfg, dir).Run(context.Background(), sc)
+	m, err := NewScenarioGenerator(cfg).Run(context.Background(), sc)
 	require.NoError(t, err)
 	require.Len(t, m.PlantedVariants, 1)
 	v := m.PlantedVariants[0]

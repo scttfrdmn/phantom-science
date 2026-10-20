@@ -35,7 +35,14 @@ With --reference genome.fa the planted REF allele is checked against the
 FASTA first (chromosome names with or without "chr"; a .fai index is used
 when present) and a mismatch is an error. A JSON ground-truth manifest
 records what was planted.
---population is used only by trio scenarios (trio.generate and trio.de_novo).
+Trio scenarios (trio: {generate: true, de_novo: true} with output.mother_fastq
+and output.father_fastq) simulate six phased haplotypes for the window with the
+Go structured coalescent (no Python): the parents get two each, the proband
+inherits one from each parent with Poisson crossovers, and the planted variant
+is a de novo on the proband only. --population selects the demographic model:
+YRI, CEU, CHB or MXL, or a 1000 Genomes code modelled by the closest of these
+(e.g. GBR, TSI, JPT, LWK); other codes are an error. It is used only by trio
+scenarios.
 
 Example, with glut1_scenario.yaml containing the spec below:
   phantom-science scenario --spec glut1_scenario.yaml --population CEU
@@ -50,6 +57,8 @@ The YAML spec format:
   output:
     proband_fastq: proband.fastq
     ground_truth: manifest.json`,
+	// Run errors (e.g. a REF mismatch) are not usage errors.
+	SilenceUsage: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		specPath, _ := cmd.Flags().GetString("spec")
 		if specPath == "" {
@@ -89,8 +98,7 @@ The YAML spec format:
 			return fmt.Errorf("loading scenario: %w", err)
 		}
 
-		projectRoot, _ := os.Getwd()
-		gen := clinical.NewScenarioGenerator(sequencerCfg, projectRoot)
+		gen := clinical.NewScenarioGenerator(sequencerCfg)
 		if refPath, _ := cmd.Flags().GetString("reference"); refPath != "" {
 			gen.WithReference(refPath)
 		}
@@ -123,6 +131,6 @@ The YAML spec format:
 func init() {
 	rootCmd.AddCommand(scenarioCmd)
 	scenarioCmd.Flags().String("spec", "", "Path to YAML scenario specification (required)")
-	scenarioCmd.Flags().String("population", "", "Override population code (default CEU)")
+	scenarioCmd.Flags().String("population", "", "Trio population: YRI, CEU, CHB, MXL or a 1000 Genomes alias of them (default CEU)")
 	scenarioCmd.Flags().String("reference", "", "Reference FASTA (GRCh38 for catalogue variants); the planted REF allele must match it or the run fails")
 }

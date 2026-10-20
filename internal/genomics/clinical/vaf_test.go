@@ -412,12 +412,11 @@ func TestHaplotypeAwareInjection_Deterministic(t *testing.T) {
 	for i := range matrix {
 		matrix[i] = make([]int, 1)
 	}
-	// Rows 0,2,4 = H1s; rows 1,3,5 = H2s.
-	// ProbandH1 comes from mother (row 0) via recombination.
-	// Set mother H1 (row 0) to alt=1, mother H2 (row 1) to ref=0.
-	matrix[0][variantIdx] = 1 // motherH1 = alt
-	matrix[1][variantIdx] = 0 // motherH2 = ref
-	// father H1/H2 both ref.
+	// Rows 0,1 = mother; rows 2,3 = father. The mother is homozygous ALT and
+	// the father homozygous REF, so whichever haplotype each transmits the
+	// proband is heterozygous: ProbandH1 (maternal) ALT, ProbandH2 REF.
+	matrix[0][variantIdx] = 1
+	matrix[1][variantIdx] = 1
 	matrix[2][variantIdx] = 0
 	matrix[3][variantIdx] = 0
 
@@ -426,7 +425,7 @@ func TestHaplotypeAwareInjection_Deterministic(t *testing.T) {
 		HaplotypeMatrix: matrix,
 		NumSamples:      6,
 		Statistics: population.HaplotypeStatistics{
-			GeneticMapLengthCM: 0.0, // no crossovers → proband inherits whole haplotype
+			GeneticMapLengthCM: 0.0, // no crossovers
 		},
 	}
 
@@ -435,11 +434,8 @@ func TestHaplotypeAwareInjection_Deterministic(t *testing.T) {
 	trio, err := clinical.GenerateTrioHaplotypes(result, nil, rng)
 	require.NoError(t, err)
 
-	// With GeneticMapLengthCM=0 (λ=0 crossovers), probandH1 = motherH1 = [1].
-	assert.Equal(t, 1, trio.ProbandH1[variantIdx], "ProbandH1 should carry alt from motherH1")
-	assert.Equal(t, 0, trio.ProbandH2[variantIdx], "ProbandH2 should carry ref from fatherH1")
-	assert.Equal(t, 0, trio.MotherH1[variantIdx]+trio.MotherH2[variantIdx]-1,
-		"motherH1=1, motherH2=0, so (H1+H2-1)=0")
+	assert.Equal(t, 1, trio.ProbandH1[variantIdx], "ProbandH1 should carry alt from the mother")
+	assert.Equal(t, 0, trio.ProbandH2[variantIdx], "ProbandH2 should carry ref from the father")
 
 	region := &genomics.GenomicRegion{
 		Chromosome: testChrom,
@@ -488,14 +484,28 @@ func TestHaplotypeAwareInjection_Deterministic(t *testing.T) {
 	vaf := float64(pAlt) / float64(total)
 	assert.InDelta(t, 0.5, vaf, 0.12, "proband VAF should be ~0.5; got %.3f (alt=%d ref=%d)", vaf, pAlt, pRef)
 
-	// Mother: H1=alt, H2=ref — but mother doesn't inject H1 variants as ALT at the locus
-	// in the same way (injectAtPosition for HaplotypeVariant uses position 0-based).
-	// Just verify no crash.
+	// Mother: homozygous ALT, so every read covering the site is ALT.
 	var motherBuf bytes.Buffer
 	bwM := bufio.NewWriterSize(&motherBuf, 64*1024)
 	_, err = clinical.ExportGenerateHaplotypeFASTQ(bwM, engine, cfg, trio, "mother", region, readLength, 200)
 	require.NoError(t, err)
 	require.NoError(t, bwM.Flush())
+	var mAlt, mOther int
+	for _, rd := range parseFASTQ(motherBuf.Bytes()) {
+		rs, err := parseReadStart(rd[0])
+		require.NoError(t, err)
+		off := int64(locus0) - rs
+		if off < 0 || int(off) >= len(rd[1]) {
+			continue
+		}
+		if rd[1][off] == testAlt[0] {
+			mAlt++
+		} else {
+			mOther++
+		}
+	}
+	assert.Greater(t, mAlt, 20)
+	assert.Zero(t, mOther, "homozygous ALT mother")
 }
 
 // TestVAF_BinomialDistribution runs 20 independent generations and verifies

@@ -46,6 +46,13 @@ type TrioManifest struct {
 	MotherCarries bool `json:"mother_carries"`
 	FatherCarries bool `json:"father_carries"`
 	DeNovo        bool `json:"de_novo"`
+	// Population is the requested population code, DemographicModel the
+	// preset that simulated it (YRI, CEU, CHB or MXL), and
+	// BackgroundVariants the number of simulated segregating sites in the
+	// six-haplotype sample.
+	Population         string `json:"population,omitempty"`
+	DemographicModel   string `json:"demographic_model,omitempty"`
+	BackgroundVariants int    `json:"background_variants"`
 }
 
 // SequencerManifest records sequencing parameters.

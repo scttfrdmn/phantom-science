@@ -40,7 +40,7 @@ func runScenario(t *testing.T, zygosity string, seed uint64) ([]byte, [][2]strin
 		},
 	}
 	cfg := &types.SequencerConfig{SampleName: "hom", Lane: 1, ReadLength: 150, BaseQuality: 30, Seed: seed}
-	m, err := clinical.NewScenarioGenerator(cfg, dir).Run(context.Background(), sc)
+	m, err := clinical.NewScenarioGenerator(cfg).Run(context.Background(), sc)
 	require.NoError(t, err)
 	require.Len(t, m.PlantedVariants, 1)
 	data, err := os.ReadFile(sc.Output.ProbandFASTQ)

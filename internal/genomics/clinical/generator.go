@@ -20,16 +20,19 @@ import (
 
 const windowHalfSize = 25000 // 50 kb window around variant (±25 kb)
 
+// trioSimSeedSalt decorrelates the haplotype simulation's RNG from the
+// engines' read streams, which use the same run seed.
+const trioSimSeedSalt = 0x5452494f48415053 // "TRIOHAPS"
+
 // ScenarioGenerator orchestrates haplotype-aware clinical scenario generation.
 type ScenarioGenerator struct {
 	config        *types.SequencerConfig
-	projectRoot   string
 	referencePath string
 }
 
 // NewScenarioGenerator creates a ScenarioGenerator.
-func NewScenarioGenerator(config *types.SequencerConfig, projectRoot string) *ScenarioGenerator {
-	return &ScenarioGenerator{config: config, projectRoot: projectRoot}
+func NewScenarioGenerator(config *types.SequencerConfig) *ScenarioGenerator {
+	return &ScenarioGenerator{config: config}
 }
 
 // WithReference makes Run check the planted variant's REF allele against
@@ -122,25 +125,27 @@ func (g *ScenarioGenerator) Run(ctx context.Context, scenario *ClinicalScenario)
 	cfg.Seed = runSeed
 
 	var readsGenerated int
+	var simResult *population.HaplotypeSimulationResult
 
 	if scenario.Trio != nil && scenario.Trio.Generate && scenario.Trio.DeNovo {
 		// 4. Trio path: haplotype-aware generation.
-		seed := int(runSeed & 0x7fffffff) // #nosec G115 -- masked to 31 bits
-		sim := population.NewHaplotypeSimulator(g.projectRoot)
-		result, err := sim.SimulateHaplotypes(
-			population.Population(g.config.Population),
+		// Six phased haplotypes (mother, father, two background) from the
+		// Go structured coalescent, one locus spanning the read region.
+		result, err := population.SimulateHaplotypes(
+			population.Population(cfg.Population),
 			spec.Chrom,
-			3, // 6 haplotypes
+			int(region.Start),
 			int(regionLen),
-			&seed,
-			true,
+			6,
+			runSeed^trioSimSeedSalt,
 		)
 		if err != nil {
-			return nil, fmt.Errorf("haplotype simulation: %w", err)
+			return nil, fmt.Errorf("trio scenario: %w", err)
 		}
+		simResult = result
 
-		// #nosec G404 -- seed is used for deterministic simulation, not security
-		rng := mathrand.New(mathrand.NewSource(int64(seed)))
+		// #nosec G404 G115 -- deterministic simulation from the run seed, not security
+		rng := mathrand.New(mathrand.NewSource(int64(runSeed)))
 		trio, err := GenerateTrioHaplotypes(result, &varRecord, rng)
 		if err != nil {
 			return nil, fmt.Errorf("generating trio haplotypes: %w", err)
@@ -236,6 +241,11 @@ func (g *ScenarioGenerator) Run(ctx context.Context, scenario *ClinicalScenario)
 			MotherCarries: false,
 			FatherCarries: false,
 			DeNovo:        scenario.Trio.DeNovo,
+		}
+		if simResult != nil {
+			manifest.Trio.Population = string(simResult.Population)
+			manifest.Trio.DemographicModel = simResult.Preset
+			manifest.Trio.BackgroundVariants = simResult.NumVariants
 		}
 	}
 	return manifest, nil

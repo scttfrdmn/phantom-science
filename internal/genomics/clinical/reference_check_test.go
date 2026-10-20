@@ -111,7 +111,7 @@ func TestRun_ReferenceCheck(t *testing.T) {
 			},
 		}
 		cfg := &types.SequencerConfig{SampleName: "ref", Lane: 1, ReadLength: 50, BaseQuality: 30, Seed: 3}
-		m, err := NewScenarioGenerator(cfg, dir).WithReference(ref).Run(context.Background(), sc)
+		m, err := NewScenarioGenerator(cfg).WithReference(ref).Run(context.Background(), sc)
 		return m, sc.Output.ProbandFASTQ, err
 	}
 

@@ -80,6 +80,9 @@ func LoadScenario(path string) (*ClinicalScenario, error) {
 	if len(sc.Phenotype.HPOTerms) == 0 && sc.Phenotype.PlantedVariant == nil {
 		return nil, fmt.Errorf("scenario must specify hpo_terms or planted_variant")
 	}
+	if sc.Trio != nil && sc.Trio.Generate && !sc.Trio.DeNovo {
+		return nil, fmt.Errorf("trio.generate requires trio.de_novo: true (only de novo trios are generated)")
+	}
 	if sc.Output.ProbandFASTQ == "" {
 		return nil, fmt.Errorf("scenario must specify output.proband_fastq")
 	}

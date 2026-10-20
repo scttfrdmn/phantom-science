@@ -153,6 +153,17 @@ func TestSimulateJointPanel_SiteInvariants(t *testing.T) {
 				g += x
 			}
 			assert.Equal(t, c, g, "genotype dosages must sum to the derived count")
+			require.Len(t, s.Carriers[i], jp.Haplotypes[i])
+			carried := 0
+			for h, x := range s.Carriers[i] {
+				require.True(t, x == 0 || x == 1)
+				carried += int(x)
+				if s.Genotypes[i] != nil && h%2 == 1 {
+					assert.Equal(t, s.Genotypes[i][h/2], int(s.Carriers[i][h-1])+int(x),
+						"haplotypes 2k and 2k+1 make up genotype k")
+				}
+			}
+			assert.Equal(t, c, carried, "carrier rows must sum to the derived count")
 		}
 		// A mutation is below the root, so it is never carried by every
 		// sampled haplotype, and never by none.
@@ -162,6 +173,34 @@ func TestSimulateJointPanel_SiteInvariants(t *testing.T) {
 	for l, tm := range jp.LocusTMRCA {
 		assert.Greater(t, jp.LocusTreeLength[l], tm, "tree length exceeds TMRCA for n > 2")
 	}
+}
+
+// Two sites on the same genealogy are either nested, disjoint or identical
+// in their carrier sets (no recombination within a locus), so no pair of
+// sites shows all four gametes.
+func TestSimulateJointPanel_CarriersFourGameteFree(t *testing.T) {
+	jp, err := population.SimulateJointPanel(population.PresetDemography(),
+		map[string]int{"CEU": 12}, 3, 11)
+	require.NoError(t, err)
+	byLocus := map[int][]population.JointSite{}
+	for _, s := range jp.Sites {
+		byLocus[s.Locus] = append(byLocus[s.Locus], s)
+	}
+	pairs := 0
+	for _, sites := range byLocus {
+		for a := 0; a < len(sites); a++ {
+			for b := a + 1; b < len(sites); b++ {
+				var gametes [2][2]bool
+				for h := range sites[a].Carriers[0] {
+					gametes[sites[a].Carriers[0][h]][sites[b].Carriers[0][h]] = true
+				}
+				pairs++
+				assert.False(t, gametes[0][0] && gametes[0][1] && gametes[1][0] && gametes[1][1],
+					"sites %d and %d show all four gametes", sites[a].Position, sites[b].Position)
+			}
+		}
+	}
+	require.Greater(t, pairs, 0)
 }
 
 func TestDemographyValidate(t *testing.T) {
