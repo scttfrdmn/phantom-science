@@ -19,6 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `illumina:` config section and `generate --quality-model`, `--illumina-errors`, `--insert-size-mean` and `--insert-size-sd` (#27).
 - `NewEngineLog(config, w)` sends engine diagnostics to a writer; nil discards them (#27).
 - `fingerprinting.ReadTags` and `ParseReadTags` (#27).
+- `generate --reference genome.fa [--region chr:start-end]` (`reference_path`, `reference_region`): reads and paired fragments are sampled from an uncompressed FASTA on both strands, and only the region is loaded (#27).
+  - File output writes a `<name>.truth.tsv` per batch (read name, contig, 0-based start, strand, fragment length), listed in the manifest with role `truth`.
+  - Positioned `--variants` are applied in reference coordinates. A REF mismatch is skipped with a warning, or is an error with `--strict-ref` (`strict_ref`).
+  - A reference cannot be combined with an HMM model.
+  - `Engine.ReferenceBases` exposes the loaded reference.
 
 ### Changed
 - **BREAKING:** `sequence_validator` takes input paths as arguments (it read only `sequences/validation`) and exits 2 when any sequence fails (#27).
@@ -125,6 +130,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The `.gitignore` pattern `GRCh38*` also ignored source files such as `grch38_test.go` on case-insensitive filesystems.
 - The TUI's run timer printed a summary into the terminal (#27).
 - Paired-end mates could carry different alleles at a planted variant (#27).
+- `config_v1` `ToV1()` dropped the `illumina` section (#27).
 
 ### Security
 - Known limitation: with the default binned Illumina qualities, the quality-score fingerprint moves 360–412 qualities per file off the four bins (for example Q38 `G`), so fingerprinted binned files are detectable from their quality histogram. Bin-aware embedding is requested in scttfrdmn/stegano#107; `illumina.quality_model: linear` avoids it (#27).

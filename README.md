@@ -16,10 +16,13 @@ on `main` but not in a tagged release yet.
 
 ## What it does and does not do
 
-- **Reads are synthetic sequence, not samples of a reference genome.** Bases
-  are uniform random, or drawn from an HMM trained with `train`. Reads do not
-  align to GRCh38. Paired-end mates are the two ends of one fragment, with
-  insert sizes drawn from `illumina.insert_size` (normal 350 ± 50 by default).
+- **Reads come from a reference genome, or are synthetic.** With
+  `--reference genome.fa` (since 0.10.0) every read or fragment is sampled
+  from the FASTA on both strands, so reads align back to it. Without it,
+  bases are uniform random, or drawn from an HMM trained with `train`, and
+  reads do not align to any genome. Paired-end mates are the two ends of one
+  fragment, with insert sizes drawn from `illumina.insert_size` (normal
+  350 ± 50 by default).
 - **Illumina-style output** (since 0.10.0) has Illumina headers and file
   names, qualities in the four RTA3 bins (Q2, Q12, Q23, Q37) from a per-cycle
   model that degrades along the read (read 2 lower than read 1), and
@@ -160,6 +163,18 @@ works; prefer the subcommands.
 - **Manifest:** every run writes `phantom-manifest.json` with the seed, the
   sanitized config, and the size and sha256 of every output. It never contains
   key material.
+- **Reference genome:** `--reference genome.fa [--region chr:start-end]`
+  samples reads from an uncompressed FASTA (a samtools `.fai` is used when
+  present; gzip is rejected). Only the region is loaded; a whole GRCh38 takes
+  about 3 GB of memory, so use `--region` for small runs. File output writes a
+  `<name>.truth.tsv` per batch (read name, contig, 0-based start, strand,
+  fragment length), listed in the manifest. Positioned `--variants` are
+  applied in reference coordinates; a REF that does not match the reference is
+  skipped with a warning, or is an error with `--strict-ref`. A reference
+  cannot be combined with an HMM model. Measured on hg38
+  chr22:20,000,000–21,000,000 (200,000 pairs, `minimap2 -ax sr`): 100% of reads
+  mapped and properly paired, insert 348 ± 48, and per-quality mismatch rates
+  equal to the model's (0.0633, 0.0050, 0.0002 at Q12, Q23, Q37).
 - **HMM model:** `--hmm-model-path model.hmm.json`, or
   `--population CEU --model-dir models/` to load `models/CEU.hmm.json`. If a
   configured model is missing or cannot be loaded, `generate` fails before
