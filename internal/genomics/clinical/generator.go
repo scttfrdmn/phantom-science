@@ -13,7 +13,6 @@ import (
     "time"
 
     "github.com/scttfrdmn/phantom-science/internal/genomics"
-    "github.com/scttfrdmn/phantom-science/internal/genomics/diseases"
     "github.com/scttfrdmn/phantom-science/internal/genomics/seqread"
     "github.com/scttfrdmn/phantom-science/internal/population"
     "github.com/scttfrdmn/phantom-science/pkg/types"
@@ -43,9 +42,8 @@ func (g *ScenarioGenerator) Run(ctx context.Context, scenario *ClinicalScenario)
         spec = scenario.Phenotype.PlantedVariant
         gene = scenario.Phenotype.ResolvedGene
     } else {
-        cv := diseases.NewClinVarIntegrator("")
         var err error
-        spec, gene, err = ResolveHPO(ctx, scenario.Phenotype.HPOTerms, cv)
+        spec, gene, err = ResolveHPO(scenario.Phenotype.HPOTerms)
         if err != nil {
             return nil, fmt.Errorf("resolving HPO terms: %w", err)
         }
