@@ -11,12 +11,15 @@ import (
 
 // GroundTruthManifest is a machine-readable record of what was planted.
 type GroundTruthManifest struct {
-	GeneratedAt     time.Time         `json:"generated_at"`
-	ProbandID       string            `json:"proband_id"`
-	PlantedVariants []PlantedVariant  `json:"planted_variants"`
-	Trio            *TrioManifest     `json:"trio,omitempty"`
-	Sequencer       SequencerManifest `json:"sequencer"`
-	ComputeMetrics  ComputeMetrics    `json:"compute_metrics"`
+	GeneratedAt     time.Time        `json:"generated_at"`
+	ProbandID       string           `json:"proband_id"`
+	PlantedVariants []PlantedVariant `json:"planted_variants"`
+	Trio            *TrioManifest    `json:"trio,omitempty"`
+	// Reference is the FASTA the planted REF alleles were checked against
+	// (scenario --reference); empty when unchecked.
+	Reference      string            `json:"reference,omitempty"`
+	Sequencer      SequencerManifest `json:"sequencer"`
+	ComputeMetrics ComputeMetrics    `json:"compute_metrics"`
 }
 
 // PlantedVariant records a single planted variant in the manifest.

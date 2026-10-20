@@ -22,13 +22,22 @@ const windowHalfSize = 25000 // 50 kb window around variant (±25 kb)
 
 // ScenarioGenerator orchestrates haplotype-aware clinical scenario generation.
 type ScenarioGenerator struct {
-	config      *types.SequencerConfig
-	projectRoot string
+	config        *types.SequencerConfig
+	projectRoot   string
+	referencePath string
 }
 
 // NewScenarioGenerator creates a ScenarioGenerator.
 func NewScenarioGenerator(config *types.SequencerConfig, projectRoot string) *ScenarioGenerator {
 	return &ScenarioGenerator{config: config, projectRoot: projectRoot}
+}
+
+// WithReference makes Run check the planted variant's REF allele against
+// the reference FASTA at path (see CheckPlantedRef) before writing any
+// reads; a mismatch fails the run. Read bases remain synthetic.
+func (g *ScenarioGenerator) WithReference(path string) *ScenarioGenerator {
+	g.referencePath = path
+	return g
 }
 
 // Run executes a clinical scenario and returns the ground truth manifest.
@@ -49,6 +58,11 @@ func (g *ScenarioGenerator) Run(ctx context.Context, scenario *ClinicalScenario)
 			return nil, fmt.Errorf("resolving HPO terms: %w", err)
 		}
 		gene = entry.Gene
+	}
+	if g.referencePath != "" {
+		if err := CheckPlantedRef(g.referencePath, spec); err != nil {
+			return nil, err
+		}
 	}
 
 	// 2. Build GenomicRegion: ±25 kb window around variant.
@@ -205,6 +219,7 @@ func (g *ScenarioGenerator) Run(ctx context.Context, scenario *ClinicalScenario)
 		GeneratedAt:     time.Now().UTC(),
 		ProbandID:       g.config.SampleName,
 		PlantedVariants: []PlantedVariant{planted},
+		Reference:       g.referencePath,
 		Sequencer: SequencerManifest{
 			Platform:      scenario.Sequencer.Platform,
 			Coverage:      coverage,

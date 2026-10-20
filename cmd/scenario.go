@@ -30,8 +30,11 @@ to a pathogenic ClinVar variant (GRCh38, VCF-normalised; no network lookup):
 Other terms are an error unless the spec gives phenotype.planted_variant
 explicitly. Reads are placed in a 50 kb window around the variant at the
 requested coverage, and reads covering it carry the ALT allele at the
-expected VAF. Read bases are synthetic, not taken from a reference genome. A
-JSON ground-truth manifest records what was planted.
+expected VAF. Read bases are synthetic, not taken from a reference genome.
+With --reference genome.fa the planted REF allele is checked against the
+FASTA first (chromosome names with or without "chr"; a .fai index is used
+when present) and a mismatch is an error. A JSON ground-truth manifest
+records what was planted.
 --population is used only by trio scenarios (trio.generate and trio.de_novo).
 
 Example, with glut1_scenario.yaml containing the spec below:
@@ -88,6 +91,9 @@ The YAML spec format:
 
 		projectRoot, _ := os.Getwd()
 		gen := clinical.NewScenarioGenerator(sequencerCfg, projectRoot)
+		if refPath, _ := cmd.Flags().GetString("reference"); refPath != "" {
+			gen.WithReference(refPath)
+		}
 		manifest, err := gen.Run(cmd.Context(), scenario)
 		if err != nil {
 			return fmt.Errorf("running scenario: %w", err)
@@ -118,4 +124,5 @@ func init() {
 	rootCmd.AddCommand(scenarioCmd)
 	scenarioCmd.Flags().String("spec", "", "Path to YAML scenario specification (required)")
 	scenarioCmd.Flags().String("population", "", "Override population code (default CEU)")
+	scenarioCmd.Flags().String("reference", "", "Reference FASTA (GRCh38 for catalogue variants); the planted REF allele must match it or the run fails")
 }
