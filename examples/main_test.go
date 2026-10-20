@@ -10,13 +10,9 @@ import (
 	"testing"
 
 	"github.com/scttfrdmn/phantom-science/internal/fingerprinting"
+	"github.com/scttfrdmn/phantom-science/internal/genomics"
+	"github.com/scttfrdmn/phantom-science/pkg/types"
 )
-
-// steganoAvailable reports whether this build links the stegano library.
-func steganoAvailable() bool {
-	_, err := fingerprinting.NewVerifier()
-	return err == nil
-}
 
 // writeKey writes a key file with mode 0600 and returns its path.
 func writeKey(t *testing.T, dir, key string) string {
@@ -37,19 +33,16 @@ func fastqFiles(t *testing.T, dir string) []string {
 	return files
 }
 
-// The example's round trip: every generated file carries an encrypted
-// fingerprint that names the customer and dataset and is readable only with
-// the key it was embedded with.
-func TestFingerprintDataset_EncryptedRoundTrip(t *testing.T) {
-	if !steganoAvailable() {
-		t.Skip("needs the stegano library (CGO build)")
-	}
+// The example's round trip: every generated file is attributed to the
+// customer and dataset by regeneration with the key, and only with it.
+// No stegano library is needed.
+func TestFingerprintDataset_RoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	out := filepath.Join(dir, "out")
 	keyFile := writeKey(t, dir, "example-key-0123456789abcdef")
 	t.Setenv(fingerprinting.KeyEnvVar, "")
 
-	files, err := FingerprintDataset(Options{OutputDir: out, CustomerID: "ACME", DatasetID: "study_1", KeyFile: keyFile, Reads: 500, Seed: 1})
+	files, man, err := FingerprintDataset(Options{OutputDir: out, CustomerID: "ACME", DatasetID: "study_1", KeyFile: keyFile, Reads: 500, Seed: 1})
 	if err != nil {
 		t.Fatalf("FingerprintDataset: %v", err)
 	}
@@ -58,53 +51,62 @@ func TestFingerprintDataset_EncryptedRoundTrip(t *testing.T) {
 	}
 
 	var report bytes.Buffer
-	if err := VerifyDataset(&report, files, keyFile, "ACME", "study_1"); err != nil {
+	if err := VerifyDataset(&report, files, keyFile, man); err != nil {
 		t.Fatalf("VerifyDataset: %v\n%s", err, report.String())
 	}
-	if n := strings.Count(report.String(), "(encrypted)"); n != 2 {
-		t.Errorf("report has %d encrypted fingerprints, want 2:\n%s", n, report.String())
+	if n := strings.Count(report.String(), "✅"); n != 2 || !strings.Contains(report.String(), "customer=ACME dataset=study_1 salt=1") {
+		t.Errorf("report has %d matches, want 2 attributed to ACME/study_1:\n%s", n, report.String())
 	}
 
-	// The wrong customer, a wrong key and no key all fail.
-	if err := VerifyDataset(&bytes.Buffer{}, files, keyFile, "OTHER", "study_1"); err == nil {
-		t.Error("VerifyDataset accepted a fingerprint for another customer")
-	}
+	// A wrong key and no key both fail.
 	wrongKey := writeKey(t, t.TempDir(), "another-key-0123456789abcdef")
-	if err := VerifyDataset(&bytes.Buffer{}, files, wrongKey, "ACME", "study_1"); err == nil {
+	if err := VerifyDataset(&bytes.Buffer{}, files, wrongKey, man); err == nil {
 		t.Error("VerifyDataset succeeded with the wrong key")
 	}
-	if err := VerifyDataset(&bytes.Buffer{}, files, "", "ACME", "study_1"); err == nil {
+	if err := VerifyDataset(&bytes.Buffer{}, files, "", man); err == nil {
 		t.Error("VerifyDataset succeeded without a key")
 	}
 }
 
-// Without a key, generation refuses to embed and writes no FASTQ files.
-func TestFingerprintDataset_RequiresKey(t *testing.T) {
-	out := t.TempDir()
-	t.Setenv(fingerprinting.KeyEnvVar, "")
-	if _, err := FingerprintDataset(Options{OutputDir: out, CustomerID: "ACME", DatasetID: "d", Reads: 100, Seed: 1}); err == nil {
-		t.Fatal("FingerprintDataset succeeded without a key")
+// The fingerprinted files are exactly the files of an unfingerprinted run
+// with the derived seed: fingerprinting changes nothing in the data.
+func TestFingerprintDataset_DataUnchanged(t *testing.T) {
+	dir := t.TempDir()
+	keyFile := writeKey(t, dir, "example-key-0123456789abcdef")
+	files, _, err := FingerprintDataset(Options{OutputDir: filepath.Join(dir, "fp"), CustomerID: "ACME", DatasetID: "study_1", KeyFile: keyFile, Reads: 200, Seed: 9})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if files := fastqFiles(t, out); len(files) != 0 {
-		t.Errorf("unmarked files left behind: %v", files)
+	seed, err := fingerprinting.DeriveSeed([]byte("example-key-0123456789abcdef"), "ACME", "study_1", 9)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plainDir := filepath.Join(dir, "plain")
+	e := genomics.NewEngineLog(types.SequencerConfig{
+		SampleName: "fingerprint-example", Lane: 1, OutputDir: plainDir, ReadLength: 150,
+		ReadsPerBatch: 200, TotalBatches: 1, PairedEnd: true, BaseQuality: 35, QualityDecay: 0.1, Seed: seed,
+	}, nil)
+	if err := e.Generate(); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range files {
+		got, _ := os.ReadFile(f)
+		want, err := os.ReadFile(filepath.Join(plainDir, filepath.Base(f)))
+		if err != nil || !bytes.Equal(got, want) {
+			t.Errorf("%s differs from the unfingerprinted run with the derived seed (%v)", filepath.Base(f), err)
+		}
 	}
 }
 
-// In builds without stegano, generation fails before writing anything
-// instead of writing files without the requested fingerprint.
-func TestFingerprintDataset_NoSteganoFailsClosed(t *testing.T) {
-	if steganoAvailable() {
-		t.Skip("stegano library is linked")
-	}
-	dir := t.TempDir()
-	out := filepath.Join(dir, "out")
-	keyFile := writeKey(t, dir, "example-key-0123456789abcdef")
-	_, err := FingerprintDataset(Options{OutputDir: out, CustomerID: "ACME", DatasetID: "d", KeyFile: keyFile, Reads: 100, Seed: 1})
-	if err == nil || !strings.Contains(err.Error(), "stegano") {
-		t.Fatalf("err = %v, want an error naming the stegano library", err)
+// Without a key, generation refuses to start and writes no FASTQ files.
+func TestFingerprintDataset_RequiresKey(t *testing.T) {
+	out := t.TempDir()
+	t.Setenv(fingerprinting.KeyEnvVar, "")
+	if _, _, err := FingerprintDataset(Options{OutputDir: out, CustomerID: "ACME", DatasetID: "d", Reads: 100, Seed: 1}); err == nil {
+		t.Fatal("FingerprintDataset succeeded without a key")
 	}
 	if files := fastqFiles(t, out); len(files) != 0 {
-		t.Errorf("unmarked files written: %v", files)
+		t.Errorf("files written without a key: %v", files)
 	}
 }
 
@@ -115,26 +117,26 @@ func TestFingerprintDataset_RejectsExposedKeyFile(t *testing.T) {
 	if err := os.Chmod(keyFile, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	_, err := FingerprintDataset(Options{OutputDir: filepath.Join(dir, "out"), CustomerID: "ACME", DatasetID: "d", KeyFile: keyFile, Reads: 100, Seed: 1})
-	if err == nil {
-		t.Fatal("FingerprintDataset accepted a key file with mode 0644")
-	}
-	if steganoAvailable() && !strings.Contains(err.Error(), "chmod 600") {
-		t.Errorf("err = %v, want advice to chmod 600 the key file", err)
+	_, _, err := FingerprintDataset(Options{OutputDir: filepath.Join(dir, "out"), CustomerID: "ACME", DatasetID: "d", KeyFile: keyFile, Reads: 100, Seed: 1})
+	if err == nil || !strings.Contains(err.Error(), "chmod 600") {
+		t.Fatalf("err = %v, want advice to chmod 600 the key file", err)
 	}
 }
 
-func TestVerifyDataset_UnfingerprintedFile(t *testing.T) {
-	if !steganoAvailable() {
-		t.Skip("needs the stegano library (CGO build)")
-	}
+// Reads that the run did not produce are not attributed to it.
+func TestVerifyDataset_UnrelatedFile(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "plain.fastq")
-	if err := os.WriteFile(path, []byte("@r1\nACGTACGTACGTACGTACGT\n+\nIIIIIIIIIIIIIIIIIIII\n"), 0o600); err != nil {
+	keyFile := writeKey(t, dir, "example-key-0123456789abcdef")
+	_, man, err := FingerprintDataset(Options{OutputDir: filepath.Join(dir, "out"), CustomerID: "ACME", DatasetID: "d", KeyFile: keyFile, Reads: 100, Seed: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "other.fastq")
+	if err := os.WriteFile(path, []byte("@r1\nACGTTGCAAGGCTTAACCGGTTAAGCTAGCTAGGATCCAGT\n+\nFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	var report bytes.Buffer
-	if err := VerifyDataset(&report, []string{path}, writeKey(t, dir, "example-key-0123456789abcdef"), "ACME", "d"); err == nil {
-		t.Fatalf("VerifyDataset accepted a file without a fingerprint:\n%s", report.String())
+	if err := VerifyDataset(&report, []string{path}, keyFile, man); err == nil {
+		t.Fatalf("VerifyDataset attributed an unrelated file:\n%s", report.String())
 	}
 }
