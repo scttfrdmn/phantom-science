@@ -50,7 +50,7 @@ func writeGenerateConfig(t *testing.T, readLength, reads int) string {
 
 func TestGenerateCommand_NewFlags(t *testing.T) {
 	for _, name := range []string{"seed", "platform", "read-length-dist", "read-length-n50", "read-length-median",
-		"read-length-mean", "read-length-sd", "basecaller-tier", "quality-model", "illumina-errors", "insert-size-mean", "insert-size-sd", "compress", "region", "total-bases", "total-reads", "workers", "flow-cells", "output"} {
+		"read-length-mean", "read-length-sd", "basecaller-tier", "quality-model", "illumina-errors", "insert-size-mean", "insert-size-sd", "compress", "region", "reference", "strict-ref", "total-bases", "total-reads", "workers", "flow-cells", "output"} {
 		if generateCmd.Flags().Lookup(name) == nil {
 			t.Errorf("generateCmd should have --%s flag", name)
 		}

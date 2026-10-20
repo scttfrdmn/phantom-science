@@ -46,6 +46,12 @@ type SequencerConfigV1 struct {
 	// ModelDir is a directory containing <Population>.hmm.json model files.
 	ModelDir string `yaml:"model_dir,omitempty" json:"model_dir,omitempty"`
 
+	// ReferencePath, ReferenceRegion and StrictRef sample reads from a
+	// reference FASTA, as the same keys of JSON configs.
+	ReferencePath   string `yaml:"reference_path,omitempty" json:"reference_path,omitempty"`
+	ReferenceRegion string `yaml:"reference_region,omitempty" json:"reference_region,omitempty"`
+	StrictRef       bool   `yaml:"strict_ref,omitempty" json:"strict_ref,omitempty"`
+
 	// Illumina is the Illumina read model (qualities, errors, insert size),
 	// with the same keys as the illumina section of JSON configs.
 	Illumina IlluminaSpec `yaml:"illumina,omitempty" json:"illumina,omitzero"`
@@ -312,9 +318,13 @@ func (old *SequencerConfig) ToV1() *SequencerConfigV1 {
 			TwoChannelChemistry:  old.TwoChannelChemistry,
 			FourChannelChemistry: old.FourChannelChemistry,
 		},
-		HMMModelPath: old.HMMModelPath,
-		Population:   old.Population,
-		ModelDir:     old.ModelDir,
+		HMMModelPath:    old.HMMModelPath,
+		Population:      old.Population,
+		ModelDir:        old.ModelDir,
+		Illumina:        old.Illumina,
+		ReferencePath:   old.ReferencePath,
+		ReferenceRegion: old.ReferenceRegion,
+		StrictRef:       old.StrictRef,
 	}
 }
 
@@ -351,5 +361,8 @@ func (v1 *SequencerConfigV1) ToLegacy() *SequencerConfig {
 		Population:             v1.Population,
 		ModelDir:               v1.ModelDir,
 		Illumina:               v1.Illumina,
+		ReferencePath:          v1.ReferencePath,
+		ReferenceRegion:        v1.ReferenceRegion,
+		StrictRef:              v1.StrictRef,
 	}
 }

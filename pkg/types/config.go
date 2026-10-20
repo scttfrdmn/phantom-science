@@ -84,6 +84,25 @@ type SequencerConfig struct {
 	// Ignored when HMMModelPath is set explicitly.
 	ModelDir string `json:"model_dir,omitempty" yaml:"model_dir,omitempty"`
 
+	// ReferencePath is an uncompressed FASTA (optionally indexed with
+	// samtools faidx) that read and fragment bases are sampled from (#27):
+	// every read (pair) is a fragment drawn uniformly from the reference's
+	// A/C/G/T positions, on either strand. Cannot be combined with an HMM
+	// model (HMMModelPath, or ModelDir with Population). Empty: bases come
+	// from the HMM model or are uniform random.
+	ReferencePath string `json:"reference_path,omitempty" yaml:"reference_path,omitempty"`
+
+	// ReferenceRegion restricts sampling to part of the reference: a contig
+	// name ("chr22") or "contig:start-end", 1-based inclusive. Only that
+	// part is loaded into memory, so a region keeps runs on a whole genome
+	// small. Needs ReferencePath.
+	ReferenceRegion string `json:"reference_region,omitempty" yaml:"reference_region,omitempty"`
+
+	// StrictRef makes a positioned variant whose VCF REF does not match the
+	// reference an error; by default such variants are skipped and counted
+	// in one warning. Applies with ReferencePath.
+	StrictRef bool `json:"strict_ref,omitempty" yaml:"strict_ref,omitempty"`
+
 	// Platform selects the read model and output format: "illumina" (the
 	// default when empty) or "ont" (Oxford Nanopore: MinKNOW-style headers and
 	// a sequencing_summary.txt).

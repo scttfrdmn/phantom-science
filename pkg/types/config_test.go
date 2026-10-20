@@ -178,7 +178,18 @@ func TestSequencerConfigV1Conversion(t *testing.T) {
 		BaseQuality:      35,
 		QualityDecay:     0.05,
 		Q30Percentage:    90.0,
+		Illumina:         IlluminaSpec{Errors: IlluminaErrorsNone},
+		ReferencePath:    "/ref/hg38.fa",
+		ReferenceRegion:  "chr22",
+		StrictRef:        true,
 	}
+	defer func() {
+		back := original.ToV1().ToLegacy()
+		if back.Illumina != original.Illumina || back.ReferencePath != original.ReferencePath ||
+			back.ReferenceRegion != original.ReferenceRegion || back.StrictRef != original.StrictRef {
+			t.Errorf("v1 round trip lost the illumina or reference settings: %+v", back)
+		}
+	}()
 
 	// Convert to V1
 	v1 := original.ToV1()
