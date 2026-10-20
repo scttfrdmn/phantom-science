@@ -129,8 +129,8 @@ func TestNewPopulationPanel_UsesPreset(t *testing.T) {
 	ceu := population.NewPopulationPanel("CEU", 10)
 	assert.True(t, yri.HasPreset())
 	assert.Equal(t, "YRI", yri.PresetName())
-	assert.Equal(t, 12300, yri.Simulator.GetSimulationStats()["effective_population_size"])
-	assert.Equal(t, 11418, ceu.Simulator.GetSimulationStats()["effective_population_size"])
+	assert.Equal(t, 12300, yri.Ne)
+	assert.Equal(t, 11418, ceu.Ne)
 	assert.Equal(t, "YRI", ceu.GetDemographics()["split_from"])
 
 	lwk := population.NewPopulationPanel("LWK", 10)
@@ -152,7 +152,7 @@ func TestPopulationPanel_LoadFromSimulation_PopulationSpecific(t *testing.T) {
 	const region = 10_000_000 // 1000 loci
 	perLocusS := func(name string, seed int64) []float64 {
 		p := population.NewPopulationPanel(name, 50)
-		p.Simulator.SetSeed(seed)
+		p.SetSeed(seed)
 		require.NoError(t, p.LoadFromSimulation(region))
 		out := make([]float64, region/population.DefaultLocusLength)
 		for _, v := range p.GetVariants() {
@@ -171,7 +171,7 @@ func TestPopulationPanel_LoadFromSimulation_PopulationSpecific(t *testing.T) {
 // built from the simulated haplotypes.
 func TestPopulationPanel_LoadFromSimulation_Consistent(t *testing.T) {
 	p := population.NewPopulationPanel("CHB", 20)
-	p.Simulator.SetSeed(9)
+	p.SetSeed(9)
 	require.NoError(t, p.LoadFromSimulation(200_000))
 	variants := p.GetVariants()
 	freqs := p.GetAlleleFrequencies()
@@ -192,7 +192,7 @@ func TestPopulationPanel_LoadFromSimulation_Consistent(t *testing.T) {
 
 	// Same seed → identical panel; reloading replaces rather than appends.
 	q := population.NewPopulationPanel("CHB", 20)
-	q.Simulator.SetSeed(9)
+	q.SetSeed(9)
 	require.NoError(t, q.LoadFromSimulation(200_000))
 	assert.True(t, reflect.DeepEqual(variants, q.GetVariants()))
 	require.NoError(t, q.LoadFromSimulation(200_000))
@@ -205,7 +205,7 @@ func TestPopulationPanel_LoadFromSimulation_Errors(t *testing.T) {
 	p = population.NewPopulationPanel("CEU", 5)
 	assert.Error(t, p.LoadFromSimulation(0))
 	p = population.NewPopulationPanel("XYZ", 5)
-	p.Simulator = population.NewCoalescentSimulator(0, 1e-8, 0)
+	p.Ne = 0
 	assert.Error(t, p.LoadFromSimulation(1000))
 }
 

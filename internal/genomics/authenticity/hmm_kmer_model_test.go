@@ -474,7 +474,7 @@ func TestHMMKmerModel_BiologicalRealism(t *testing.T) {
 	require.NoError(t, err)
 	
 	// Test GC content
-	gcContent := calculateGCContent(result.Sequence)
+	gcContent := computeGCContent(result.Sequence)
 	assert.InDelta(t, 0.4, gcContent, 0.1, "GC content should be approximately 40%")
 	
 	// Test sequence complexity (should be reasonable, not too repetitive)
