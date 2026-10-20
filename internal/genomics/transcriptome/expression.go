@@ -59,7 +59,7 @@ func (m ZipfModel) TPM(r *rand.Rand, n int) (tpm []float64, rank []int) {
 	mx := math.Inf(-1)
 	for i := range n {
 		rank[i] = perm[i] + 1
-		logw[i] = -m.Alpha*math.Log(float64(rank[i])) + m.Sigma*r.NormFloat64()
+		logw[i] = float64(-m.Alpha*math.Log(float64(rank[i]))) + float64(m.Sigma*r.NormFloat64())
 		mx = max(mx, logw[i])
 	}
 	tpm = make([]float64, n)
@@ -69,7 +69,7 @@ func (m ZipfModel) TPM(r *rand.Rand, n int) (tpm []float64, rank []int) {
 		sum += tpm[i]
 	}
 	for i := range tpm {
-		tpm[i] *= 1e6 / sum
+		tpm[i] = float64(tpm[i] * (1e6 / sum))
 	}
 	return tpm, rank
 }
@@ -192,7 +192,7 @@ func ParseProfile(r io.Reader, t *Table) ([]float64, ProfileStats, error) {
 		return nil, st, fmt.Errorf("matched transcripts have zero total abundance")
 	}
 	for i := range tpm {
-		tpm[i] *= 1e6 / sum
+		tpm[i] = float64(tpm[i] * (1e6 / sum))
 	}
 	return tpm, st, nil
 }

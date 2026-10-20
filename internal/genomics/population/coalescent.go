@@ -335,7 +335,7 @@ func (pp *PopulationPanel) GetPopulationStats() map[string]interface{} {
 		for _, variant := range pp.Variants {
 			// Heterozygosity = 2 * p * (1-p)
 			p := variant.Frequency
-			totalHeterozygosity += 2 * p * (1 - p)
+			totalHeterozygosity += float64(2 * p * (1 - p))
 		}
 		heterozygosity = totalHeterozygosity / float64(len(pp.Variants))
 	}

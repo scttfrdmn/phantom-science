@@ -110,12 +110,12 @@ func sizeAt(present float64, events []DemographicEvent, t float64) (float64, flo
 					continue
 				}
 				if t < start+dur {
-					n = n * math.Exp(-r*(t-start))
+					n = float64(n * math.Exp(-r*(t-start)))
 					g = r
 					baselineDone = true
 					continue
 				}
-				n = n * math.Exp(-r*dur)
+				n = float64(n * math.Exp(-r*dur))
 			} else if factor > 0 {
 				n = n / factor
 			}
@@ -175,7 +175,7 @@ func buildEpochs(present float64, events []DemographicEvent) []epoch {
 // sizeOf returns N(t) for an epoch list.
 func sizeOf(epochs []epoch, t float64) float64 {
 	e := epochs[epochIndex(epochs, t)]
-	return e.n0 * math.Exp(-e.g*(t-e.start))
+	return float64(e.n0 * math.Exp(-e.g*(t-e.start)))
 }
 
 // epochIndex returns the index of the epoch containing t.
@@ -206,9 +206,9 @@ func (e epoch) cumHazard(t, u float64) float64 {
 // +Inf if the epoch can never accumulate that much hazard.
 func (e epoch) invertHazard(t, h float64) float64 {
 	if e.g == 0 {
-		return t + h*e.n0
+		return t + float64(h*e.n0)
 	}
-	arg := math.Exp(e.g*(t-e.start)) + h*e.n0*e.g
+	arg := math.Exp(e.g*(t-e.start)) + float64(h*e.n0*e.g)
 	if arg <= 0 {
 		return math.Inf(1)
 	}

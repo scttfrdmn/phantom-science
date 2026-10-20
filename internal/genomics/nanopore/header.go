@@ -148,7 +148,7 @@ func MeanQScore(qual []byte, maxPhred byte) float64 {
 	for _, q := range qual {
 		sum += phredError[min(q, maxPhred)]
 	}
-	return -10 * math.Log10(sum/float64(len(qual)))
+	return float64(-10 * math.Log10(sum/float64(len(qual))))
 }
 
 // NewHeaderFormatter returns a per-stream read-header function for the

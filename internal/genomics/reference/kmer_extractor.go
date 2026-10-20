@@ -241,7 +241,7 @@ func (e *KmerExtractor) GetKmerComplexity() float64 {
 	for _, count := range e.frequencyTable {
 		prob := float64(count) / float64(e.totalKmers)
 		if prob > 0 {
-			entropy -= prob * math.Log2(prob)
+			entropy -= float64(prob * math.Log2(prob))
 		}
 	}
 

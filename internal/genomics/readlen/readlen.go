@@ -199,13 +199,13 @@ func (d *Distribution) initContinuous() error {
 	d.accept = d.cdf(b) - d.cdf(a)
 	if !(d.accept >= minAcceptance) {
 		return invalid("min %d / max %d keep only %.3g%% of the %s distribution (need at least %g%%); widen the bounds",
-			d.min, d.max, 100*d.accept, d.dist, 100*minAcceptance)
+			d.min, d.max, float64(100*d.accept), d.dist, 100*minAcceptance)
 	}
 	m1, m2 := d.partialMoments(a, b)
 	d.mean = m1 / d.accept
 	// Sheppard's correction: rounding to integers adds about 1/12 to the
 	// variance of a smooth distribution.
-	d.sd = math.Sqrt(math.Max(0, m2/d.accept-d.mean*d.mean) + 1.0/12)
+	d.sd = math.Sqrt(math.Max(0, m2/d.accept-float64(d.mean*d.mean)) + 1.0/12)
 	return nil
 }
 
@@ -217,12 +217,12 @@ func (d *Distribution) partialMoments(a, b float64) (m1, m2 float64) {
 		mu, s := d.mu, d.sigma
 		// E[X^k 1{a<X<b}] = e^(kμ + k²σ²/2) [Φ((ln b − μ − kσ²)/σ) − Φ((ln a − μ − kσ²)/σ)]
 		part := func(k float64) float64 {
-			lo := normCDF((math.Log(a) - mu - k*s*s) / s)
+			lo := normCDF((math.Log(a) - mu - float64(k*s*s)) / s)
 			hi := 1.0
 			if !math.IsInf(b, 1) {
-				hi = normCDF((math.Log(b) - mu - k*s*s) / s)
+				hi = normCDF((math.Log(b) - mu - float64(k*s*s)) / s)
 			}
-			return math.Exp(k*mu+k*k*s*s/2) * (hi - lo)
+			return float64(math.Exp(float64(k*mu)+k*k*s*s/2) * (hi - lo))
 		}
 		return part(1), part(2)
 	default: // gamma
@@ -235,7 +235,7 @@ func (d *Distribution) partialMoments(a, b float64) (m1, m2 float64) {
 			}
 			return hi - gammaP(k+j, a/th)
 		}
-		return k * th * part(1), k * (k + 1) * th * th * part(2)
+		return float64(k * th * part(1)), float64(k * (k + 1) * th * th * part(2))
 	}
 }
 
@@ -276,15 +276,15 @@ func (d *Distribution) initEmpirical(spec types.ReadLengthSpec) error {
 		total += c
 		d.lengths = append(d.lengths, l)
 		d.cum = append(d.cum, total)
-		s1 += c * float64(l)
-		s2 += c * float64(l) * float64(l)
+		s1 += float64(c * float64(l))
+		s2 += float64(c * float64(l) * float64(l))
 	}
 	if total == 0 {
 		return invalid("histogram %s has no counts within min %d / max %d", spec.EmpiricalPath, d.min, d.max)
 	}
 	d.accept = 1
 	d.mean = s1 / total
-	d.sd = math.Sqrt(math.Max(0, s2/total-d.mean*d.mean))
+	d.sd = math.Sqrt(math.Max(0, s2/total-float64(d.mean*d.mean)))
 	return nil
 }
 
@@ -317,7 +317,7 @@ func (d *Distribution) Sample(r *rand.Rand) int {
 func (d *Distribution) draw(r *rand.Rand) int {
 	var x float64
 	if d.dist == types.ReadLengthLognormal {
-		x = math.Exp(d.mu + d.sigma*r.NormFloat64())
+		x = math.Exp(d.mu + float64(d.sigma*r.NormFloat64()))
 	} else {
 		x = d.scale * sampleGamma(r, d.shape)
 	}
@@ -330,24 +330,24 @@ func (d *Distribution) draw(r *rand.Rand) int {
 func sampleGamma(r *rand.Rand, shape float64) float64 {
 	if shape < 1 {
 		u := r.Float64()
-		return sampleGamma(r, shape+1) * math.Pow(u, 1/shape)
+		return float64(sampleGamma(r, shape+1) * math.Pow(u, 1/shape))
 	}
 	d := shape - 1.0/3
 	c := 1 / math.Sqrt(9*d)
 	for {
 		x := r.NormFloat64()
-		v := 1 + c*x
+		v := 1 + float64(c*x)
 		if v <= 0 {
 			continue
 		}
-		v = v * v * v
+		v = float64(v * v * v)
 		u := r.Float64()
 		x2 := x * x
-		if u < 1-0.0331*x2*x2 {
-			return d * v
+		if u < 1-float64(0.0331*x2*x2) {
+			return float64(d * v)
 		}
-		if math.Log(u) < 0.5*x2+d*(1-v+math.Log(v)) {
-			return d * v
+		if math.Log(u) < float64(0.5*x2)+float64(d*(1-v+math.Log(v))) {
+			return float64(d * v)
 		}
 	}
 }
@@ -395,7 +395,7 @@ func (d *Distribution) CDF(k int) float64 {
 }
 
 // normCDF is the standard normal CDF.
-func normCDF(z float64) float64 { return 0.5 * math.Erfc(-z/math.Sqrt2) }
+func normCDF(z float64) float64 { return float64(0.5 * math.Erfc(-z/math.Sqrt2)) }
 
 // gammaP is the regularized lower incomplete gamma function P(a, x)
 // (Numerical Recipes §6.2: series for x < a+1, continued fraction otherwise).
@@ -407,11 +407,11 @@ func gammaP(a, x float64) float64 {
 		return 1
 	}
 	lg, _ := math.Lgamma(a)
-	front := math.Exp(a*math.Log(x) - x - lg)
+	front := math.Exp(float64(a*math.Log(x)) - x - lg)
 	if x < a+1 {
 		sum, term := 1/a, 1/a
 		for n := 1; n < 10000; n++ {
-			term *= x / (a + float64(n))
+			term = float64(term * (x / (a + float64(n))))
 			sum += term
 			if math.Abs(term) < math.Abs(sum)*1e-15 {
 				break
@@ -428,7 +428,7 @@ func gammaP(a, x float64) float64 {
 	for i := 1; i < 10000; i++ {
 		an := -float64(i) * (float64(i) - a)
 		b += 2
-		dd = an*dd + b
+		dd = float64(an*dd) + b
 		if math.Abs(dd) < tiny {
 			dd = tiny
 		}
@@ -437,11 +437,11 @@ func gammaP(a, x float64) float64 {
 			c = tiny
 		}
 		dd = 1 / dd
-		del := dd * c
+		del := float64(dd * c)
 		h *= del
 		if math.Abs(del-1) < 1e-15 {
 			break
 		}
 	}
-	return math.Max(0, 1-front*h)
+	return math.Max(0, 1-float64(front*h))
 }

@@ -155,7 +155,7 @@ func (p QualityParams) curve(vals []float64, x int, j *int) float64 {
 		*j++
 	}
 	t := float64(x-k[*j]) / float64(k[*j+1]-k[*j])
-	return max(0, vals[*j]+t*(vals[*j+1]-vals[*j]))
+	return max(0, vals[*j]+float64(t*(vals[*j+1]-vals[*j])))
 }
 
 // means returns the mean Q11 and Q25 fractions at 0-based cycle c of a read
@@ -163,7 +163,7 @@ func (p QualityParams) curve(vals []float64, x int, j *int) float64 {
 func (p QualityParams) means(c, n int, j *int) (low, mid float64) {
 	low, mid = p.curve(p.Low, c+1, j), p.curve(p.Mid, c+1, j)
 	if c == n-1 {
-		low, mid = low*p.FinalLow, mid*p.FinalMid
+		low, mid = float64(low*p.FinalLow), float64(mid*p.FinalMid)
 	}
 	return low, mid
 }
@@ -171,7 +171,7 @@ func (p QualityParams) means(c, n int, j *int) (low, mid float64) {
 // classTarget returns class k's distribution over Bins given the mean
 // fractions.
 func (p QualityParams) classTarget(k ReadClass, low, mid float64) [4]float64 {
-	a, b := k.Low*low, k.Mid*mid
+	a, b := float64(k.Low*low), float64(k.Mid*mid)
 	if s := a + b; s > maxLow {
 		a, b = a*maxLow/s, b*maxLow/s
 	}
@@ -189,7 +189,7 @@ func (p QualityParams) Target(c, n int) [4]float64 {
 	for _, k := range p.Classes {
 		ct := p.classTarget(k, low, mid)
 		for i := range t {
-			t[i] += k.Weight * ct[i]
+			t[i] += float64(k.Weight * ct[i])
 		}
 		w += k.Weight
 	}
@@ -255,9 +255,9 @@ func (p QualityParams) Qualities(r *rand.Rand, n int) []byte {
 			continue
 		}
 		u = (u - rho) / (1 - rho)
-		z := 1 - p.StickLow*t[1] - p.StickMid*t[2]
-		t[1] *= (1 - p.StickLow) / z
-		t[2] *= (1 - p.StickMid) / z
+		z := 1 - float64(p.StickLow*t[1]) - float64(p.StickMid*t[2])
+		t[1] = float64(t[1] * ((1 - p.StickLow) / z))
+		t[2] = float64(t[2] * ((1 - p.StickMid) / z))
 		t[0] /= z
 		t[3] /= z
 		q[c] = pick(t, u)
@@ -291,9 +291,9 @@ func (e ErrorParams) Rate(q byte, c int) float64 {
 	case QHigh:
 		return e.High
 	case QMid:
-		return e.MidLate - (e.MidLate-e.MidEarly)*math.Exp(-x/e.MidTau)
+		return e.MidLate - float64((e.MidLate-e.MidEarly)*math.Exp(-x/e.MidTau))
 	case QLow:
-		return e.LowLate - (e.LowLate-e.LowEarly)*math.Exp(-x/e.LowTau)
+		return e.LowLate - float64((e.LowLate-e.LowEarly)*math.Exp(-x/e.LowTau))
 	}
 	return ErrorProb(q)
 }
@@ -409,9 +409,9 @@ func (s *InsertSampler) Sample(r *rand.Rand, readLen int) int {
 	for range maxRedraws {
 		var v float64
 		if s.spec.Dist == types.InsertSizeLognormal {
-			v = math.Exp(s.mu + s.sigma*r.NormFloat64())
+			v = math.Exp(s.mu + float64(s.sigma*r.NormFloat64()))
 		} else {
-			v = s.spec.Mean + s.spec.SD*r.NormFloat64()
+			v = s.spec.Mean + float64(s.spec.SD*r.NormFloat64())
 		}
 		if n := math.Round(v); n >= float64(lo) && n <= float64(hi) {
 			return int(n)

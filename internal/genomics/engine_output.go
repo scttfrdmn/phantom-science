@@ -209,7 +209,7 @@ func (e *Engine) slotBases() int {
 	if d.Dist == "" || d.Dist == types.ReadLengthFixed {
 		return max(e.config.ReadLength, 1)
 	}
-	n := 2 * max(e.config.ReadLength, d.N50, d.Median, int(d.Mean+2*d.SD), 1)
+	n := 2 * max(e.config.ReadLength, d.N50, d.Median, int(d.Mean+float64(2*d.SD)), 1)
 	if d.Max > 0 && n > d.Max {
 		n = d.Max
 	}
