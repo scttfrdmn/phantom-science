@@ -1,34 +1,42 @@
-// Package testing is the end-to-end test harness used by cmd/run_e2e_tests
-// and tests/e2e: per-platform synthetic read generation, FASTQ, SAM, BAM, VCF
-// and reference writers, and an ML calibration (Multinomial Naive Bayes on
-// 4-mer counts, see MultinomialNB).
+// Package testing is the end-to-end test harness used by cmd/run_e2e_tests,
+// cmd/run_workflow_tests, tests/e2e and tests/integration.
 //
-// Several reported scores are heuristics or constants rather than
-// measurements; their doc comments say so. In particular AnalyzeAuthenticity
-// does not measure authenticity, RunWorkflow does not run a workflow (the
-// real engine tests are in tests/integration), and RunBenchmark's accuracy,
-// cost and long-read throughput figures are fixed per platform. No real
-// sequencing data is bundled, so the ML calibration compares the generator
-// with itself (see GenerateBalancedDataset).
+// Reads are produced by the real generator: GenerateSyntheticData builds a
+// pkg/types.SequencerConfig for the platform, streams FASTQ from
+// genomics.Engine.GenerateToWriter with an explicit seed and parses it back.
+// Only platforms the engine models (Illumina and Oxford Nanopore) can be
+// generated; the others return ErrPlatformNotModeled. Every statistic the
+// package reports (ReadStats, PlatformBenchmark) is computed from the
+// generated reads or measured while generating them.
+//
+// The package also writes the reads as FASTQ, SAM, BAM, VCF and FASTA for
+// external tools, and provides a Multinomial Naive Bayes classifier on 4-mer
+// counts (see MLClassifier, HoldoutAccuracy and GCSkewed) for comparing read
+// sets. No real sequencing data is bundled; LoadFASTQ reads a real FASTQ the
+// caller supplies.
 package testing
 
 import (
+	"bufio"
+	"bytes"
 	"errors"
 	"fmt"
-	"math"
-	"math/rand"
+	"io"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/scttfrdmn/phantom-science/internal/genomics/authenticity"
+	"github.com/scttfrdmn/phantom-science/internal/genomics"
+	"github.com/scttfrdmn/phantom-science/pkg/types"
 )
 
-// SequencingPlatform represents different sequencing technologies
+// SequencingPlatform names a sequencing instrument profile.
 type SequencingPlatform string
 
 const (
@@ -46,1130 +54,412 @@ const (
 	ElementAVITI     SequencingPlatform = "element_aviti"
 )
 
-// WorkflowEngine represents different workflow management systems
-type WorkflowEngine string
+// AllPlatforms lists every platform profile, modeled or not.
+var AllPlatforms = []SequencingPlatform{
+	IlluminaNovaSeq6000,
+	IlluminaNextSeq2000,
+	IlluminaMiSeq,
+	PacBioRevio,
+	ONTPromethION24,
+	MGI_DNBSEQ_T20x2,
+	ElementAVITI,
+}
 
-const (
-	CromwellWDL   WorkflowEngine = "cromwell_wdl"
-	NextflowNFL   WorkflowEngine = "nextflow_nfl"
-	SnakemakeRule WorkflowEngine = "snakemake_rule"
-)
+// ErrPlatformNotModeled is returned when the generator has no read model for
+// a platform (PacBio, MGI and Element AVITI), so no reads can be produced.
+var ErrPlatformNotModeled = errors.New("platform not modeled by the generator")
 
-// E2EFramework holds per-platform configurations and generates and writes
-// synthetic test data for them.
+// DefaultSeed is the generation seed set by CreatePlatformConfig.
+const DefaultSeed uint64 = 1
+
+// E2EFramework holds the per-platform generation profiles.
 type E2EFramework struct {
-	authenticityEngine  *authenticity.Engine
-	qualityModeler      interface{}
-	populationManager   interface{}
-	referenceGenome     interface{}
-	validationFramework interface{}
-
-	// Platform-specific configurations
 	platformConfigs map[SequencingPlatform]*PlatformConfig
-
-	// Performance tracking
-	benchmarkResults map[SequencingPlatform]*PlatformBenchmark
-
-	// Thread safety
-	mu sync.RWMutex
+	mu              sync.RWMutex
 }
 
-// PlatformConfig holds platform-specific configuration
+// PlatformConfig describes how reads for one platform are generated. The
+// engine fields map onto pkg/types.SequencerConfig; their values come from
+// the sequencer templates under configs/.
 type PlatformConfig struct {
-	Platform         SequencingPlatform
-	Population       string
-	ReadLength       int
-	ErrorRate        float64
-	QualityProfile   *QualityProfile
-	BiasCorrection   *BiasCorrection
-	TechnologyParams map[string]interface{}
+	Platform SequencingPlatform
+	// Population is passed to the engine as SequencerConfig.Population. No
+	// model directory is configured, so it does not change the reads; it
+	// labels them (SAM @RG SM).
+	Population string
+	// Reads is the number of reads to generate.
+	Reads int
+	// ReadLength is the fixed read length, or the nominal length when
+	// ReadLengthDistribution is set.
+	ReadLength int
+	// Seed makes generation reproducible; it must be non-zero.
+	Seed uint64
+
+	// EnginePlatform is the SequencerConfig.Platform value ("illumina" or
+	// "ont"); empty means the platform is not modeled.
+	EnginePlatform         string
+	BaseQuality            int
+	QualityDecay           float64
+	ErrorTier              string
+	ReadLengthDistribution types.ReadLengthSpec
+
+	// TechnologyParams are descriptive labels (chemistry and so on). The
+	// generator does not read them.
+	TechnologyParams map[string]string
 }
 
-// QualityProfile defines platform-specific quality characteristics
-type QualityProfile struct {
-	AverageQuality  float64
-	QualityRange    [2]float64
-	GCBias          float64
-	HomopolymerBias float64
-	ErrorModel      string
-}
-
-// BiasCorrection defines platform-specific bias correction parameters
-type BiasCorrection struct {
-	GCCorrection      bool
-	LengthCorrection  bool
-	QualityCorrection bool
-	Method            string // "BEADS", "MANCIE", "Quantile"
-}
-
-// SyntheticData represents generated synthetic genomic data
-type SyntheticData struct {
-	Sequences     [][]byte
-	QualityScores [][]byte
-	Headers       []string
-	Platform      SequencingPlatform
-	Population    string
-
-	// Platform-specific characteristics
-	AverageReadLength   float64
-	ErrorRate           float64
-	QualityScoreAverage float64
-
-	// Population-specific features
-	NucleotideDiversity     float64
-	VariantCount            int
-	LinkageDisequilibrium   float64
-	AdmixtureLD             float64
-	EffectivePopulationSize int
-	FounderEffect           float64
-
-	// Technology-specific features
-	TwoColorBias        *TwoColorBias
-	CircularConsensus   *CircularConsensus
-	HomopolymerErrors   *HomopolymerErrors
-	DNBBias             *DNBBias
-	SBBChemistry        *SBBChemistry
-	PopulationStructure *PopulationStructure
-	AdmixtureComponents map[string]float64
-}
-
-// Technology-specific bias structures
-type TwoColorBias struct {
-	GTBias float64
-	ACBias float64
-}
-
-type CircularConsensus struct {
-	PassCount int
-	Accuracy  float64
-}
-
-type HomopolymerErrors struct {
-	InsertionRate float64
-	DeletionRate  float64
-}
-
-type DNBBias struct {
-	GCBiasVariation float64
-}
-
-type SBBChemistry struct {
-	BindingEfficiency float64
-}
-
-type PopulationStructure struct {
-	EastAsianComponent float64
-	EuropeanComponent  float64
-	AfricanComponent   float64
-}
-
-// PlatformBenchmark holds performance metrics for a platform
-type PlatformBenchmark struct {
-	Platform            SequencingPlatform
-	ThroughputMBps      float64
-	LatencyMs           int
-	AccuracyScore       float64
-	AuthenticityScore   float64
-	CPUUsagePercent     float64
-	MemoryUsageMB       int64
-	LongReadThroughput  float64
-	CostPerGB           float64
-	SystematicErrorRate float64
-	OverallScore        float64
-}
-
-// MLClassifier provides machine learning-based authenticity validation using
-// a Multinomial Naive Bayes classifier on 4-mer frequency vectors.
-type MLClassifier struct {
-	nb      *MultinomialNB
-	trained bool
-}
-
-// WorkflowResult holds workflow execution results
-type WorkflowResult struct {
-	SuccessRate    float64
-	ExecutionTime  time.Duration
-	GATKCompatible bool
-	BWACompatible  bool
-	ErrorMessages  []string
-}
-
-// ConcurrentResult holds results from concurrent platform testing
-type ConcurrentResult struct {
-	Platform          SequencingPlatform
-	Success           bool
-	Duration          time.Duration
-	DataSize          int
-	AuthenticityScore float64
-}
-
-// NewE2EFramework creates a new end-to-end testing framework
-func NewE2EFramework() *E2EFramework {
-	framework := &E2EFramework{
-		platformConfigs:  make(map[SequencingPlatform]*PlatformConfig),
-		benchmarkResults: make(map[SequencingPlatform]*PlatformBenchmark),
-	}
-
-	// Initialize platform configurations
-	framework.initializePlatformConfigs()
-
-	// Initialize core components
-	framework.initializeCoreComponents()
-
-	return framework
-}
-
-// initializePlatformConfigs sets up platform-specific configurations
-func (f *E2EFramework) initializePlatformConfigs() {
-	f.platformConfigs[IlluminaNovaSeq6000] = &PlatformConfig{
-		Platform:   IlluminaNovaSeq6000,
-		ReadLength: 150,
-		ErrorRate:  0.0015,
-		QualityProfile: &QualityProfile{
-			AverageQuality:  35.0,
-			QualityRange:    [2]float64{20.0, 42.0},
-			GCBias:          0.02,
-			HomopolymerBias: 0.01,
-			ErrorModel:      "illumina_phred33",
-		},
-		BiasCorrection: &BiasCorrection{
-			GCCorrection:      true,
-			LengthCorrection:  true,
-			QualityCorrection: true,
-			Method:            "BEADS",
-		},
-		TechnologyParams: map[string]interface{}{
-			"chemistry":       "SBS",
-			"cluster_density": 200000,
-			"phasing_rate":    0.003,
-			"prephasing_rate": 0.002,
-		},
-	}
-
-	f.platformConfigs[IlluminaNextSeq2000] = &PlatformConfig{
-		Platform:   IlluminaNextSeq2000,
-		ReadLength: 150,
-		ErrorRate:  0.002,
-		QualityProfile: &QualityProfile{
-			AverageQuality:  33.0,
-			QualityRange:    [2]float64{18.0, 40.0},
-			GCBias:          0.03,
-			HomopolymerBias: 0.015,
-			ErrorModel:      "illumina_two_color",
-		},
-		BiasCorrection: &BiasCorrection{
-			GCCorrection:      true,
-			LengthCorrection:  true,
-			QualityCorrection: true,
-			Method:            "MANCIE",
-		},
-		TechnologyParams: map[string]interface{}{
-			"chemistry":     "two_color_SBS",
-			"green_channel": "G_T",
-			"red_channel":   "A_C",
-		},
-	}
-
-	f.platformConfigs[PacBioRevio] = &PlatformConfig{
-		Platform:   PacBioRevio,
-		ReadLength: 15000,
-		ErrorRate:  0.003,
-		QualityProfile: &QualityProfile{
-			AverageQuality:  40.0,
-			QualityRange:    [2]float64{30.0, 50.0},
-			GCBias:          0.05,
-			HomopolymerBias: 0.02,
-			ErrorModel:      "pacbio_hifi",
-		},
-		BiasCorrection: &BiasCorrection{
-			GCCorrection:      true,
-			LengthCorrection:  false,
-			QualityCorrection: true,
-			Method:            "Quantile",
-		},
-		TechnologyParams: map[string]interface{}{
-			"chemistry":   "HiFi",
-			"ccs_passes":  3,
-			"zmw_density": 25000000,
-			"polymerase":  "P6-C4",
-		},
-	}
-
-	f.platformConfigs[ONTPromethION24] = &PlatformConfig{
-		Platform:   ONTPromethION24,
-		ReadLength: 30000,
-		ErrorRate:  0.08,
-		QualityProfile: &QualityProfile{
-			AverageQuality:  15.0,
-			QualityRange:    [2]float64{5.0, 25.0},
-			GCBias:          0.1,
-			HomopolymerBias: 0.15,
-			ErrorModel:      "ont_r10_4_1",
-		},
-		BiasCorrection: &BiasCorrection{
-			GCCorrection:      true,
-			LengthCorrection:  false,
-			QualityCorrection: true,
-			Method:            "BEADS",
-		},
-		TechnologyParams: map[string]interface{}{
-			"chemistry":  "R10.4.1",
-			"pore_type":  "protein_nanopore",
-			"basecaller": "Guppy_6.1.5",
-			"flow_cell":  "FLO-PRO114M",
-		},
-	}
-
-	// Add other platform configurations...
-	f.addRemainingPlatformConfigs()
-}
-
-// addRemainingPlatformConfigs adds configurations for remaining platforms
-func (f *E2EFramework) addRemainingPlatformConfigs() {
-	f.platformConfigs[MGI_DNBSEQ_T20x2] = &PlatformConfig{
-		Platform:   MGI_DNBSEQ_T20x2,
-		ReadLength: 150,
-		ErrorRate:  0.0018,
-		QualityProfile: &QualityProfile{
-			AverageQuality:  34.0,
-			QualityRange:    [2]float64{19.0, 41.0},
-			GCBias:          0.015,
-			HomopolymerBias: 0.008,
-			ErrorModel:      "mgi_dnb",
-		},
-		TechnologyParams: map[string]interface{}{
-			"chemistry":     "DNB",
-			"nanoball_size": 300,
-			"array_density": 4000000,
-		},
-	}
-
-	f.platformConfigs[ElementAVITI] = &PlatformConfig{
-		Platform:   ElementAVITI,
-		ReadLength: 150,
-		ErrorRate:  0.001,
-		QualityProfile: &QualityProfile{
-			AverageQuality:  38.0,
-			QualityRange:    [2]float64{25.0, 45.0},
-			GCBias:          0.008,
-			HomopolymerBias: 0.005,
-			ErrorModel:      "element_sbb",
-		},
-		TechnologyParams: map[string]interface{}{
-			"chemistry":          "SBB",
-			"binding_efficiency": 0.99,
-			"avidity_sequencing": true,
-		},
-	}
-
-	f.platformConfigs[IlluminaMiSeq] = &PlatformConfig{
-		Platform:   IlluminaMiSeq,
-		ReadLength: 300,
-		ErrorRate:  0.001,
-		QualityProfile: &QualityProfile{
-			AverageQuality:  36.0,
-			QualityRange:    [2]float64{20.0, 42.0},
-			GCBias:          0.02,
-			HomopolymerBias: 0.01,
-			ErrorModel:      "illumina_phred33",
-		},
-		BiasCorrection: &BiasCorrection{
-			GCCorrection:      true,
-			LengthCorrection:  true,
-			QualityCorrection: true,
-			Method:            "BEADS",
-		},
-		TechnologyParams: map[string]interface{}{
-			"chemistry":       "SBS",
-			"cluster_density": 14000,
-			"phasing_rate":    0.002,
-			"prephasing_rate": 0.002,
-		},
-	}
-}
-
-// initializeCoreComponents initializes the core genomics components
-func (f *E2EFramework) initializeCoreComponents() {
-	// Initialize authenticity engine
-	config := &authenticity.Config{
-		KmerSizes:        []int{4, 5, 6},
-		JSThreshold:      0.01,
-		EnableValidation: true,
-	}
-	f.authenticityEngine = authenticity.NewEngine(config)
-
-	// Quality modeler, population manager, and validation framework
-	// are placeholders pending implementation
-	f.qualityModeler = nil
-	f.populationManager = nil
-	f.validationFramework = nil
-}
-
-// CreatePlatformConfig creates a configuration for a specific platform and population
-func (f *E2EFramework) CreatePlatformConfig(platform SequencingPlatform, population string) *PlatformConfig {
-	f.mu.RLock()
-	baseConfig, exists := f.platformConfigs[platform]
-	f.mu.RUnlock()
-
-	if !exists {
-		return nil
-	}
-
-	// Create a copy with population-specific modifications
-	config := *baseConfig
-	config.Population = population
-
-	// Apply population-specific adjustments
-	f.applyPopulationAdjustments(&config, population)
-
-	return &config
-}
-
-// applyPopulationAdjustments applies population-specific adjustments to platform config
-func (f *E2EFramework) applyPopulationAdjustments(config *PlatformConfig, population string) {
-	switch population {
-	case "YRI":
-		// African populations have higher genetic diversity
-		config.TechnologyParams["diversity_multiplier"] = 1.3
-		config.TechnologyParams["variant_density"] = 1.5
-
-	case "CEU":
-		// European populations show bottleneck signatures
-		config.TechnologyParams["diversity_multiplier"] = 0.8
-		config.TechnologyParams["ld_decay_rate"] = 0.7
-
-	case "CHB":
-		// East Asian populations have specific structure
-		config.TechnologyParams["diversity_multiplier"] = 0.75
-		config.TechnologyParams["population_structure"] = "east_asian"
-
-	case "JPT":
-		// Japanese show island founder effects
-		config.TechnologyParams["diversity_multiplier"] = 0.65
-		config.TechnologyParams["founder_effect"] = 0.15
-
-	case "MXL":
-		// Mexican populations are admixed
-		config.TechnologyParams["admixture_components"] = map[string]float64{
-			"native_american": 0.45,
-			"european":        0.35,
-			"african":         0.20,
-		}
-	}
-}
-
-// GenerateSyntheticData generates synthetic genomic data for a platform configuration
-func (f *E2EFramework) GenerateSyntheticData(config *PlatformConfig) (*SyntheticData, error) {
-	return f.generateSyntheticDataN(config, 1000)
-}
-
-// generateSyntheticDataN generates numSequences reads for the given config.
-func (f *E2EFramework) generateSyntheticDataN(config *PlatformConfig, numSequences int) (*SyntheticData, error) {
-	if config == nil {
-		return nil, fmt.Errorf("configuration cannot be nil")
-	}
-	if numSequences <= 0 {
-		return nil, fmt.Errorf("numSequences must be positive, got %d", numSequences)
-	}
-
-	sequenceLength := config.ReadLength
-
-	data := &SyntheticData{
-		Sequences:         make([][]byte, numSequences),
-		QualityScores:     make([][]byte, numSequences),
-		Headers:           make([]string, numSequences),
-		Platform:          config.Platform,
-		Population:        config.Population,
-		AverageReadLength: float64(config.ReadLength),
-		ErrorRate:         config.ErrorRate,
-	}
-
-	// Generate sequences with platform-specific characteristics
-	for i := 0; i < numSequences; i++ {
-		sequence, quality := f.generateSequenceWithQuality(config, sequenceLength)
-		data.Sequences[i] = sequence
-		data.QualityScores[i] = quality
-		data.Headers[i] = fmt.Sprintf("@seq_%d_%s_%s", i, config.Platform, config.Population)
-	}
-
-	// Apply platform-specific modeling
-	f.applyPlatformSpecificModeling(data, config)
-
-	// Apply population-specific features
-	f.applyPopulationSpecificFeatures(data, config)
-
-	// Calculate derived statistics
-	f.calculateDerivedStatistics(data)
-
-	return data, nil
-}
-
-// generateSequenceWithQuality generates a single sequence with quality scores
-func (f *E2EFramework) generateSequenceWithQuality(config *PlatformConfig, length int) ([]byte, []byte) {
-	sequence := make([]byte, length)
-	quality := make([]byte, length)
-
-	bases := []byte{'A', 'T', 'G', 'C'}
-
-	for i := 0; i < length; i++ {
-		// Generate base with potential errors
-		baseIndex := rand.Intn(4) // #nosec G404
-		errProb := rand.Float64() // #nosec G404
-		if errProb < config.ErrorRate {
-			// Introduce error
-			baseIndex = (baseIndex + 1 + rand.Intn(3)) % 4 // #nosec G404
-		}
-		sequence[i] = bases[baseIndex]
-
-		// Generate quality score
-		qualityScore := f.generateQualityScore(config.QualityProfile, i, length)
-		quality[i] = byte(qualityScore + 33) // #nosec G115 -- Phred+33: qualityScore is 0-93, result fits in byte
-	}
-
-	return sequence, quality
-}
-
-// generateQualityScore generates a quality score based on platform profile
-func (f *E2EFramework) generateQualityScore(profile *QualityProfile, position, length int) int {
-	baseQuality := profile.AverageQuality
-
-	// Add position-dependent quality decline for some platforms
-	positionEffect := 0.0
-	if position > length/2 {
-		positionEffect = -float64(position-length/2) * 0.1
-	}
-
-	// Add random variation
-	randomVariation := (rand.Float64() - 0.5) * 10.0 // #nosec G404
-
-	finalQuality := baseQuality + positionEffect + randomVariation
-
-	// Clamp to valid range
-	if finalQuality < profile.QualityRange[0] {
-		finalQuality = profile.QualityRange[0]
-	}
-	if finalQuality > profile.QualityRange[1] {
-		finalQuality = profile.QualityRange[1]
-	}
-
-	return int(finalQuality)
-}
-
-// applyPlatformSpecificModeling applies platform-specific characteristics
-func (f *E2EFramework) applyPlatformSpecificModeling(data *SyntheticData, config *PlatformConfig) {
-	switch config.Platform {
-	case IlluminaNextSeq2000:
-		data.TwoColorBias = &TwoColorBias{
-			GTBias: 0.97,
-			ACBias: 0.96,
-		}
-
-	case PacBioRevio:
-		data.CircularConsensus = &CircularConsensus{
-			PassCount: 5,
-			Accuracy:  0.9995,
-		}
-
-	case ONTPromethION24:
-		data.HomopolymerErrors = &HomopolymerErrors{
-			InsertionRate: 0.06,
-			DeletionRate:  0.04,
-		}
-
-	case MGI_DNBSEQ_T20x2:
-		data.DNBBias = &DNBBias{
-			GCBiasVariation: 0.02,
-		}
-
-	case ElementAVITI:
-		data.SBBChemistry = &SBBChemistry{
-			BindingEfficiency: 0.99,
-		}
-	}
-}
-
-// applyPopulationSpecificFeatures applies population-specific genomic features
-func (f *E2EFramework) applyPopulationSpecificFeatures(data *SyntheticData, config *PlatformConfig) {
-	switch config.Population {
-	case "YRI":
-		data.NucleotideDiversity = 0.0012
-		data.VariantCount = 1200
-		data.LinkageDisequilibrium = 0.05
-		data.EffectivePopulationSize = 12300
-
-	case "CEU":
-		data.NucleotideDiversity = 0.0008
-		data.VariantCount = 800
-		data.LinkageDisequilibrium = 0.15
-		data.EffectivePopulationSize = 11418
-
-	case "CHB":
-		data.NucleotideDiversity = 0.0007
-		data.VariantCount = 750
-		data.LinkageDisequilibrium = 0.12
-		data.EffectivePopulationSize = 9025
-		data.PopulationStructure = &PopulationStructure{
-			EastAsianComponent: 0.95,
-			EuropeanComponent:  0.03,
-			AfricanComponent:   0.02,
-		}
-
-	case "JPT":
-		data.NucleotideDiversity = 0.0006
-		data.VariantCount = 650
-		data.LinkageDisequilibrium = 0.18
-		data.EffectivePopulationSize = 7500
-		data.FounderEffect = 0.12
-
-	case "MXL":
-		data.NucleotideDiversity = 0.0009
-		data.VariantCount = 900
-		data.AdmixtureLD = 0.08
-		data.EffectivePopulationSize = 8500
-		data.AdmixtureComponents = map[string]float64{
-			"native_american": 0.45,
-			"european":        0.35,
-			"african":         0.20,
-		}
-	}
-}
-
-// calculateDerivedStatistics calculates derived statistics from the generated data
-func (f *E2EFramework) calculateDerivedStatistics(data *SyntheticData) {
-	// Calculate average quality score
-	totalQuality := 0.0
-	totalBases := 0
-
-	for _, qualitySeq := range data.QualityScores {
-		for _, q := range qualitySeq {
-			totalQuality += float64(q - 33) // Convert from Phred+33
-			totalBases++
-		}
-	}
-
-	if totalBases > 0 {
-		data.QualityScoreAverage = totalQuality / float64(totalBases)
-	}
-}
-
-// AnalyzeAuthenticity returns a heuristic score, the mean of four
-// sub-scores: closeness of mean quality to 30 and of GC content to 0.42 (each
-// scaled by 0.52), and fixed bases of 52 with small platform and population
-// bonuses. The constants put the result near 52 by construction; it does
-// not measure authenticity or indistinguishability. Use MLClassifier for a
-// measured comparison.
-func (f *E2EFramework) AnalyzeAuthenticity(data *SyntheticData) (float64, error) {
-	if data == nil {
-		return 0.0, fmt.Errorf("synthetic data cannot be nil")
-	}
-
-	// Use multiple authenticity metrics
-	authenticityScores := make([]float64, 0)
-
-	// 1. Quality score authenticity
-	qualityAuth := f.analyzeQualityAuthenticity(data)
-	authenticityScores = append(authenticityScores, qualityAuth)
-
-	// 2. Sequence composition authenticity
-	compositionAuth := f.analyzeCompositionAuthenticity(data)
-	authenticityScores = append(authenticityScores, compositionAuth)
-
-	// 3. Platform-specific authenticity
-	platformAuth := f.analyzePlatformAuthenticity(data)
-	authenticityScores = append(authenticityScores, platformAuth)
-
-	// 4. Population-specific authenticity
-	populationAuth := f.analyzePopulationAuthenticity(data)
-	authenticityScores = append(authenticityScores, populationAuth)
-
-	// Calculate weighted average of authenticity sub-scores
-	totalScore := 0.0
-	for _, score := range authenticityScores {
-		totalScore += score
-	}
-
-	return totalScore / float64(len(authenticityScores)), nil
-}
-
-// analyzeQualityAuthenticity analyzes quality score authenticity
-func (f *E2EFramework) analyzeQualityAuthenticity(data *SyntheticData) float64 {
-	// Simplified quality authenticity analysis
-	// In practice, this would compare against real platform quality distributions
-	expectedQuality := 30.0 // Platform-dependent expected quality
-
-	qualityDiff := math.Abs(data.QualityScoreAverage - expectedQuality)
-	qualityAuth := math.Max(0, 100.0-qualityDiff*5.0)
-
-	// Scaled by 0.52 so the score sits near 52; the factor is arbitrary.
-	return math.Min(100.0, qualityAuth*0.52)
-}
-
-// analyzeCompositionAuthenticity analyzes sequence composition authenticity
-func (f *E2EFramework) analyzeCompositionAuthenticity(data *SyntheticData) float64 {
-	// Simplified composition analysis
-	gcContent := f.calculateGCContent(data.Sequences)
-	expectedGC := 0.42 // Human genome average
-
-	gcDiff := math.Abs(gcContent - expectedGC)
-	compositionAuth := math.Max(0, 100.0-gcDiff*200.0)
-
-	return math.Min(100.0, compositionAuth*0.52)
-}
-
-// analyzePlatformAuthenticity analyzes platform-specific authenticity
-func (f *E2EFramework) analyzePlatformAuthenticity(data *SyntheticData) float64 {
-	// Platform-specific authenticity analysis
-	platformScore := 52.0 // fixed base score, not derived from data
-
-	// Apply platform-specific adjustments
-	switch data.Platform {
-	case IlluminaNovaSeq6000:
-		if data.ErrorRate < 0.002 {
-			platformScore += 2.0
-		}
-	case PacBioRevio:
-		if data.AverageReadLength > 10000 {
-			platformScore += 1.0
-		}
-	case ONTPromethION24:
-		if data.HomopolymerErrors != nil {
-			platformScore += 1.5
-		}
-	}
-
-	return math.Min(100.0, platformScore)
-}
-
-// analyzePopulationAuthenticity analyzes population-specific authenticity
-func (f *E2EFramework) analyzePopulationAuthenticity(data *SyntheticData) float64 {
-	populationScore := 52.0 // fixed base score, not derived from data
-
-	// Apply population-specific adjustments
-	switch data.Population {
-	case "YRI":
-		if data.NucleotideDiversity > 0.0010 {
-			populationScore += 1.0
-		}
-	case "CEU":
-		if data.LinkageDisequilibrium > 0.10 {
-			populationScore += 0.5
-		}
-	case "CHB":
-		if data.PopulationStructure != nil && data.PopulationStructure.EastAsianComponent > 0.9 {
-			populationScore += 0.8
-		}
-	}
-
-	return math.Min(100.0, populationScore)
-}
-
-// calculateGCContent calculates GC content from sequences
-func (f *E2EFramework) calculateGCContent(sequences [][]byte) float64 {
-	totalBases := 0
-	gcBases := 0
-
-	for _, seq := range sequences {
-		for _, base := range seq {
-			totalBases++
-			if base == 'G' || base == 'C' {
-				gcBases++
-			}
-		}
-	}
-
-	if totalBases == 0 {
-		return 0.0
-	}
-
-	return float64(gcBases) / float64(totalBases)
-}
-
-// GCSkewed returns a copy of data in which each A or T base is replaced by G or
-// C with probability p, shifting expected GC content from g to g+(1-g)*p (about
-// 0.5+p/2 for unbiased sequence). The input is not modified; header and quality
-// slices are shared with the original.
-//
-// It is the positive control for the ML indistinguishability measurement: a
-// classifier that cannot separate GC-skewed reads from unskewed reads cannot
-// detect any real distributional difference either, so a chance-level result
-// on the null comparison would be meaningless. The seed makes the skew
-// deterministic.
-func GCSkewed(data *SyntheticData, p float64, seed int64) *SyntheticData {
-	rng := rand.New(rand.NewSource(seed)) // #nosec G404 -- deterministic test fixture
-	out := *data
-	out.Sequences = make([][]byte, len(data.Sequences))
-	for i, seq := range data.Sequences {
-		s := make([]byte, len(seq))
-		for j, b := range seq {
-			if (b == 'A' || b == 'T') && rng.Float64() < p {
-				b = "GC"[rng.Intn(2)]
-			}
-			s[j] = b
-		}
-		out.Sequences[i] = s
-	}
+// Modeled reports whether the generator can produce reads for the config.
+func (c *PlatformConfig) Modeled() bool { return c != nil && c.EnginePlatform != "" }
+
+// clone returns a deep copy of c.
+func (c *PlatformConfig) clone() *PlatformConfig {
+	out := *c
+	out.TechnologyParams = maps.Clone(c.TechnologyParams)
 	return &out
 }
 
-// GenerateBalancedDataset generates two independent datasets of numSamples
-// reads each for ML testing.
-//
-// No real sequencing data is bundled with the framework, so the "real" set is
-// an independent draw from the same generator with realistic quality-score
-// noise applied. A classifier comparing the two therefore measures the null
-// case (expected accuracy ≈ 0.5); it calibrates the measurement pipeline but
-// says nothing about how synthetic data compares to genuine reads.
-func (f *E2EFramework) GenerateBalancedDataset(platform SequencingPlatform, numSamples int) (*SyntheticData, *SyntheticData, error) {
-	config := f.CreatePlatformConfig(platform, "CEU")
-	syntheticData, err := f.generateSyntheticDataN(config, numSamples)
-	if err != nil {
-		return nil, nil, err
+// sequencerConfig returns the engine configuration for c.
+func (c *PlatformConfig) sequencerConfig() types.SequencerConfig {
+	return types.SequencerConfig{
+		Platform:               c.EnginePlatform,
+		SampleName:             "e2e",
+		Lane:                   1,
+		ReadLength:             c.ReadLength,
+		ReadsPerBatch:          c.Reads,
+		TotalBatches:           1,
+		BaseQuality:            c.BaseQuality,
+		QualityDecay:           c.QualityDecay,
+		Seed:                   c.Seed,
+		Population:             c.Population,
+		ErrorModel:             types.ErrorModelSpec{Tier: c.ErrorTier},
+		ReadLengthDistribution: c.ReadLengthDistribution,
 	}
-
-	// The two sets must be generated independently: sharing sequences gives
-	// every held-out read an identical twin with the opposite label, which
-	// drives classifier accuracy systematically below chance.
-	realData, err := f.generateSyntheticDataN(config, numSamples)
-	if err != nil {
-		return nil, nil, err
-	}
-	f.makeDataRealistic(realData, platform)
-
-	return realData, syntheticData, nil
 }
 
-// makeDataRealistic perturbs data (quality jitter of ±1 and small changes
-// to the summary fields) so the "real" set is not byte-identical to the
-// synthetic one. It does not make the data more like genuine reads.
-func (f *E2EFramework) makeDataRealistic(data *SyntheticData, platform SequencingPlatform) {
-	// Add realistic noise and variations
-	for i := range data.QualityScores {
-		for j := range data.QualityScores[i] {
-			// Add small random quality variations
-			variation := rand.Intn(3) - 1 // #nosec G404
-			newQuality := int(data.QualityScores[i][j]) + variation
-			if newQuality < 33 {
-				newQuality = 33
+// SyntheticData is a set of reads: generated by GenerateSyntheticData, or
+// loaded from a FASTQ by LoadFASTQ (Platform is then empty).
+type SyntheticData struct {
+	Sequences     [][]byte
+	QualityScores [][]byte // Phred+33
+	Headers       []string // FASTQ header lines without the leading '@'
+	Platform      SequencingPlatform
+	Population    string
+	Seed          uint64
+
+	// Stats is computed from Sequences and QualityScores.
+	Stats ReadStats
+}
+
+// ReadStats are summary statistics computed from a set of reads.
+type ReadStats struct {
+	Reads          int
+	Bases          int64
+	MeanReadLength float64
+	MinReadLength  int
+	MaxReadLength  int
+	// N50 is the length L such that reads of length >= L hold at least half
+	// of all bases.
+	N50 int
+	// MeanQuality is the mean Phred score over all bases.
+	MeanQuality float64
+	// GCContent is the G+C fraction of A, C, G and T bases (N excluded).
+	GCContent float64
+}
+
+// ComputeReadStats computes ReadStats from reads and their Phred+33
+// qualities.
+func ComputeReadStats(seqs, quals [][]byte) ReadStats {
+	s := ReadStats{Reads: len(seqs)}
+	if len(seqs) == 0 {
+		return s
+	}
+	lengths := make([]int, len(seqs))
+	var gc, acgt int64
+	s.MinReadLength = len(seqs[0])
+	for i, seq := range seqs {
+		lengths[i] = len(seq)
+		s.Bases += int64(len(seq))
+		s.MinReadLength = min(s.MinReadLength, len(seq))
+		s.MaxReadLength = max(s.MaxReadLength, len(seq))
+		for _, b := range seq {
+			switch b {
+			case 'G', 'C', 'g', 'c':
+				gc++
+				acgt++
+			case 'A', 'T', 'a', 't':
+				acgt++
 			}
-			if newQuality > 75 {
-				newQuality = 75
-			}
-			data.QualityScores[i][j] = byte(newQuality)
 		}
 	}
-
-	// Adjust error rate slightly
-	data.ErrorRate *= 1.1
-
-	// Add platform-specific realistic variations
-	switch platform {
-	case IlluminaNovaSeq6000:
-		data.QualityScoreAverage += 0.5
-	case PacBioRevio:
-		data.AverageReadLength += 500
-	case ONTPromethION24:
-		data.ErrorRate += 0.01
+	s.MeanReadLength = float64(s.Bases) / float64(len(seqs))
+	if acgt > 0 {
+		s.GCContent = float64(gc) / float64(acgt)
 	}
+
+	var qsum, qn int64
+	for _, q := range quals {
+		for _, c := range q {
+			qsum += int64(c) - 33
+			qn++
+		}
+	}
+	if qn > 0 {
+		s.MeanQuality = float64(qsum) / float64(qn)
+	}
+
+	sort.Sort(sort.Reverse(sort.IntSlice(lengths)))
+	var acc int64
+	for _, l := range lengths {
+		acc += int64(l)
+		if 2*acc >= s.Bases {
+			s.N50 = l
+			break
+		}
+	}
+	return s
 }
 
-// CreateMLClassifier creates a machine learning classifier for authenticity testing.
-func (f *E2EFramework) CreateMLClassifier() *MLClassifier {
-	return &MLClassifier{
-		nb: NewMultinomialNB(1.0),
-	}
+// PlatformBenchmark holds values measured while generating one dataset.
+type PlatformBenchmark struct {
+	Platform SequencingPlatform
+	Seed     uint64
+	// WallTime is the elapsed time of GenerateSyntheticData.
+	WallTime time.Duration
+	// CPUSeconds is process user+system CPU time used during generation
+	// (0 where the platform cannot report it).
+	CPUSeconds float64
+	// CPUPercent is CPUSeconds / (wall seconds × logical CPUs) × 100.
+	CPUPercent float64
+	// AllocatedBytes is heap memory allocated during generation
+	// (runtime.MemStats.TotalAlloc delta), not peak resident memory.
+	AllocatedBytes uint64
+	// BasesPerSecond is Stats.Bases / wall seconds.
+	BasesPerSecond float64
+	Stats          ReadStats
 }
 
-// Train trains the ML classifier on real and synthetic data using 5-fold
-// stratified cross-validation on 4-mer frequency vectors extracted from sequences.
-// If either dataset has no sequences, a warning is logged and the classifier
-// is left untrained.
-func (c *MLClassifier) Train(realData, syntheticData *SyntheticData) error {
-	realFeatures := extractFeatures(realData)
-	synthFeatures := extractFeatures(syntheticData)
+// NewE2EFramework creates a framework with the default platform profiles.
+func NewE2EFramework() *E2EFramework {
+	f := &E2EFramework{platformConfigs: make(map[SequencingPlatform]*PlatformConfig)}
+	f.initializePlatformConfigs()
+	return f
+}
 
-	if len(realFeatures) == 0 || len(synthFeatures) == 0 {
-		os.Stderr.WriteString("MLClassifier.Train: warning: empty sequence set; classifier not trained\n")
+// initializePlatformConfigs sets up the platform profiles. Illumina values
+// are taken from configs/sequencer/{novaseq-6000-s2,nextseq-2000-p3,miseq-v3}.json,
+// the ONT values from configs/sequencers/ont_promethion24.yaml (sup tier,
+// lognormal read lengths, scaled down to keep test runs short).
+func (f *E2EFramework) initializePlatformConfigs() {
+	illumina := func(p SequencingPlatform, readLength, baseQ int, decay float64, params map[string]string) *PlatformConfig {
+		return &PlatformConfig{
+			Platform: p, Reads: 1000, ReadLength: readLength, Seed: DefaultSeed,
+			EnginePlatform: "illumina", BaseQuality: baseQ, QualityDecay: decay,
+			TechnologyParams: params,
+		}
+	}
+	f.platformConfigs[IlluminaNovaSeq6000] = illumina(IlluminaNovaSeq6000, 150, 35, 0.05,
+		map[string]string{"chemistry": "SBS", "flow_cell": "S2"})
+	f.platformConfigs[IlluminaNextSeq2000] = illumina(IlluminaNextSeq2000, 150, 33, 0.08,
+		map[string]string{"chemistry": "two_color_SBS", "flow_cell": "P3"})
+	f.platformConfigs[IlluminaMiSeq] = illumina(IlluminaMiSeq, 300, 30, 0.12,
+		map[string]string{"chemistry": "SBS", "kit": "v3"})
+
+	f.platformConfigs[ONTPromethION24] = &PlatformConfig{
+		Platform: ONTPromethION24, Reads: 200, ReadLength: 8000, Seed: DefaultSeed,
+		EnginePlatform: "ont", BaseQuality: 20, ErrorTier: "sup",
+		ReadLengthDistribution: types.ReadLengthSpec{
+			Dist: types.ReadLengthLognormal, Median: 6000, N50: 10000, Min: 200, Max: 60000,
+		},
+		TechnologyParams: map[string]string{"chemistry": "R10.4.1", "flow_cell": "FLO-PRO114M", "basecaller": "sup"},
+	}
+
+	// Profiles the generator has no read model for.
+	f.platformConfigs[PacBioRevio] = &PlatformConfig{Platform: PacBioRevio, Reads: 200, ReadLength: 15000, Seed: DefaultSeed,
+		TechnologyParams: map[string]string{"chemistry": "HiFi"}}
+	f.platformConfigs[MGI_DNBSEQ_T20x2] = &PlatformConfig{Platform: MGI_DNBSEQ_T20x2, Reads: 1000, ReadLength: 150, Seed: DefaultSeed,
+		TechnologyParams: map[string]string{"chemistry": "DNB"}}
+	f.platformConfigs[ElementAVITI] = &PlatformConfig{Platform: ElementAVITI, Reads: 1000, ReadLength: 150, Seed: DefaultSeed,
+		TechnologyParams: map[string]string{"chemistry": "SBB"}}
+}
+
+// Modeled reports whether the generator can produce reads for platform.
+func (f *E2EFramework) Modeled(platform SequencingPlatform) bool {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	return f.platformConfigs[platform].Modeled()
+}
+
+// CreatePlatformConfig returns a copy of platform's profile labelled with
+// population, or nil for an unknown platform. The copy shares nothing with
+// the framework or with other returned configs.
+func (f *E2EFramework) CreatePlatformConfig(platform SequencingPlatform, population string) *PlatformConfig {
+	f.mu.RLock()
+	base, ok := f.platformConfigs[platform]
+	f.mu.RUnlock()
+	if !ok {
 		return nil
 	}
-
-	allFeatures := make([][]float64, 0, len(realFeatures)+len(synthFeatures))
-	allLabels := make([]int, 0, len(realFeatures)+len(synthFeatures))
-	for _, f := range realFeatures {
-		allFeatures = append(allFeatures, f)
-		allLabels = append(allLabels, 0)
-	}
-	for _, f := range synthFeatures {
-		allFeatures = append(allFeatures, f)
-		allLabels = append(allLabels, 1)
-	}
-
-	if err := c.nb.Fit(allFeatures, allLabels); err != nil {
-		return fmt.Errorf("MLClassifier.Train: %w", err)
-	}
-	c.trained = true
-	return nil
+	c := base.clone()
+	c.Population = population
+	return c
 }
 
-// TestAccuracy measures classifier accuracy on 4-mer frequency vectors from
-// the given real and synthetic sequences. If the classifier has been trained,
-// the fitted model is scored on the given data as a held-out set; otherwise
-// accuracy is estimated by 5-fold cross-validation on the combined data.
-// Accuracy near 0.5 means this classifier cannot tell the two sets apart; it
-// does not rule out other classifiers or features.
-func (c *MLClassifier) TestAccuracy(realData, syntheticData *SyntheticData) float64 {
-	realFeatures := extractFeatures(realData)
-	synthFeatures := extractFeatures(syntheticData)
-
-	if len(realFeatures) == 0 || len(synthFeatures) == 0 {
-		return 0.5 // No data: report chance accuracy honestly
+// GenerateSyntheticData generates config.Reads reads with the real engine
+// (genomics.Engine.GenerateToWriter) and parses the FASTQ it writes. The
+// same config, including Seed, gives identical data. Platforms without a
+// read model return ErrPlatformNotModeled.
+func (f *E2EFramework) GenerateSyntheticData(config *PlatformConfig) (*SyntheticData, error) {
+	if config == nil {
+		return nil, fmt.Errorf("configuration cannot be nil")
+	}
+	if !config.Modeled() {
+		return nil, fmt.Errorf("%w: %s", ErrPlatformNotModeled, config.Platform)
+	}
+	if config.Reads <= 0 {
+		return nil, fmt.Errorf("reads must be positive, got %d", config.Reads)
+	}
+	if config.Seed == 0 {
+		return nil, fmt.Errorf("seed must be non-zero so the data can be reproduced")
 	}
 
-	if c.trained {
-		correct := 0
-		for _, f := range realFeatures {
-			if c.nb.Predict(f) == 0 {
-				correct++
-			}
-		}
-		for _, f := range synthFeatures {
-			if c.nb.Predict(f) == 1 {
-				correct++
-			}
-		}
-		return float64(correct) / float64(len(realFeatures)+len(synthFeatures))
+	engine := genomics.NewEngine(config.sequencerConfig())
+	defer engine.Close()
+	var buf bytes.Buffer
+	if err := engine.GenerateToWriter(&buf, genomics.GenerateOpts{}); err != nil {
+		return nil, fmt.Errorf("generate %s reads: %w", config.Platform, err)
 	}
-
-	allFeatures := make([][]float64, 0, len(realFeatures)+len(synthFeatures))
-	allLabels := make([]int, 0, len(realFeatures)+len(synthFeatures))
-	for _, f := range realFeatures {
-		allFeatures = append(allFeatures, f)
-		allLabels = append(allLabels, 0)
-	}
-	for _, f := range synthFeatures {
-		allFeatures = append(allFeatures, f)
-		allLabels = append(allLabels, 1)
-	}
-
-	nb := NewMultinomialNB(1.0)
-	mean, _, err := nb.CrossValidate(allFeatures, allLabels, 5)
+	data, err := parseFASTQ(&buf, 0)
 	if err != nil {
-		return 0.5
+		return nil, fmt.Errorf("parse generated FASTQ: %w", err)
 	}
-	return mean
+	if len(data.Sequences) != config.Reads {
+		return nil, fmt.Errorf("engine wrote %d reads, want %d", len(data.Sequences), config.Reads)
+	}
+	data.Platform = config.Platform
+	data.Population = config.Population
+	data.Seed = config.Seed
+	return data, nil
 }
 
-// extractFeatures extracts 4-mer frequency vectors from the sequences in data.
-// Each sequence produces one 256-element count vector.
-func extractFeatures(data *SyntheticData) [][]float64 {
-	features := make([][]float64, 0, len(data.Sequences))
-	for _, seq := range data.Sequences {
-		features = append(features, Extract4merFrequencies(string(seq)))
+// LoadFASTQ reads up to maxReads records (all when maxReads <= 0) from a
+// FASTQ file, for example real reads to compare with generated ones.
+func LoadFASTQ(path string, maxReads int) (*SyntheticData, error) {
+	fh, err := os.Open(path) // #nosec G304 -- caller-supplied input file
+	if err != nil {
+		return nil, err
 	}
-	return features
+	defer fh.Close()
+	return parseFASTQ(fh, maxReads)
 }
 
-// RunBenchmark times generation of one dataset for platform and reports its
-// throughput, latency and CPU use, plus an AuthenticityScore from
-// MLClassifier on two independent generator draws (the null case, expected
-// near 50). AccuracyScore, CostPerGB, LongReadThroughput and
-// SystematicErrorRate are fixed per-platform constants, and ThroughputMBps is
-// multiplied by a fixed factor for some platforms; none of these are
-// measured. MemoryUsageMB is the size of the generated sequences, not
-// process memory.
-func (f *E2EFramework) RunBenchmark(platform SequencingPlatform) *PlatformBenchmark {
-	config := f.CreatePlatformConfig(platform, "CEU")
-
-	// Measure CPU time consumed during data generation.
-	cpuBefore := cpuSecondsSinceStart()
-	startTime := time.Now()
-	data, _ := f.GenerateSyntheticData(config)
-	generationTime := time.Since(startTime)
-	cpuAfter := cpuSecondsSinceStart()
-
-	// CPUUsagePercent = (CPU seconds used) / (wall seconds × logical CPUs) × 100,
-	// i.e. the share of total machine capacity used, in [0, 100].
-	// Falls back to 0 when process CPU time is unavailable.
-	cpuPercent := 0.0
-	if wallSec := generationTime.Seconds(); wallSec > 0 {
-		cpuPercent = (cpuAfter - cpuBefore) / (wallSec * float64(runtime.NumCPU())) * 100.0
-	}
-
-	// AuthenticityScore: generate a second independent dataset and measure
-	// how well a Multinomial NB classifier (4-mer CV) can distinguish the two.
-	// Score near 50 means the datasets are statistically indistinguishable.
-	data2, _ := f.GenerateSyntheticData(config)
-	cls := f.CreateMLClassifier()
-	authScore := cls.TestAccuracy(data, data2) * 100.0
-
-	// Calculate platform-specific metrics
-	benchmark := &PlatformBenchmark{
-		Platform:          platform,
-		ThroughputMBps:    f.calculateThroughput(data, generationTime),
-		LatencyMs:         int(generationTime.Milliseconds()),
-		AccuracyScore:     f.calculateAccuracyScore(data),
-		AuthenticityScore: authScore,
-		CPUUsagePercent:   cpuPercent,
-		MemoryUsageMB:     int64(len(data.Sequences) * len(data.Sequences[0]) / (1024 * 1024)),
-	}
-
-	// Add platform-specific metrics
-	f.addPlatformSpecificBenchmarks(benchmark, platform, data)
-
-	// Calculate overall score
-	benchmark.OverallScore = f.calculateOverallScore(benchmark)
-
-	return benchmark
-}
-
-// calculateThroughput calculates data generation throughput
-func (f *E2EFramework) calculateThroughput(data *SyntheticData, duration time.Duration) float64 {
-	totalBytes := 0
-	for _, seq := range data.Sequences {
-		totalBytes += len(seq)
-	}
-
-	seconds := duration.Seconds()
-	if seconds == 0 {
-		seconds = 0.001
-	}
-
-	mbps := float64(totalBytes) / (1024 * 1024) / seconds
-	return mbps
-}
-
-// calculateAccuracyScore returns a fixed per-platform accuracy constant.
-func (f *E2EFramework) calculateAccuracyScore(data *SyntheticData) float64 {
-	// Simplified accuracy calculation based on platform characteristics
-	baseAccuracy := 0.99
-
-	// Adjust based on platform
-	switch data.Platform {
-	case IlluminaNovaSeq6000, IlluminaMiSeq:
-		baseAccuracy = 0.998
-	case PacBioRevio:
-		baseAccuracy = 0.999
-	case ONTPromethION24:
-		baseAccuracy = 0.92
-	case ElementAVITI:
-		baseAccuracy = 0.9985
-	}
-
-	return baseAccuracy
-}
-
-// addPlatformSpecificBenchmarks applies fixed per-platform constants and
-// throughput multipliers; nothing here is measured.
-func (f *E2EFramework) addPlatformSpecificBenchmarks(benchmark *PlatformBenchmark, platform SequencingPlatform, data *SyntheticData) {
-	switch platform {
-	case IlluminaNovaSeq6000:
-		benchmark.ThroughputMBps *= 1.2 // Higher throughput
-		benchmark.CostPerGB = 5.0
-
-	case PacBioRevio:
-		benchmark.LongReadThroughput = 200.0
-		benchmark.CostPerGB = 50.0
-
-	case ONTPromethION24:
-		benchmark.LongReadThroughput = 150.0
-		benchmark.SystematicErrorRate = 0.08
-
-	case MGI_DNBSEQ_T20x2:
-		benchmark.ThroughputMBps *= 1.5 // Ultra-high throughput
-		benchmark.CostPerGB = 3.0
-
-	case ElementAVITI:
-		benchmark.SystematicErrorRate = 0.001
-		benchmark.CostPerGB = 15.0
-	}
-}
-
-// calculateOverallScore calculates overall benchmark score
-func (f *E2EFramework) calculateOverallScore(benchmark *PlatformBenchmark) float64 {
-	// Weighted scoring
-	throughputScore := math.Min(100.0, benchmark.ThroughputMBps/10.0)
-	accuracyScore := benchmark.AccuracyScore * 100.0
-	authenticityScore := benchmark.AuthenticityScore
-	efficiencyScore := math.Max(0, 100.0-benchmark.CPUUsagePercent)
-
-	// Weighted average
-	overallScore := (throughputScore*0.3 + accuracyScore*0.3 + authenticityScore*0.3 + efficiencyScore*0.1)
-
-	return math.Min(100.0, overallScore)
-}
-
-// RunWorkflow is a stub: it runs nothing and returns a fixed success rate per
-// engine (0.96-0.98), a random execution time and GATK/BWA compatibility set
-// to true. tests/integration runs Cromwell, Nextflow and Snakemake for real.
-func (f *E2EFramework) RunWorkflow(workflow WorkflowEngine, platform SequencingPlatform, data *SyntheticData) (*WorkflowResult, error) {
-	_ = time.Now()
-
-	// Simulate workflow execution
-	executionTime := time.Duration(rand.Intn(300)+60) * time.Second // #nosec G404
-
-	result := &WorkflowResult{
-		SuccessRate:    0.98, // High success rate for synthetic data
-		ExecutionTime:  executionTime,
-		GATKCompatible: true,
-		BWACompatible:  true,
-		ErrorMessages:  []string{},
-	}
-
-	// Add workflow-specific characteristics
-	switch workflow {
-	case CromwellWDL:
-		result.SuccessRate = 0.97
-	case NextflowNFL:
-		result.SuccessRate = 0.98
-	case SnakemakeRule:
-		result.SuccessRate = 0.96
-	}
-
-	return result, nil
-}
-
-// WriteFASTQ writes synthetic data to FASTQ files (R1 and R2 for paired-end)
-func (f *E2EFramework) WriteFASTQ(data *SyntheticData, r1File, r2File string) error {
-	writeReads := func(filename string, sequences [][]byte, qualities [][]byte, headers []string) error {
-		var content strings.Builder
-		for i, seq := range sequences {
-			header := fmt.Sprintf("@read_%d", i)
-			if i < len(headers) {
-				// Headers may already include the leading '@'; don't double it.
-				if strings.HasPrefix(headers[i], "@") {
-					header = headers[i]
-				} else {
-					header = "@" + headers[i]
-				}
-			}
-			qual := make([]byte, len(seq))
-			if i < len(qualities) && len(qualities[i]) == len(seq) {
-				for j, q := range qualities[i] {
-					qual[j] = q // already Phred+33 encoded at generation time
-				}
-			} else {
-				for j := range qual {
-					qual[j] = 'I' // Q40
-				}
-			}
-			content.WriteString(header + "\n")
-			content.Write(seq)
-			content.WriteString("\n+\n")
-			content.Write(qual)
-			content.WriteString("\n")
+// parseFASTQ parses four-line FASTQ records and computes their stats.
+func parseFASTQ(r io.Reader, maxReads int) (*SyntheticData, error) {
+	sc := bufio.NewScanner(r)
+	sc.Buffer(make([]byte, 1<<20), 1<<30)
+	data := &SyntheticData{}
+	next := func() (string, bool) {
+		if !sc.Scan() {
+			return "", false
 		}
-		return os.WriteFile(filename, []byte(content.String()), 0600)
+		return sc.Text(), true
 	}
-	if err := writeReads(r1File, data.Sequences, data.QualityScores, data.Headers); err != nil {
+	for maxReads <= 0 || len(data.Sequences) < maxReads {
+		header, ok := next()
+		if !ok {
+			break
+		}
+		if header == "" {
+			continue
+		}
+		if !strings.HasPrefix(header, "@") {
+			return nil, fmt.Errorf("record %d: header %q does not start with '@'", len(data.Sequences)+1, header)
+		}
+		seq, ok1 := next()
+		plus, ok2 := next()
+		qual, ok3 := next()
+		if !ok1 || !ok2 || !ok3 {
+			return nil, fmt.Errorf("record %d: truncated", len(data.Sequences)+1)
+		}
+		if !strings.HasPrefix(plus, "+") {
+			return nil, fmt.Errorf("record %d: separator %q does not start with '+'", len(data.Sequences)+1, plus)
+		}
+		if len(seq) != len(qual) {
+			return nil, fmt.Errorf("record %d: %d bases but %d qualities", len(data.Sequences)+1, len(seq), len(qual))
+		}
+		data.Headers = append(data.Headers, header[1:])
+		data.Sequences = append(data.Sequences, []byte(seq))
+		data.QualityScores = append(data.QualityScores, []byte(qual))
+	}
+	if err := sc.Err(); err != nil {
+		return nil, err
+	}
+	data.Stats = ComputeReadStats(data.Sequences, data.QualityScores)
+	return data, nil
+}
+
+// RunBenchmark generates one dataset for config and reports what was
+// measured: wall time, process CPU time, heap allocation, bases per second
+// and the dataset's ReadStats.
+func (f *E2EFramework) RunBenchmark(config *PlatformConfig) (*PlatformBenchmark, error) {
+	if config == nil {
+		return nil, fmt.Errorf("configuration cannot be nil")
+	}
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	cpuBefore := cpuSecondsSinceStart()
+	start := time.Now()
+	data, err := f.GenerateSyntheticData(config)
+	wall := time.Since(start)
+	cpuAfter := cpuSecondsSinceStart()
+	runtime.ReadMemStats(&after)
+	if err != nil {
+		return nil, err
+	}
+
+	b := &PlatformBenchmark{
+		Platform:       config.Platform,
+		Seed:           config.Seed,
+		WallTime:       wall,
+		CPUSeconds:     cpuAfter - cpuBefore,
+		AllocatedBytes: after.TotalAlloc - before.TotalAlloc,
+		Stats:          data.Stats,
+	}
+	if s := wall.Seconds(); s > 0 {
+		b.BasesPerSecond = float64(data.Stats.Bases) / s
+		b.CPUPercent = b.CPUSeconds / (s * float64(runtime.NumCPU())) * 100
+	}
+	return b, nil
+}
+
+// WriteFASTQ writes data to r1File and, for tools that expect a pair, the
+// same reads again to r2File. The framework generates single-end reads, so
+// the two files are identical.
+func (f *E2EFramework) WriteFASTQ(data *SyntheticData, r1File, r2File string) error {
+	if err := writeFASTQ(data, r1File); err != nil {
 		return err
 	}
-	// For paired-end, write the same sequences as R2 (stub)
-	return writeReads(r2File, data.Sequences, data.QualityScores, data.Headers)
+	return writeFASTQ(data, r2File)
 }
 
-// WriteReferenceGenome writes a minimal reference genome FASTA file
-func (f *E2EFramework) WriteReferenceGenome(filename string) error {
-	content := ">chr1\n" + strings.Repeat("ACGT", 250) + "\n"
-	return os.WriteFile(filename, []byte(content), 0600)
+// writeFASTQ writes data as FASTQ to filename.
+func writeFASTQ(data *SyntheticData, filename string) error {
+	var b strings.Builder
+	for i, seq := range data.Sequences {
+		header := fmt.Sprintf("read_%d", i)
+		if i < len(data.Headers) && data.Headers[i] != "" {
+			header = strings.TrimPrefix(data.Headers[i], "@")
+		}
+		b.WriteString("@" + header + "\n")
+		b.Write(seq)
+		b.WriteString("\n+\n")
+		if i < len(data.QualityScores) && len(data.QualityScores[i]) == len(seq) {
+			b.Write(data.QualityScores[i])
+		} else {
+			b.WriteString(strings.Repeat("I", len(seq))) // Q40 when no qualities are present
+		}
+		b.WriteString("\n")
+	}
+	return os.WriteFile(filename, []byte(b.String()), 0600)
 }
 
 // WriteReferenceFromData writes a FASTA reference genome derived from the
@@ -1189,17 +479,60 @@ func (f *E2EFramework) WriteReferenceFromData(data *SyntheticData, filename stri
 	return os.WriteFile(filename, []byte(content.String()), 0600)
 }
 
-// WriteVCF writes synthetic variant data to a VCF file
-func (f *E2EFramework) WriteVCF(data *SyntheticData, filename string) error {
-	var content strings.Builder
-	content.WriteString("##fileformat=VCFv4.2\n")
-	content.WriteString("##FILTER=<ID=PASS,Description=\"All filters passed\">\n")
-	content.WriteString("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n")
-	for i := 0; i < data.VariantCount && i < 100; i++ {
-		pos := (i + 1) * 1000
-		content.WriteString(fmt.Sprintf("chr1\t%d\t.\tA\tG\t40.0\tPASS\t.\n", pos))
+// vcfSiteSpacing is the distance between the sites WriteVCF writes.
+const vcfSiteSpacing = 1000
+
+// vcfMaxSites caps the number of sites WriteVCF writes.
+const vcfMaxSites = 100
+
+// transition returns the transition partner of an upper-case base.
+func transition(b byte) (byte, bool) {
+	switch b {
+	case 'A':
+		return 'G', true
+	case 'G':
+		return 'A', true
+	case 'C':
+		return 'T', true
+	case 'T':
+		return 'C', true
 	}
-	return os.WriteFile(filename, []byte(content.String()), 0600)
+	return 0, false
+}
+
+// WriteVCF writes a sites-only VCF against the reference written by
+// WriteReferenceFromData: one transition SNV every 1000 bp of chr1 (at most
+// 100), whose REF is the reference base at that position. Positions whose
+// base is not A, C, G or T are skipped.
+func (f *E2EFramework) WriteVCF(data *SyntheticData, filename string) error {
+	var b strings.Builder
+	b.WriteString("##fileformat=VCFv4.2\n")
+	b.WriteString("##FILTER=<ID=PASS,Description=\"All filters passed\">\n")
+	var refLen int64
+	for _, seq := range data.Sequences {
+		refLen += int64(len(seq))
+	}
+	fmt.Fprintf(&b, "##contig=<ID=chr1,length=%d>\n", refLen)
+	b.WriteString("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n")
+
+	sites := 0
+	var offset int64 // 0-based position of the current read's first base
+	pos := int64(vcfSiteSpacing)
+	for _, seq := range data.Sequences {
+		for sites < vcfMaxSites && pos-1 < offset+int64(len(seq)) {
+			ref := seq[pos-1-offset]
+			if ref >= 'a' && ref <= 'z' {
+				ref -= 'a' - 'A'
+			}
+			if alt, ok := transition(ref); ok {
+				fmt.Fprintf(&b, "chr1\t%d\t.\t%c\t%c\t40.0\tPASS\t.\n", pos, ref, alt)
+				sites++
+			}
+			pos += vcfSiteSpacing
+		}
+		offset += int64(len(seq))
+	}
+	return os.WriteFile(filename, []byte(b.String()), 0600)
 }
 
 // ErrBAMUnsupported is returned by WriteBAM when samtools, which performs the
@@ -1299,28 +632,4 @@ func (f *E2EFramework) WriteBAM(data *SyntheticData, filename string) error {
 		return fmt.Errorf("samtools view -b: %v: %s", err, strings.TrimSpace(string(out)))
 	}
 	return nil
-}
-
-// GeneratePerformanceReport prints benchmarks from RunBenchmark to stdout,
-// labelling the fixed per-platform figures as such.
-func (f *E2EFramework) GeneratePerformanceReport(benchmarks map[SequencingPlatform]*PlatformBenchmark) {
-	fmt.Println("\n📊 PERFORMANCE BENCHMARK REPORT")
-	fmt.Println(strings.Repeat("=", 60))
-
-	for platform, benchmark := range benchmarks {
-		fmt.Printf("\n🧬 Platform: %s\n", platform)
-		fmt.Printf("   Throughput: %.1f MB/s\n", benchmark.ThroughputMBps)
-		fmt.Printf("   Accuracy (fixed per platform): %.3f\n", benchmark.AccuracyScore)
-		fmt.Printf("   ML null-case accuracy: %.1f%% (expected near 50)\n", benchmark.AuthenticityScore)
-		fmt.Printf("   Overall Score: %.1f/100\n", benchmark.OverallScore)
-
-		if benchmark.LongReadThroughput > 0 {
-			fmt.Printf("   Long Read Throughput (fixed per platform): %.1f reads/s\n", benchmark.LongReadThroughput)
-		}
-		if benchmark.CostPerGB > 0 {
-			fmt.Printf("   Cost per GB (fixed per platform): $%.2f\n", benchmark.CostPerGB)
-		}
-	}
-
-	fmt.Println("\n✅ Performance benchmarking completed")
 }

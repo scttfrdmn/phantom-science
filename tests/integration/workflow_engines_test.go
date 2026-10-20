@@ -1,3 +1,5 @@
+//go:build !release
+
 package integration
 
 import (
@@ -388,9 +390,7 @@ func testCromwellWorkflow(t *testing.T, framework *pt.E2EFramework, workflow WDL
 		t.Run(string(platform), func(t *testing.T) {
 			skipIfMissingTools(t, workflow.RequiredTools)
 
-			config := framework.CreatePlatformConfig(platform, "CEU")
-			syntheticData, err := framework.GenerateSyntheticData(config)
-			require.NoError(t, err)
+			syntheticData := generateOrSkip(t, framework, platform, "CEU")
 
 			workDir := t.TempDir()
 			inputs := writeWorkflowInputs(t, framework, syntheticData, filepath.Join(workDir, "data"))
@@ -423,9 +423,7 @@ func testNextflowWorkflow(t *testing.T, framework *pt.E2EFramework, workflow Nex
 				skipIfMissingTools(t, []string{"docker"})
 			}
 
-			config := framework.CreatePlatformConfig(platform, "CEU")
-			syntheticData, err := framework.GenerateSyntheticData(config)
-			require.NoError(t, err)
+			syntheticData := generateOrSkip(t, framework, platform, "CEU")
 
 			workDir := t.TempDir()
 			inputs := writeWorkflowInputs(t, framework, syntheticData, filepath.Join(workDir, "data"))
@@ -449,9 +447,7 @@ func testSnakemakeWorkflow(t *testing.T, framework *pt.E2EFramework, workflow Sn
 		t.Run(string(platform), func(t *testing.T) {
 			skipIfMissingTools(t, workflow.RequiredTools)
 
-			config := framework.CreatePlatformConfig(platform, "CEU")
-			syntheticData, err := framework.GenerateSyntheticData(config)
-			require.NoError(t, err)
+			syntheticData := generateOrSkip(t, framework, platform, "CEU")
 
 			workDir := t.TempDir()
 			inputs := writeWorkflowInputs(t, framework, syntheticData, filepath.Join(workDir, "data"))
@@ -476,12 +472,7 @@ func testWorkflowCompatibility(t *testing.T, framework *pt.E2EFramework, engine 
 	start := time.Now()
 	result := WorkflowCompatibilityResult{Platform: platform, Engine: engine}
 
-	config := framework.CreatePlatformConfig(platform, "CEU")
-	syntheticData, err := framework.GenerateSyntheticData(config)
-	if err != nil {
-		result.ErrorMessages = append(result.ErrorMessages, err.Error())
-		return result
-	}
+	syntheticData := generateOrSkip(t, framework, platform, "CEU")
 
 	workDir := t.TempDir()
 	inputs := writeWorkflowInputs(t, framework, syntheticData, filepath.Join(workDir, "data"))
