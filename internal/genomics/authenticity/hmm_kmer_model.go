@@ -45,7 +45,9 @@ type GenerationResult struct {
 	States          []int // State sequence for debugging
 }
 
-// NewHMMKmerModel creates a new HMM k-mer model
+// NewHMMKmerModel creates a new, untrained model of order k-1 (2 <= k <= 8);
+// it returns nil for any other k. Its random source starts from DefaultSeed
+// (see SetSeed).
 func NewHMMKmerModel(k int) *HMMKmerModel {
 	if k < 2 || k > 8 {
 		// Use proper error handling instead of panic
@@ -56,7 +58,7 @@ func NewHMMKmerModel(k int) *HMMKmerModel {
 
 	model := &HMMKmerModel{
 		k:   k,
-		rng: rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), 0)), // #nosec G404
+		rng: newModelRNG(DefaultSeed),
 	}
 
 	// Initialize state space (all possible k-1 mers)
@@ -416,7 +418,7 @@ func (m *HMMKmerModel) StateSpace() []string {
 func (m *HMMKmerModel) SetSeed(seed int64) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.rng = rand.New(rand.NewPCG(uint64(seed), 0)) // #nosec G115 G404
+	m.rng = newModelRNG(seed)
 }
 
 // HMMGenerationResult represents the result of HMM generation

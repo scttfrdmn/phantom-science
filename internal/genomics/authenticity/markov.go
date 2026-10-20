@@ -23,6 +23,18 @@ import "math/rand/v2"
 // count when a model's probabilities are estimated.
 const PseudoCount = 1.0
 
+// DefaultSeed seeds a model's random source until SetSeed is called, so an
+// unseeded model (new or loaded) is still reproducible; models never seed
+// from the clock. The genomics engine reseeds every model per output stream
+// with SetSeed.
+const DefaultSeed int64 = 0
+
+// newModelRNG returns the random source a model uses for seed, as
+// PCG(uint64(seed), 0).
+func newModelRNG(seed int64) *rand.Rand {
+	return rand.New(rand.NewPCG(uint64(seed), 0)) // #nosec G115 G404 -- simulation, not crypto
+}
+
 // basesATGC is the base order of state indices and transition columns.
 var basesATGC = [4]byte{'A', 'T', 'G', 'C'}
 

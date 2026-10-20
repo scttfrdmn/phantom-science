@@ -65,7 +65,8 @@ type GenerationStats struct {
 }
 
 // NewAdaptiveHMMModel creates a new, untrained adaptive model of order k-1
-// (2 <= k <= 8); it returns nil for any other k.
+// (2 <= k <= 8); it returns nil for any other k. Its random source starts
+// from DefaultSeed (see SetSeed).
 func NewAdaptiveHMMModel(k int) *AdaptiveHMMModel {
 	if k < 2 || k > 8 {
 		// Use proper error handling instead of panic
@@ -76,9 +77,9 @@ func NewAdaptiveHMMModel(k int) *AdaptiveHMMModel {
 
 	model := &AdaptiveHMMModel{
 		k:                    k,
-		rng:                  rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), 0)), // #nosec G404
-		complexityWindowSize: 100,                                                     // Track last 100 k-mers
-		targetComplexity:     0.7,                                                     // Target fraction of distinct k-mers in the window
+		rng:                  newModelRNG(DefaultSeed),
+		complexityWindowSize: 100, // Track last 100 k-mers
+		targetComplexity:     0.7, // Target fraction of distinct k-mers in the window
 		complexityMemory:     make([]string, 0),
 	}
 
@@ -466,7 +467,7 @@ func (m *AdaptiveHMMModel) StateSpace() []string {
 func (m *AdaptiveHMMModel) SetSeed(seed int64) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.rng = rand.New(rand.NewPCG(uint64(seed), 0)) // #nosec G115 G404
+	m.rng = newModelRNG(seed)
 }
 
 // ValidateModel checks that the model is trained, its matrices have the

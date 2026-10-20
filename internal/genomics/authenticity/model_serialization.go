@@ -3,7 +3,6 @@ package authenticity
 import (
 	"encoding/json"
 	"fmt"
-	"math/rand/v2"
 	"os"
 	"time"
 )
@@ -173,7 +172,7 @@ func LoadHMMKmerModel(path string) (*HMMKmerModel, error) {
 	m.startProbabilities = data.StartProbabilities
 	m.totalKmers = data.TotalKmers
 	m.trained = data.Trained
-	m.rng = rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), 0)) // #nosec G404
+	m.rng = newModelRNG(DefaultSeed)
 
 	if err := m.ValidateModel(); err != nil {
 		return nil, fmt.Errorf("hmm_kmer_model: validation after load: %w", err)
@@ -278,7 +277,7 @@ func LoadAdaptiveHMMModel(path string) (*AdaptiveHMMModel, error) {
 		m.complexityWindowSize = data.ComplexityWindowSize
 	}
 	m.targetComplexity = data.TargetComplexity
-	m.rng = rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), 0)) // #nosec G404
+	m.rng = newModelRNG(DefaultSeed)
 
 	if err := m.ValidateModel(); err != nil {
 		return nil, fmt.Errorf("adaptive_hmm_model: validation after load: %w", err)
