@@ -19,19 +19,23 @@ var tuiCmd = &cobra.Command{
 sequencer simulation and writes FASTQ files as the run progresses.
 
 What it does:
-- Selecting sequencer models (NovaSeq 6000, NextSeq 2000, MiSeq) with the arrow
-  keys; the choice replaces sequencer_model and flow_cell_type from --config
-- Starting and stopping a run from the Actions panel (Tab moves between panels).
-  Files are written on the instrument's simulated schedule at 100x time
-  compression, one batch per sample-sheet row, into output_dir
-- Fingerprinting settings from --config and --phantom-config (the TUI does
-  not run validation)
+- Shows the run parameters, output settings and fingerprinting settings
+  loaded from --config and --phantom-config, and the sample (sample_name,
+  lane) the run generates
+- Selecting a sequencer preset (NovaSeq 6000 S2, NextSeq 2000 P3, MiSeq v3)
+  with the up/down arrows in the Sequencer panel. Until you pick one, the
+  sequencer_model and flow_cell_type from --config are used unchanged
+- Choosing the time compression ("Time Speedup": 1x, 10x, 100x, 1000x)
+  with the left/right arrows in the Output panel (default 100x)
+- Starting and stopping a run with Enter in the Actions panel (Tab and
+  Shift+Tab move between panels; q quits). Files are written on the
+  instrument's simulated schedule, total_batches batches (R1 and R2 when
+  paired-end) into output_dir, with progress, bytes written and any
+  generation error shown as the run goes
 
-Not implemented yet: editing the sample sheets (they hold two demo samples),
-changing the time compression (the 1x, 10x, 100x and 1000x options are shown
-but cannot be selected), the parameter toggles, and live progress (the
-progress panel shows the run as complete only when it ends). --enterprise has
-no effect, and the global -p flag is not read; use --phantom-config.
+Not implemented: editing settings or the sample sheet in the TUI (edit the
+config files instead), and validation. --enterprise has no effect, and the
+global -p flag is not read; use --phantom-config.
 
 Example usage:
   phantom-science tui                                                # MiSeq defaults, ./sequencer_output
@@ -42,7 +46,7 @@ Example usage:
 
 func init() {
 	rootCmd.AddCommand(tuiCmd)
-	
+
 	tuiCmd.Flags().String("config", "", "Path to sequencer configuration file (YAML or JSON)")
 	tuiCmd.Flags().String("phantom-config", "", "Path to Phantom Science configuration file (YAML or JSON)")
 	tuiCmd.Flags().Bool("enterprise", false, "No effect (kept for compatibility)")
@@ -56,7 +60,7 @@ func runTUI(cmd *cobra.Command, args []string) {
 	// Load configurations
 	var sequencerConfig types.SequencerConfig
 	var phantomConfig *types.PhantomConfig
-	
+
 	if configPath != "" {
 		app, err := cli.NewApp(configPath, phantomConfigPath, false)
 		if err != nil {
@@ -68,12 +72,12 @@ func runTUI(cmd *cobra.Command, args []string) {
 	} else {
 		// Use default configuration for TUI
 		sequencerConfig = getDefaultSequencerConfig()
-		
+
 		// Set default phantom config
 		phantomConfig = &types.PhantomConfig{
 			Enterprise: types.EnterpriseConfig{
-				CustomerID:   "DEMO",
-				ServiceTier:  "standard",
+				CustomerID:  "DEMO",
+				ServiceTier: "standard",
 				Fingerprinting: types.FingerprintConfig{
 					Enable: false,
 				},
@@ -82,7 +86,7 @@ func runTUI(cmd *cobra.Command, args []string) {
 				Enable: false,
 			},
 		}
-		
+
 		if phantomConfigPath != "" {
 			loader := cli.NewConfigLoader(false)
 			loaded, err := loader.LoadPhantomConfig(phantomConfigPath)
@@ -96,8 +100,8 @@ func runTUI(cmd *cobra.Command, args []string) {
 	}
 
 	// Create TUI model
-	model := tui.New(sequencerConfig, phantomConfig)
-	
+	model := tui.New(sequencerConfig, phantomConfig, Version)
+
 	// Create bubbletea program
 	program := tea.NewProgram(
 		model,
@@ -107,7 +111,7 @@ func runTUI(cmd *cobra.Command, args []string) {
 
 	// Run the TUI
 	if _, err := program.Run(); err != nil {
-		fmt.Printf("Error running TUI: %v\n", err)
+		fmt.Fprintf(os.Stderr, "error running TUI: %v\n", err)
 		os.Exit(1)
 	}
 }

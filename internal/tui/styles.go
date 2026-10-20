@@ -7,34 +7,34 @@ import (
 // Styles holds all the styling for the TUI
 type Styles struct {
 	// Main layout
-	MainBorder     lipgloss.Style
-	Header         lipgloss.Style
-	Panel          lipgloss.Style
-	ActivePanel    lipgloss.Style
-	
+	MainBorder  lipgloss.Style
+	Header      lipgloss.Style
+	Panel       lipgloss.Style
+	ActivePanel lipgloss.Style
+
 	// Sequencer selection
 	SequencerOption       lipgloss.Style
 	SequencerOptionActive lipgloss.Style
-	
+
 	// Sample sheet
-	SampleTable      lipgloss.Style
-	SampleHeader     lipgloss.Style
-	SampleRow        lipgloss.Style
-	SampleRowActive  lipgloss.Style
-	
+	SampleTable     lipgloss.Style
+	SampleHeader    lipgloss.Style
+	SampleRow       lipgloss.Style
+	SampleRowActive lipgloss.Style
+
 	// Progress and status
-	ProgressBar      lipgloss.Style
-	ProgressFilled   lipgloss.Style
-	ProgressEmpty    lipgloss.Style
-	StatusReady      lipgloss.Style
-	StatusRunning    lipgloss.Style
-	StatusComplete   lipgloss.Style
-	
+	ProgressBar    lipgloss.Style
+	ProgressFilled lipgloss.Style
+	ProgressEmpty  lipgloss.Style
+	StatusReady    lipgloss.Style
+	StatusRunning  lipgloss.Style
+	StatusComplete lipgloss.Style
+
 	// Actions
-	Button           lipgloss.Style
-	ButtonActive     lipgloss.Style
-	ButtonDisabled   lipgloss.Style
-	
+	Button         lipgloss.Style
+	ButtonActive   lipgloss.Style
+	ButtonDisabled lipgloss.Style
+
 	// Text elements
 	Title            lipgloss.Style
 	Subtitle         lipgloss.Style
@@ -42,14 +42,14 @@ type Styles struct {
 	Value            lipgloss.Style
 	InputField       lipgloss.Style
 	InputFieldActive lipgloss.Style
-	
+
 	// Colors
-	Primary          lipgloss.Color
-	Secondary        lipgloss.Color
-	Success          lipgloss.Color
-	Warning          lipgloss.Color
-	Error            lipgloss.Color
-	Muted            lipgloss.Color
+	Primary   lipgloss.Color
+	Secondary lipgloss.Color
+	Success   lipgloss.Color
+	Warning   lipgloss.Color
+	Error     lipgloss.Color
+	Muted     lipgloss.Color
 }
 
 // NewStyles creates a new Styles instance with default styling
@@ -213,12 +213,12 @@ func (s Styles) ProgressBarView(percent float64, width int) string {
 	if width <= 0 {
 		width = 20
 	}
-	
+
 	filled := int(percent * float64(width) / 100)
 	if filled > width {
 		filled = width
 	}
-	
+
 	var bar string
 	for i := 0; i < width; i++ {
 		if i < filled {
@@ -227,7 +227,7 @@ func (s Styles) ProgressBarView(percent float64, width int) string {
 			bar += s.ProgressEmpty.Render("░")
 		}
 	}
-	
+
 	return bar
 }
 
@@ -252,10 +252,12 @@ func (s Styles) StatusLabel(status string) string {
 	switch status {
 	case "Ready":
 		return s.StatusReady.Render(status)
-	case "Running", "Initializing", "Cluster Generation", "Sequencing", "Base Calling":
+	case "Running", "Initialization", "Cluster Generation", "Sequencing", "Base Calling":
 		return s.StatusRunning.Render(status)
 	case "Complete":
 		return s.StatusComplete.Render(status)
+	case "Failed":
+		return s.Value.Foreground(s.Error).Render(status)
 	default:
 		return s.Value.Foreground(s.Muted).Render(status)
 	}

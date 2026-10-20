@@ -1,13 +1,15 @@
 // Package tui is the interactive terminal UI (phantom-science tui). It paces
 // FASTQ generation with the run timeline from package timing and shows run
-// progress, the sample sheet and the fingerprinting settings.
+// progress, the sample being generated and the fingerprinting settings.
 package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/charmbracelet/bubbletea"
@@ -19,32 +21,36 @@ import (
 
 // Model represents the main TUI state
 type Model struct {
+	version string // shown in the header
+
 	// Configuration
 	sequencerConfig types.SequencerConfig
 	phantomConfig   *types.PhantomConfig
 
 	// UI State
-	currentSection  int
+	currentSection int
+	// sequencerChoice is the highlighted preset (ChoiceNovaSeq..ChoiceMiSeq),
+	// or ChoiceConfig when the configured sequencer is none of the presets.
 	sequencerChoice int
-	compression     timing.TimeCompression
-	samples         []Sample
-	sampleInput     SampleInput
-	editingMode     bool
+	// sequencerChanged is set once the user picks a preset; until then the
+	// configured sequencer_model and flow_cell_type are used unchanged.
+	sequencerChanged bool
+	compression      timing.TimeCompression
+	samples          []Sample
 
-	// Fingerprinting configuration
+	// Fingerprinting settings the run will use (after ResolveFingerprinting).
 	fingerprintingEnabled bool
 	customerID            string
-	embeddingStrategy     int // 0=Conservative, 1=Balanced, 2=Aggressive; display only, not passed to the engine
-
-	// HMM model configuration (mirrors sequencerConfig fields for UI state)
-	hmmModelPath string // Path to a serialized .hmm.json model (empty = uniform random bases)
-	population   string // 1000 Genomes population code (e.g. YRI, CEU, CHB)
+	fingerprintLayers     []string
 
 	// Simulation state
 	simulator      *timing.RunSimulator
 	genomicsEngine *genomics.Engine
 	runInProgress  bool
+	runID          int       // identifies the current run's messages
+	run            *runState // shared with the simulator goroutine; nil before the first run
 	progress       timing.RunProgress
+	err            error // last run error, shown in View
 	ctx            context.Context
 	cancel         context.CancelFunc
 
@@ -56,7 +62,7 @@ type Model struct {
 	styles Styles
 }
 
-// Sample represents a sample in the sample sheet
+// Sample is one row of the sample sheet.
 type Sample struct {
 	ID          string
 	Lane        int
@@ -64,17 +70,6 @@ type Sample struct {
 	Index2      string
 	Project     string
 	Description string
-}
-
-// SampleInput represents the current sample being edited
-type SampleInput struct {
-	ID          string
-	Lane        int
-	Index1      string
-	Index2      string
-	Project     string
-	Description string
-	Field       int // Current field being edited
 }
 
 // Sections of the TUI
@@ -85,85 +80,126 @@ const (
 	SectionFingerprinting
 	SectionOutput
 	SectionActions
+	numSections
 )
 
-// Sequencer choices
+// Sequencer choices. ChoiceConfig means the configured sequencer is not one
+// of the presets and is used as configured.
 const (
-	ChoiceNovaSeq = iota
-	ChoiceNextSeq
-	ChoiceMiSeq
+	ChoiceConfig  = -1
+	ChoiceNovaSeq = 0
+	ChoiceNextSeq = 1
+	ChoiceMiSeq   = 2
 )
 
-// Embedding strategy choices. They are shown in the fingerprinting panel but
-// do not change how fingerprints are embedded.
+// sequencerPresets are the sequencers selectable with the arrow keys, with
+// the flow cell each one uses when picked.
+var sequencerPresets = []struct {
+	name     string
+	flowCell string
+	icon     string
+}{
+	{"NovaSeq 6000", "S2", "🚀"},
+	{"NextSeq 2000", "P3", "⚡"},
+	{"MiSeq", "v3", "🔬"},
+}
+
+// compressionOptions are the selectable time compressions, in display order.
+var compressionOptions = []timing.TimeCompression{
+	timing.RealTime,
+	timing.Compressed10x,
+	timing.Compressed100x,
+	timing.Compressed1000x,
+}
+
+// stageStopped and stageFailed label runs that did not complete.
 const (
-	StrategyConservative = iota
-	StrategyBalanced
-	StrategyAggressive
+	stageStopped timing.RunStage = "Stopped"
+	stageFailed  timing.RunStage = "Failed"
 )
 
 // Message types
 type (
 	tickMsg               struct{}
-	progressMsg           timing.RunProgress
-	fileGeneratedMsg      struct{ filename string }
-	simulationCompleteMsg struct{}
-	simulationErrorMsg    struct{ err error }
+	simulationCompleteMsg struct{ runID int }
+	simulationErrorMsg    struct {
+		runID int
+		err   error
+	}
 )
 
-// New creates a new TUI model
-func New(sequencerConfig types.SequencerConfig, phantomConfig *types.PhantomConfig) Model {
-	// Set default phantom config if none provided
-	if phantomConfig == nil {
-		phantomConfig = &types.PhantomConfig{
-			Enterprise: types.EnterpriseConfig{
-				CustomerID:  "DEMO",
-				ServiceTier: "standard",
-				Fingerprinting: types.FingerprintConfig{
-					Enable: false,
-				},
-			},
-			Validation: types.ValidationConfig{
-				Enable: false,
-			},
-		}
-	}
+// runState is the progress of a run, written by the simulator goroutine and
+// read on each tick.
+type runState struct {
+	mu         sync.Mutex
+	progress   timing.RunProgress
+	started    time.Time
+	fileErrors int
+	firstErr   error
+}
 
-	// Set default samples
-	samples := []Sample{
-		{
-			ID:          "Patient_001",
-			Lane:        1,
-			Index1:      "ATCGATCG",
-			Index2:      "CGTAGATC",
-			Project:     "Cancer_Study",
-			Description: "Tumor sample",
-		},
-		{
-			ID:          "Patient_002",
-			Lane:        1,
-			Index1:      "GCTAGCTA",
-			Index2:      "TACGACGT",
-			Project:     "Cancer_Study",
-			Description: "Normal sample",
-		},
+func (r *runState) setStage(stage string, percent float64, eta time.Duration) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.progress.Stage = timing.RunStage(stage)
+	r.progress.Percent = percent
+	r.progress.ETA = eta
+}
+
+func (r *runState) fileDone(path string, size int64, err error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if err != nil {
+		r.fileErrors++
+		if r.firstErr == nil {
+			r.firstErr = fmt.Errorf("generating %s: %w", filepath.Base(path), err)
+		}
+		return
 	}
+	r.progress.FilesGenerated++
+	r.progress.BytesGenerated += size
+	r.progress.CurrentFile = path
+}
+
+// snapshot returns the progress and an error summarising failed files.
+func (r *runState) snapshot() (timing.RunProgress, time.Duration, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var err error
+	if r.firstErr != nil {
+		err = fmt.Errorf("%d file(s) failed; first: %w", r.fileErrors, r.firstErr)
+	}
+	return r.progress, time.Since(r.started), err
+}
+
+// New creates a new TUI model. version is shown in the header.
+func New(sequencerConfig types.SequencerConfig, phantomConfig *types.PhantomConfig, version string) Model {
+	resolved := sequencerConfig
+	resolved.ResolveFingerprinting(phantomConfig)
 
 	return Model{
+		version:               version,
 		sequencerConfig:       sequencerConfig,
 		phantomConfig:         phantomConfig,
 		currentSection:        SectionSequencer,
-		sequencerChoice:       ChoiceMiSeq,
+		sequencerChoice:       presetIndex(sequencerConfig.SequencerModel),
 		compression:           timing.Compressed100x,
-		samples:               samples,
-		sampleInput:           SampleInput{Lane: 1},
-		fingerprintingEnabled: phantomConfig.Enterprise.Fingerprinting.Enable,
-		customerID:            phantomConfig.Enterprise.CustomerID,
-		embeddingStrategy:     StrategyBalanced, // Default to balanced strategy
-		hmmModelPath:          sequencerConfig.HMMModelPath,
-		population:            sequencerConfig.Population,
+		samples:               []Sample{{ID: sequencerConfig.SampleName, Lane: sequencerConfig.Lane}},
+		fingerprintingEnabled: resolved.Fingerprinting.Enable,
+		customerID:            resolved.Enterprise.CustomerID,
+		fingerprintLayers:     resolved.Fingerprinting.SteganographyLayers,
 		styles:                NewStyles(),
 	}
+}
+
+// presetIndex returns the preset matching model, or ChoiceConfig.
+func presetIndex(model string) int {
+	for i, p := range sequencerPresets {
+		if p.name == model {
+			return i
+		}
+	}
+	return ChoiceConfig
 }
 
 // Init implements bubbletea.Model
@@ -186,41 +222,57 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleKeyPress(msg)
 
 	case tickMsg:
-		if m.runInProgress && m.simulator != nil {
-			// Update simulation progress here
-			return m, tickCmd()
+		if m.runInProgress {
+			m = m.syncProgress()
 		}
 		return m, tickCmd()
 
-	case progressMsg:
-		m.progress = timing.RunProgress(msg)
-		return m, nil
-
-	case fileGeneratedMsg:
-		// Update file count and current file name
-		m.progress.FilesGenerated++
-		m.progress.CurrentFile = msg.filename
-		return m, nil
-
 	case simulationCompleteMsg:
+		if msg.runID != m.runID || !m.runInProgress {
+			return m, nil // a stopped or earlier run
+		}
+		m = m.syncProgress()
 		m.runInProgress = false
 		m.progress.Stage = timing.StageComplete
 		m.progress.Percent = 100.0
+		m.progress.ETA = 0
 		if m.cancel != nil {
 			m.cancel()
 		}
 		return m, nil
 
 	case simulationErrorMsg:
+		if msg.runID != m.runID || !m.runInProgress {
+			return m, nil // a stopped or earlier run
+		}
+		m = m.syncProgress()
 		m.runInProgress = false
 		if m.cancel != nil {
 			m.cancel()
 		}
-		// Could show error in UI
+		if !errors.Is(msg.err, context.Canceled) {
+			m.progress.Stage = stageFailed
+			m.err = msg.err
+		}
 		return m, nil
 	}
 
 	return m, nil
+}
+
+// syncProgress copies the run's progress into the model.
+func (m Model) syncProgress() Model {
+	if m.run == nil {
+		return m
+	}
+	p, _, err := m.run.snapshot()
+	totalFiles, totalBytes := m.progress.TotalFiles, m.progress.TotalBytes
+	m.progress = p
+	m.progress.TotalFiles, m.progress.TotalBytes = totalFiles, totalBytes
+	if err != nil {
+		m.err = err
+	}
+	return m
 }
 
 // View implements bubbletea.Model
@@ -229,31 +281,24 @@ func (m Model) View() string {
 		return "Loading..."
 	}
 
-	// Build the main interface
-	header := m.renderHeader()
-	topPanels := m.renderTopPanels()
-	sampleSheet := m.renderSampleSheet()
-	bottomPanels := m.renderBottomPanels()
-	preview := m.renderPreview()
-	actions := m.renderActions()
-
-	content := lipgloss.JoinVertical(
-		lipgloss.Left,
-		header,
+	parts := []string{m.renderHeader()}
+	if m.err != nil {
+		parts = append(parts, "", m.renderError())
+	}
+	parts = append(parts,
 		"",
-		topPanels,
+		m.renderTopPanels(),
 		"",
-		sampleSheet,
+		m.renderSampleSheet(),
 		"",
-		bottomPanels,
+		m.renderBottomPanels(),
 		"",
-		preview,
+		m.renderPreview(),
 		"",
-		actions,
+		m.renderActions(),
 	)
 
-	// Add border around everything
-	return m.styles.MainBorder.Render(content)
+	return m.styles.MainBorder.Render(lipgloss.JoinVertical(lipgloss.Left, parts...))
 }
 
 // Helper functions
@@ -266,52 +311,23 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (Model, tea.Cmd) {
 		return m, tea.Quit
 
 	case "tab":
-		if !m.editingMode {
-			m.currentSection = (m.currentSection + 1) % 6
-		}
+		m.currentSection = (m.currentSection + 1) % numSections
 		return m, nil
 
 	case "shift+tab":
-		if !m.editingMode {
-			m.currentSection = (m.currentSection - 1 + 6) % 6
-		}
+		m.currentSection = (m.currentSection - 1 + numSections) % numSections
 		return m, nil
 
 	case "enter":
-		return m.handleEnter()
-
-	case "esc":
-		if m.editingMode {
-			m.editingMode = false
+		if m.currentSection == SectionActions {
+			return m.handleActionSelection()
 		}
 		return m, nil
 
 	case "up", "down", "left", "right":
 		return m.handleArrowKeys(msg.String())
-
-	case " ":
-		return m.handleSpace()
-
-	default:
-		if m.editingMode {
-			return m.handleTextInput(msg.String())
-		}
 	}
 
-	return m, nil
-}
-
-func (m Model) handleEnter() (Model, tea.Cmd) {
-	switch m.currentSection {
-	case SectionActions:
-		return m.handleActionSelection()
-	case SectionSamples:
-		if !m.editingMode {
-			m.editingMode = true
-			m.sampleInput = SampleInput{Lane: 1}
-		}
-		return m, nil
-	}
 	return m, nil
 }
 
@@ -321,121 +337,127 @@ func (m Model) handleActionSelection() (Model, tea.Cmd) {
 		if m.cancel != nil {
 			m.cancel()
 		}
+		m = m.syncProgress()
 		m.runInProgress = false
+		m.progress.Stage = stageStopped
+		m.progress.ETA = 0
 		return m, nil
 	}
 
 	// Start simulation
 	m = m.updateConfigFromUI()
+	m.err = nil
+
+	if err := os.MkdirAll(m.sequencerConfig.OutputDir, 0750); err != nil {
+		m.err = fmt.Errorf("creating output directory: %w", err)
+		return m, nil
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	m.ctx = ctx
 	m.cancel = cancel
 
-	// Create output directory if it doesn't exist
-	if err := os.MkdirAll(m.sequencerConfig.OutputDir, 0750); err != nil {
-		// Handle error - could show in UI
-		return m, nil
-	}
-
 	// Initialize genomics engine for actual FASTQ generation
 	engineConfig := m.sequencerConfig
 	engineConfig.ResolveFingerprinting(m.phantomConfig)
-	m.genomicsEngine = genomics.NewEngine(engineConfig)
+	engine := genomics.NewEngine(engineConfig)
+	engine.SetToolVersion(m.version)
+	m.genomicsEngine = engine
 
 	simulator := timing.NewRunSimulator(m.sequencerConfig, m.compression)
+	run := &runState{started: time.Now()}
+	outputDir := m.sequencerConfig.OutputDir
 
-	// Set up callback to actually generate FASTQ files
 	simulator.FileCallback = func(filename string, batchNum int, readNum int) {
-		fullPath := filepath.Join(m.sequencerConfig.OutputDir, filename)
-
-		// Generate the actual FASTQ file
-		if err := m.genomicsEngine.GenerateFASTQFile(fullPath, batchNum, readNum); err != nil {
-			// Log error but continue simulation
-			fmt.Printf("Error generating FASTQ file %s: %v\n", filename, err)
+		fullPath := filepath.Join(outputDir, filename)
+		if err := engine.GenerateFASTQFile(fullPath, batchNum, readNum); err != nil {
+			run.fileDone(fullPath, 0, err)
+			return
 		}
+		// The engine may rename the file (gzip output); report the final one.
+		final := fullPath
+		if files := engine.GeneratedFiles(); len(files) > 0 {
+			final = files[len(files)-1]
+		}
+		var size int64
+		if fi, err := os.Stat(final); err == nil {
+			size = fi.Size()
+		}
+		run.fileDone(final, size, nil)
 	}
-
-	simulator.ProgressCallback = func(stage string, percent float64, eta time.Duration) {
-		// Progress updates are handled by the timing simulator
-		// and displayed in the UI automatically
-	}
+	simulator.ProgressCallback = run.setStage
 
 	m.simulator = simulator
+	m.run = run
+	m.runID++
 	m.runInProgress = true
 
-	// Initialize progress
 	totalFiles, totalBytes := simulator.EstimateTotalOutput()
 	m.progress = timing.RunProgress{
-		Stage:          timing.StageInitialization,
-		Percent:        0.0,
-		ETA:            time.Duration(simulator.Timing.TotalRunTimeHours) * time.Hour / time.Duration(m.compression),
-		FilesGenerated: 0,
-		TotalFiles:     totalFiles,
-		BytesGenerated: 0,
-		TotalBytes:     totalBytes,
-		CurrentFile:    "",
+		Stage:      timing.StageInitialization,
+		TotalFiles: totalFiles,
+		TotalBytes: totalBytes,
 	}
 
-	// Start simulation in background
-	return m, startSimulation(ctx, simulator)
+	return m, startSimulation(ctx, simulator, engine, m.runID)
 }
 
 func (m Model) handleArrowKeys(key string) (Model, tea.Cmd) {
+	if m.runInProgress {
+		return m, nil // the running simulation does not pick up changes
+	}
 	switch m.currentSection {
 	case SectionSequencer:
+		choice := m.sequencerChoice
 		switch key {
 		case "up":
-			if m.sequencerChoice > 0 {
-				m.sequencerChoice--
+			if choice > 0 {
+				choice--
 			}
 		case "down":
-			if m.sequencerChoice < 2 {
-				m.sequencerChoice++
+			if choice < len(sequencerPresets)-1 {
+				choice++
 			}
 		}
+		if choice != m.sequencerChoice {
+			m.sequencerChoice = choice
+			m.sequencerChanged = true
+		}
+	case SectionOutput:
+		i := compressionIndex(m.compression)
+		switch key {
+		case "left":
+			if i > 0 {
+				i--
+			}
+		case "right":
+			if i < len(compressionOptions)-1 {
+				i++
+			}
+		}
+		m.compression = compressionOptions[i]
 	}
 	return m, nil
 }
 
-func (m Model) handleSpace() (Model, tea.Cmd) {
-	switch m.currentSection {
-	case SectionParameters:
-		// Toggle paired-end, compression, etc.
-		return m, nil
+// compressionIndex returns c's position in compressionOptions (0 if absent).
+func compressionIndex(c timing.TimeCompression) int {
+	for i, o := range compressionOptions {
+		if o == c {
+			return i
+		}
 	}
-	return m, nil
+	return 0
 }
 
-func (m Model) handleTextInput(input string) (Model, tea.Cmd) {
-	// Handle text input for sample editing
-	return m, nil
-}
-
+// updateConfigFromUI applies the sequencer the user picked. Until the user
+// picks one, the configured sequencer_model and flow_cell_type are kept.
 func (m Model) updateConfigFromUI() Model {
-	// Update sequencer model based on choice
-	switch m.sequencerChoice {
-	case ChoiceNovaSeq:
-		m.sequencerConfig.SequencerModel = "NovaSeq 6000"
-		m.sequencerConfig.FlowCellType = "S2"
-	case ChoiceNextSeq:
-		m.sequencerConfig.SequencerModel = "NextSeq 2000"
-		m.sequencerConfig.FlowCellType = "P3"
-	case ChoiceMiSeq:
-		m.sequencerConfig.SequencerModel = "MiSeq"
-		m.sequencerConfig.FlowCellType = "v3"
+	if m.sequencerChanged && m.sequencerChoice >= 0 && m.sequencerChoice < len(sequencerPresets) {
+		p := sequencerPresets[m.sequencerChoice]
+		m.sequencerConfig.SequencerModel = p.name
+		m.sequencerConfig.FlowCellType = p.flowCell
 	}
-
-	// Update other parameters from UI state
-	if len(m.samples) > 0 {
-		m.sequencerConfig.SampleName = m.samples[0].ID
-	}
-	m.sequencerConfig.TotalBatches = len(m.samples)
-
-	// Sync HMM model fields back to config
-	m.sequencerConfig.HMMModelPath = m.hmmModelPath
-	m.sequencerConfig.Population = m.population
-
 	return m
 }
 
@@ -446,13 +468,16 @@ func tickCmd() tea.Cmd {
 	})
 }
 
-// Start simulation command
-func startSimulation(ctx context.Context, simulator *timing.RunSimulator) tea.Cmd {
-	return tea.Cmd(func() tea.Msg {
+// startSimulation runs the simulator and closes engine when it ends.
+func startSimulation(ctx context.Context, simulator *timing.RunSimulator, engine *genomics.Engine, runID int) tea.Cmd {
+	return func() tea.Msg {
 		err := simulator.Run(ctx)
-		if err != nil {
-			return simulationErrorMsg{err: err}
+		if engine != nil {
+			engine.Close()
 		}
-		return simulationCompleteMsg{}
-	})
+		if err != nil {
+			return simulationErrorMsg{runID: runID, err: err}
+		}
+		return simulationCompleteMsg{runID: runID}
+	}
 }
