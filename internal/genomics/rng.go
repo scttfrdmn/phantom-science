@@ -80,7 +80,8 @@ func ResolveSeed(seed uint64) (resolved uint64, drawn bool, err error) {
 }
 
 // Seed returns the run seed. Passing it as SequencerConfig.Seed (or --seed)
-// reproduces this engine's output.
+// reproduces this engine's output. With a keyed-seed fingerprint it is the
+// derived seed, which is not recorded anywhere; do not publish it.
 func (e *Engine) Seed() uint64 { return e.seed }
 
 // Rand returns a deterministic generator for stream of this engine's run.
@@ -91,14 +92,20 @@ func (e *Engine) Rand(stream uint64) *rand.Rand {
 	return newStream(e.seed, stream)
 }
 
-// logSeed reports a drawn seed once, so the run can be reproduced.
+// logSeed reports a drawn seed, or the drawn salt of a keyed-seed
+// fingerprint, once, so the run can be reproduced. A derived seed is never
+// logged.
 func (e *Engine) logSeed() {
-	if !e.seedDrawn {
-		return
+	switch {
+	case e.fp.enabled && e.fp.saltDrawn:
+		e.seedLogOnce.Do(func() {
+			fmt.Fprintf(e.logw, "   [info] fingerprint salt %d (keyed seed; pass --seed %d with the same key, customer and dataset to reproduce this run)\n", e.fp.salt, e.fp.salt)
+		})
+	case e.seedDrawn:
+		e.seedLogOnce.Do(func() {
+			fmt.Fprintf(e.logw, "   [info] seed %d (pass --seed %d to reproduce this run)\n", e.seed, e.seed)
+		})
 	}
-	e.seedLogOnce.Do(func() {
-		fmt.Fprintf(e.logw, "   [info] seed %d (pass --seed %d to reproduce this run)\n", e.seed, e.seed)
-	})
 }
 
 // seedable is implemented by HMM models whose generator can be reseeded.

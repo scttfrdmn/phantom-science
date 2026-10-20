@@ -15,22 +15,53 @@ import (
 	"github.com/scttfrdmn/phantom-science/pkg/types"
 )
 
-// VerifyOptions configures VerifyFiles. Customer and Dataset, when set, are
-// required values. KeyFile holds the key for encrypted fingerprints; when empty
-// the fingerprinting.KeyEnvVar environment variable is used.
+// VerifyOptions configures VerifyFiles.
+//
+// With Manifests, ConfigPath or Candidates set, files are verified against
+// keyed-seed fingerprints by regeneration (verify_regen.go): each manifest is
+// a candidate run; ConfigPath with Customer, Dataset and Salt (SaltSet) is
+// one; Candidates names a file of customer, dataset and salt lines, each a
+// candidate with the configuration of ConfigPath or of the first manifest.
+//
+// Otherwise files are checked for a legacy quality-score fingerprint
+// (phantom-science 0.9.0 and earlier, needs the stegano library), and
+// Customer and Dataset, when set, are required values.
+//
+// KeyFile holds the fingerprint key; when empty the
+// fingerprinting.KeyEnvVar environment variable is used.
 type VerifyOptions struct {
 	Customer string
 	Dataset  string
 	KeyFile  string
+
+	Manifests  []string
+	ConfigPath string
+	Candidates string
+	Salt       uint64
+	SaltSet    bool
+	// MaxReads caps the reads examined per suspect file (0:
+	// DefaultVerifyMaxReads). MaxFiles and MaxRegenReads cap the files
+	// and reads regenerated per candidate (0: no limit).
+	MaxReads      int
+	MaxFiles      int
+	MaxRegenReads int64
+	// Decoy also regenerates the first candidate with a random seed and
+	// reports its matches, a measured background for sequence that is not
+	// uniform-random (an HMM model or a reference genome).
+	Decoy bool
 }
 
-// VerifyFiles checks each FASTQ file in paths for a steganographic
-// fingerprint and reports one line per file to w. It returns an error if any
-// file has no fingerprint, a fingerprint that does not match opts, or cannot
-// be checked (including an encrypted fingerprint without the right key).
+// VerifyFiles checks each FASTQ file in paths and reports one line per file
+// to w: against candidate runs by regeneration when opts name any, and for a
+// legacy quality-score fingerprint otherwise (see VerifyOptions). It returns
+// an error if any file matches no candidate, has no legacy fingerprint or one
+// that does not match opts, or cannot be checked.
 func VerifyFiles(w io.Writer, paths []string, opts VerifyOptions) error {
 	if len(paths) == 0 {
 		return fmt.Errorf("no files to verify (usage: phantom-science verify FILE...)")
+	}
+	if opts.regenerationRequested() {
+		return verifyByRegeneration(w, paths, opts)
 	}
 	key, err := fingerprinting.ResolveKey(opts.KeyFile)
 	if err != nil {
@@ -42,7 +73,8 @@ func VerifyFiles(w io.Writer, paths []string, opts VerifyOptions) error {
 	}
 	verifier, err := fingerprinting.NewVerifier(vopts...)
 	if err != nil {
-		return fmt.Errorf("fingerprint verification needs the stegano library (build with CGO after `make stegano`): %w", err)
+		return fmt.Errorf("legacy quality-score fingerprints (phantom-science 0.9.0 and earlier) need the stegano library (build with CGO after `make stegano`); "+
+			"keyed-seed fingerprints are verified with --manifest, or --config with --customer, --dataset and --salt: %w", err)
 	}
 
 	failed := 0
@@ -59,7 +91,7 @@ func VerifyFiles(w io.Writer, paths []string, opts VerifyOptions) error {
 			fmt.Fprintf(w, "❌ %s: cannot verify: %v\n", path, err)
 			failed++
 		case !result.Found:
-			fmt.Fprintf(w, "❌ %s: no fingerprint\n", path)
+			fmt.Fprintf(w, "❌ %s: no quality-score fingerprint (files from keyed-seed runs are verified with --manifest, or --config with --customer, --dataset and --salt)\n", path)
 			failed++
 		default:
 			if msg := checkFingerprint(result.Fingerprint, opts); msg != "" {
@@ -70,7 +102,7 @@ func VerifyFiles(w io.Writer, paths []string, opts VerifyOptions) error {
 				if result.Encrypted {
 					protection = "encrypted"
 				}
-				fmt.Fprintf(w, "✅ %s: %s (%s)\n", path, describeFingerprint(result.Fingerprint), protection)
+				fmt.Fprintf(w, "✅ %s: legacy quality-score fingerprint (phantom-science 0.9.0 and earlier): %s (%s)\n", path, describeFingerprint(result.Fingerprint), protection)
 			}
 		}
 	}
@@ -261,4 +293,3 @@ func verifyPossiblyGzipped(v fingerprinting.Verifier, path string) (fingerprinti
 	}
 	return v.Verify(tmp.Name())
 }
-

@@ -1,46 +1,35 @@
-// Package fingerprinting marks generated data with a customer and dataset
-// fingerprint.
+// Package fingerprinting attributes generated data to a customer and
+// dataset without changing it (docs/CHARTER.md, principle 2).
 //
-// SteganoEngine, built with CGO and without the release tag, uses the stegano
-// library (github.com/scttfrdmn/stegano/go, v0.8.0). Generation embeds one
-// fingerprint per FASTQ file in its quality scores with EmbedInFASTQFile;
-// SAM data carries it in a zs:Z: tag. With WithKey the payload is encrypted
-// (Argon2id key derivation, AES-256-GCM); ResolveKey reads the key from a key
-// file or the PHANTOM_FINGERPRINT_KEY environment variable. Without a key the
-// payload is plaintext and anyone with the library can read it; generation
-// writes plaintext fingerprints only when the configuration sets
-// plaintext: true. The Verifier returned by NewVerifier extracts
-// and, with a key, decrypts the fingerprint from a FASTQ file.
+// Generation uses keyed-seed fingerprints (keyedseed.go): the run seed is
+// DeriveSeed(key, customer, dataset, salt), an HMAC-SHA256 under the
+// fingerprint key, so the output is an ordinary run whose seed only the key
+// holder can compute. It is pure Go and needs no CGO. Verification
+// regenerates the run from the key and the run's records and matches suspect
+// reads against it (Matcher). ResolveKey reads the key from a key file or the
+// PHANTOM_FINGERPRINT_KEY environment variable.
 //
-// Builds without the stegano library (CGO_ENABLED=0 or -tags release) fall
-// back to LegacyEngine, which only tags read IDs; it cannot embed or recover
-// a fingerprint, and NewVerifier returns an error.
+// The quality-score fingerprints written by phantom-science 0.9.0 and
+// earlier changed quality values, so generation no longer writes them
+// (ErrQualityScoresLayer). SteganoEngine, built with CGO and without the
+// release tag, wraps the stegano library (github.com/scttfrdmn/stegano/go);
+// the Verifier returned by NewVerifier extracts those legacy fingerprints
+// from old files, decrypting them with WithKey. Builds without the stegano
+// library cannot read them: NewVerifier returns an error.
+//
+// ReadTags formats the optional read-ID labels (XC:Z:, XD:Z: header
+// fields). They are visible text, not a fingerprint.
 package fingerprinting
 
-// Engine is the set of fingerprinting operations used by the generator.
-type Engine interface {
-	GenerateFingerprint(datasetID string) (string, error)
-	EmbedInQualities(qualities []byte, fingerprint string) ([]byte, error)
-	// EmbedCustomerID and EmbedDatasetFingerprint append a tag to a read ID.
-	//
-	// Deprecated: tags appended to the read ID corrupt the read name and the
-	// FASTQ comment; generation writes ReadTags fields in the header
-	// comment instead.
-	EmbedCustomerID(readID string) string
-	EmbedDatasetFingerprint(readID, datasetID string) string
-	VerifyFingerprint(qualities []byte) bool
-	ExtractFingerprint(qualities []byte) (string, error)
-	Close()
-}
-
-// VerifyResult is the outcome of checking one file for a fingerprint.
+// VerifyResult is the outcome of checking one file for a legacy
+// quality-score fingerprint.
 type VerifyResult struct {
 	Found       bool   // a fingerprint was extracted
 	Fingerprint string // the extracted payload
 	Encrypted   bool   // the payload was encrypted and decrypted with the verifier's key
 }
 
-// Verifier checks files for an embedded fingerprint.
+// Verifier checks files for a legacy quality-score fingerprint.
 type Verifier interface {
 	// Verify checks the FASTQ file at path. A readable file without a
 	// fingerprint gives a zero VerifyResult and no error. err is non-nil when
@@ -49,8 +38,9 @@ type Verifier interface {
 	Verify(path string) (VerifyResult, error)
 }
 
-// FileFingerprinter embeds and extracts fingerprints in whole FASTQ files.
-// Implemented by SteganoEngine; use a type assertion to check.
+// FileFingerprinter embeds and extracts legacy quality-score fingerprints in
+// whole FASTQ files. Implemented by SteganoEngine. Generation does not use
+// it; tests use it to make files like those of phantom-science 0.9.0.
 type FileFingerprinter interface {
 	// EmbedInFASTQFile embeds fingerprint in the quality scores of the FASTQ
 	// file inPath and writes the result to outPath, which may be inPath.
@@ -59,10 +49,9 @@ type FileFingerprinter interface {
 	ExtractFromFASTQFile(path string) (string, error)
 }
 
-// SAMFingerprintingEngine extends Engine with SAM-level fingerprinting capabilities.
-// Implemented by SteganoEngine; use a type assertion to check.
+// SAMFingerprintingEngine embeds and extracts fingerprints in SAM records.
+// Implemented by SteganoEngine; no command writes SAM.
 type SAMFingerprintingEngine interface {
-	Engine
 	// EmbedInSAMRecords embeds a fingerprint in SAM alignment records via a zs:Z: optional tag.
 	EmbedInSAMRecords(samData []byte, fingerprint string) ([]byte, error)
 	// ExtractFromSAMRecords extracts a fingerprint from SAM alignment records.

@@ -349,7 +349,7 @@ func TestONT_ReadIDFingerprintKeepsReadID(t *testing.T) {
 	c.TotalBatches = 1
 	c.DatasetID = "ds9"
 	c.Enterprise.CustomerID = "cust7"
-	c.Fingerprinting = types.FingerprintConfig{Enable: true, CustomerFingerprint: true, DatasetFingerprint: true}
+	c.Fingerprinting = types.FingerprintConfig{Enable: true, CustomerFingerprint: true, DatasetFingerprint: true, SteganographyLayers: []string{"read_ids"}}
 	e := NewEngine(c)
 	defer e.Close()
 	if err := e.Generate(); err != nil {

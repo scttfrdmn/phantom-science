@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/scttfrdmn/phantom-science/internal/cli"
@@ -187,7 +188,6 @@ func TestConfigLoader_PhantomJSON_NonVerbose(t *testing.T) {
 	}
 }
 
-
 func TestConfigLoader_Verbose_SequencerYAML(t *testing.T) {
 	yml := "schema_version: 1.0\n" +
 		"config_type: sequencer\n" +
@@ -337,8 +337,22 @@ func TestAppGenerate_WithFingerprintingEnabled(t *testing.T) {
 	outputDir := filepath.Join(tmpDir, "out_fp")
 	configPath := cliTestSeqJSONWithOutput(t, tmpDir, "MiSeq", 50, outputDir)
 	phantomPath := cliTestPhantomConfig(t, tmpDir, "FP_CUST", true, false)
+	// A keyed-seed fingerprint needs a key and a dataset ID.
+	t.Setenv("PHANTOM_FINGERPRINT_KEY", "")
 	app, err := cli.NewApp(configPath, phantomPath, false)
 	if err != nil {
+		t.Fatalf("NewApp failed: %v", err)
+	}
+	if err := app.Generate(); err == nil || !strings.Contains(err.Error(), "needs a key") {
+		t.Errorf("Generate with fingerprinting and no key: %v, want a key error", err)
+	}
+	t.Setenv("PHANTOM_FINGERPRINT_KEY", "cli-coverage-key-0123456789")
+	data, _ := os.ReadFile(configPath)
+	data = []byte(strings.Replace(string(data), "{", `{"dataset_id":"DS_1",`, 1))
+	if err := os.WriteFile(configPath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if app, err = cli.NewApp(configPath, phantomPath, false); err != nil {
 		t.Fatalf("NewApp failed: %v", err)
 	}
 	if err := app.Generate(); err != nil {

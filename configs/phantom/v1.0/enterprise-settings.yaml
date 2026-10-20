@@ -5,13 +5,13 @@
 #   openssl rand -base64 32 > fingerprint.key && chmod 600 fingerprint.key
 #   export PHANTOM_FINGERPRINT_KEY="$(cat fingerprint.key)"   # or set key_file below
 #   phantom-science generate --config configs/sequencer/simple-run.json \
-#       -p configs/phantom/v1.0/enterprise-settings.yaml --total-reads 1000 --seed 1
-#   phantom-science verify sequencer_output/*.fastq
+#       -p configs/phantom/v1.0/enterprise-settings.yaml --dataset-id STUDY_1 \
+#       --total-reads 1000 --seed 1
+#   phantom-science verify --manifest sequencer_output/phantom-manifest.json \
+#       sequencer_output/*.fastq
 #
-# Quality-score fingerprints need a build with the stegano library
-# (`make stegano && make build`); without it generation fails before writing
-# anything. The fingerprint is encrypted with the key; generation refuses to
-# embed without one unless `plaintext: true` is set.
+# Fingerprinting needs a key (no stegano library or CGO): without one, or
+# without a dataset ID, generation fails before writing anything.
 #
 # Only the keys below are read. Earlier versions of this file listed audit
 # logging, regulatory compliance, academic validation and security sections;
@@ -22,16 +22,22 @@ last_updated: "2026-10-18"
 config_type: "phantom_enterprise"
 
 enterprise:
-  customer_id: "CUST_001"                # written into the fingerprint
+  customer_id: "CUST_001"                # the customer the keyed seed is derived for
 
+# Keyed-seed fingerprint: the run seed is derived from the key, customer_id,
+# the sequencer config's dataset_id (or generate --dataset-id) and --seed (or
+# a drawn salt). The data is not changed; `phantom-science verify --manifest`
+# attributes files to the run with the key.
 fingerprinting:
   enable: true
-  customer_fingerprint: true             # also tag each read ID with the customer ID
-  dataset_fingerprint: false             # tag read IDs with dataset_id (set in the sequencer config)
   steganography_layers:
-    - "quality_scores"                   # embed the encrypted fingerprint in the quality scores of each file
+    - "keyed_seed"
   # key_file: "fingerprint.key"          # chmod 600; otherwise $PHANTOM_FINGERPRINT_KEY is used
-  # plaintext: true                      # embed a readable fingerprint without a key
+  # Optional visible labels, not a fingerprint: XC:Z:<customer> / XD:Z:<dataset>
+  # fields in every read header. They change the headers; leave them off
+  # unless the IDs should be visible.
+  customer_fingerprint: false
+  dataset_fingerprint: false
 
 # Validation of the generated files. With enable: true and no test lists, the
 # built-in suite runs (the same nine checks as `phantom-science validate`).

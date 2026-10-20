@@ -399,22 +399,30 @@ func (c *SequencerConfig) ResolveFingerprinting(phantom *PhantomConfig) {
 	}
 }
 
-// FingerprintConfig controls fingerprinting of generated data.
+// FingerprintConfig controls fingerprinting of generated data. A
+// fingerprint never changes the data (docs/CHARTER.md, principle 2): it is
+// carried by the run seed (see internal/fingerprinting, DeriveSeed).
 type FingerprintConfig struct {
-	// Enable turns fingerprinting on.
+	// Enable turns fingerprinting on: with the keyed_seed layer (the
+	// default), the run seed is derived from the key, Enterprise.CustomerID,
+	// DatasetID and Seed (the salt), all of which are then required.
 	Enable bool `json:"enable"`
-	// CustomerFingerprint and DatasetFingerprint tag each read ID with the
-	// customer and dataset IDs.
+	// CustomerFingerprint and DatasetFingerprint add visible read-ID
+	// labels, XC:Z:<customer> and XD:Z:<dataset> fields in every header
+	// comment. They are labels, not fingerprints, and are off unless set.
 	CustomerFingerprint bool `json:"customer_fingerprint"`
 	DatasetFingerprint  bool `json:"dataset_fingerprint"`
-	// SteganographyLayers: "quality_scores" embeds one fingerprint per FASTQ
-	// file in its quality scores (requires the stegano library). Other
-	// entries are recorded in the run manifest but have no effect.
+	// SteganographyLayers: "keyed_seed" (the default when empty) derives
+	// the run seed from the key; "read_ids" alone writes only the labels,
+	// without a keyed seed. "quality_scores" (phantom-science 0.9.0 and
+	// earlier) edited quality values and is rejected; other names are
+	// errors.
 	SteganographyLayers []string `json:"steganography_layers"`
-	// KeyFile holds the key that encrypts quality-score fingerprints; when
-	// empty the PHANTOM_FINGERPRINT_KEY environment variable is used.
+	// KeyFile holds the fingerprint key (mode 0600); when empty the
+	// PHANTOM_FINGERPRINT_KEY environment variable is used.
 	KeyFile string `json:"key_file,omitempty"`
-	// Plaintext allows unencrypted quality-score fingerprints when no key is set.
+	// Plaintext was the opt-in for unencrypted quality-score fingerprints.
+	// It is parsed and ignored: a keyed seed always needs the key.
 	Plaintext bool `json:"plaintext,omitempty"`
 	// CryptographicSigning and TamperDetection are parsed but not
 	// implemented: no signature is written and no tampering is detected.

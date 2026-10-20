@@ -105,6 +105,9 @@ func (e *Engine) checkScale() error {
 // checkExtensions validates every configured extension before any output is
 // written, so unsupported settings fail fast with a clear error.
 func (e *Engine) checkExtensions() error {
+	if e.fpErr != nil {
+		return e.fpErr
+	}
 	if e.seedErr != nil {
 		return e.seedErr
 	}
@@ -790,10 +793,14 @@ func (e *Engine) generateRun() (err error) {
 	}
 	defer func() { err = errors.Join(err, dest.close()) }()
 
-	m := manifest.New(e.toolVersion, e.seed, e.runStart(), e.config)
-	m.Config.Seed = e.seed
+	m := manifest.New(e.toolVersion, e.recordedSeed(e.seed), e.runStart(), e.config)
+	m.Config.Seed = e.recordedSeed(e.seed)
+	if fp := e.manifestFingerprint(); fp != nil {
+		// The configured seed (or drawn salt) with the key reproduces the run.
+		m.Config.Seed = fp.Salt
+		m.Fingerprint = fp
+	}
 	m.Destination = dest.uri()
-	m.Encrypted = e.encrypted && e.qualityFingerprintingEnabled()
 	n := max(e.config.FlowCells, 1)
 	seen := map[string]bool{}
 	for k := 1; k <= n; k++ {
@@ -830,6 +837,21 @@ const flowCellSeedAttempts = 64
 // run and flow-cell IDs; explicit Illumina run_id / flowcell_id values get a
 // "-<k>" suffix).
 func (e *Engine) flowCellEngine(k, n int, spool string, seen map[string]bool) (*Engine, string, error) {
+	fc, rel, err := e.newFlowCellEngine(k, n, seen)
+	if err != nil {
+		return nil, "", err
+	}
+	fc.config.OutputDir = filepath.Join(spool, rel)
+	if err := security.SecureMkdirAll(fc.config.OutputDir, spool); err != nil {
+		return nil, "", err
+	}
+	return fc, rel, nil
+}
+
+// newFlowCellEngine returns the engine of flow cell k of n and its
+// subdirectory, without an output directory. Flow cells must be created in
+// order 1..n with one seen map, which resolves flow-cell ID collisions.
+func (e *Engine) newFlowCellEngine(k, n int, seen map[string]bool) (*Engine, string, error) {
 	c := e.config
 	c.FlowCells, c.Workers = 0, 0
 	if n > 1 {
@@ -841,8 +863,7 @@ func (e *Engine) flowCellEngine(k, n int, spool string, seen map[string]bool) (*
 		}
 	}
 	fc := &Engine{
-		config: c, parent: e, logw: e.logw, seed: e.seed,
-		fingerprintingEngine: e.fingerprintingEngine, keyErr: e.keyErr, encrypted: e.encrypted,
+		config: c, parent: e, logw: e.logw, seed: e.seed, fpErr: e.fpErr,
 		hmmModel: e.hmmModel, modelPath: e.modelPath, modelErr: e.modelErr, toolVersion: e.toolVersion,
 		customerID: e.customerID, fragments: e.fragments, ref: e.ref, refErr: e.refErr, refMaxRead: e.refMaxRead,
 	}
@@ -850,7 +871,7 @@ func (e *Engine) flowCellEngine(k, n int, spool string, seen map[string]bool) (*
 	if n > 1 {
 		for attempt := 0; ; attempt++ {
 			if attempt == flowCellSeedAttempts {
-				return nil, "", fmt.Errorf("flow cell %d: no distinct flow-cell ID derived from seed %d", k, e.seed)
+				return nil, "", fmt.Errorf("flow cell %d: no distinct flow-cell ID derived from the run seed", k)
 			}
 			fc.seed = flowCellSeed(e.seed, k, attempt)
 			rel = fc.flowCellDir(k)
@@ -868,10 +889,6 @@ func (e *Engine) flowCellEngine(k, n int, spool string, seen map[string]bool) (*
 		}
 	}
 	fc.config.Seed = fc.seed
-	fc.config.OutputDir = filepath.Join(spool, rel)
-	if err := security.SecureMkdirAll(fc.config.OutputDir, spool); err != nil {
-		return nil, "", err
-	}
 	return fc, rel, nil
 }
 
@@ -983,7 +1000,7 @@ func (e *Engine) runFlowCell(fc *Engine, k int, rel string, dest destination, m 
 	if fc.hmmModel != nil && fc.modelPath == "" {
 		workers = 1 // a model without a path cannot be instantiated per worker
 	}
-	entry := manifest.FlowCell{Index: k, Seed: fc.seed, Dir: rel, RunID: fc.config.RunID, FlowCellID: fc.config.FlowCellID}
+	entry := manifest.FlowCell{Index: k, Seed: fc.recordedSeed(fc.seed), Dir: rel, RunID: fc.config.RunID, FlowCellID: fc.config.FlowCellID}
 	if fc.isONT() {
 		info := fc.ontRunInfo()
 		entry.RunID, entry.FlowCellID = info.RunID, info.FlowCellID
@@ -1133,13 +1150,21 @@ func joinRel(dir, name string) string {
 // objectTags are the S3 object tags of an uploaded output: it is
 // regenerable from the seed, its size, and the resource time spent making
 // it (wall-clock hours of the worker that generated its batch).
+//
+// A keyed-seed run is regenerable only with the key: its tags name the
+// scheme and carry no seed.
 func (e *Engine) objectTags(bytes int64, elapsed time.Duration) map[string]string {
-	return map[string]string{
+	tags := map[string]string{
 		"phantom:regenerable":    "seed",
-		"phantom:seed":           strconv.FormatUint(e.seed, 10),
 		"phantom:output-bytes":   strconv.FormatInt(bytes, 10),
 		"phantom:resource-hours": strconv.FormatFloat(elapsed.Hours(), 'f', 6, 64),
 	}
+	if seed := e.recordedSeed(e.seed); seed != 0 {
+		tags["phantom:seed"] = strconv.FormatUint(seed, 10)
+	} else {
+		tags["phantom:regenerable"] = "keyed_seed"
+	}
+	return tags
 }
 
 // summaryMerger concatenates per-unit sequencing-summary parts, in unit

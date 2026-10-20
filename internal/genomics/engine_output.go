@@ -14,7 +14,7 @@ package genomics
 //     "@name comment". It may also set platform fields on rec (Channel,
 //     StartTime, Duration) for observers. It must draw only from r. The
 //     pipeline appends "\tRG:Z:<id>" to the comment when a read group is set,
-//     then, with read-ID fingerprinting enabled, the tab-separated SAM-style
+//     then, with the read-ID labels enabled, the tab-separated SAM-style
 //     fields "\tXC:Z:<customer>" and "\tXD:Z:<dataset>" (see
 //     fingerprinting.ReadTags); the read name is never changed. The default
 //     writes Illumina headers "<sample>:<lane>:HXXXXXX:<batch>:1101:<x>:<y>"
@@ -30,9 +30,9 @@ package genomics
 //     pipeline closes the returned writer (not the underlying one) when the
 //     stream is complete. The default passes writes through.
 //   - finalize runs on each closed output file and returns the path of the
-//     finished file (which may differ, e.g. after compressing). The default
-//     embeds the quality-score fingerprint when that layer is enabled; any
-//     compression of fingerprinted files must happen after embedding, here.
+//     finished file (which may differ, e.g. after renaming). Nothing edits a
+//     file after it is written: a fingerprint is carried by the seed
+//     (engine_fingerprint.go), never by changing the data.
 //   - observer returns the run's ReadObserver (nil for none, the default). It
 //     is opened once per GenerateToWriter / GenerateFASTQFile call, sees
 //     every written read, and is closed at the end of that call (e.g. to
@@ -46,7 +46,7 @@ package genomics
 //   - Headers are MinKNOW's: "@<uuid4> runid=<hex> read=<n> ch=<channel>
 //     start_time=<RFC 3339> flow_cell_id=<id> protocol_group_id=<id>
 //     sample_id=<id>" (see package nanopore for the per-channel timing
-//     model). Read-ID fingerprint tags, when enabled, follow as tab-separated
+//     model). Read-ID labels, when enabled, follow as tab-separated
 //     SAM-style fields (XC:Z:, XD:Z:), as for Illumina.
 //   - Reads are single-end; paired_end is rejected. Phred scores are capped
 //     at 50 (Dorado's maximum) instead of Illumina's 41.
@@ -59,12 +59,10 @@ package genomics
 //   - Default file names are "<sample>_<flowcell>_<run8>_<n>.fastq", n
 //     0-based as in MinKNOW.
 //
-// Compression "gzip" (any platform): files are named "<name>.gz". Without the
-// quality-score fingerprint layer the stream is gzip-compressed while it is
-// written (wrapOutput). With it, the plain FASTQ is written, the fingerprint
-// is embedded (stegano works on plain FASTQ), then finalize compresses it to
-// "<name>.gz" and removes the plain file. GeneratedFiles lists the final
-// .gz paths. GenerateToWriter output is gzip-compressed as a stream.
+// Compression "gzip" (any platform): files are named "<name>.gz" and the
+// stream is gzip-compressed while it is written (wrapOutput). GeneratedFiles
+// lists the final .gz paths. GenerateToWriter output is gzip-compressed as a
+// stream.
 //
 // Output.FilePattern (any platform) names output files with placeholders
 // {sample_name}, {flowcell_id}, {run_id} (8 characters for ONT, as MinKNOW
@@ -142,12 +140,6 @@ func (e *Engine) isONT() bool { return e.platform() == platformONT }
 // gzipOutput reports whether output is gzip-compressed.
 func (e *Engine) gzipOutput() bool {
 	return strings.EqualFold(e.config.Output.Compression, compressionGzip)
-}
-
-// compressAfterEmbed reports whether files are written plain and compressed
-// by finalize, after the quality-score fingerprint is embedded.
-func (e *Engine) compressAfterEmbed() bool {
-	return e.gzipOutput() && e.qualityFingerprintingEnabled()
 }
 
 // checkOutput validates the platform and output configuration.
@@ -244,9 +236,11 @@ func (e *Engine) headerFormatter() (func(r *rand.Rand, rec *seqread.Record) (nam
 	}, nil
 }
 
-// readTags returns the read-ID fingerprint fields appended to every header
+// readTags returns the read-ID label fields appended to every header
 // comment ("\tXC:Z:<customer>\tXD:Z:<dataset>" without the leading tab), or
-// "" when read-ID fingerprinting is off.
+// "" when the labels are off. They are visible labels, not a fingerprint:
+// they are written only when customer_fingerprint or dataset_fingerprint is
+// set.
 func (e *Engine) readTags() string {
 	fp := e.config.Fingerprinting
 	if !fp.Enable {
@@ -375,17 +369,14 @@ func (e *Engine) outputPath(batch, mate int) string {
 		name = fmt.Sprintf("%s_S1_L%03d_%03d.fastq", c.SampleName, c.Lane, batch)
 	}
 	if e.gzipOutput() {
-		name = strings.TrimSuffix(name, ".gz")
-		if !e.compressAfterEmbed() {
-			name += ".gz"
-		}
+		name = gzName(name)
 	}
 	return filepath.Join(c.OutputDir, name)
 }
 
 // wrapOutput wraps an output stream before records are written to it.
 func (e *Engine) wrapOutput(w io.Writer) (io.WriteCloser, error) {
-	if e.gzipOutput() && !e.compressAfterEmbed() {
+	if e.gzipOutput() {
 		return gzip.NewWriter(w), nil
 	}
 	return nopWriteCloser{w}, nil
@@ -393,18 +384,10 @@ func (e *Engine) wrapOutput(w io.Writer) (io.WriteCloser, error) {
 
 // finalize finishes a closed output file and returns its final path.
 func (e *Engine) finalize(path string) (string, error) {
-	if e.qualityFingerprintingEnabled() {
-		if err := e.embedFileFingerprint(path); err != nil {
-			return "", err
-		}
-	}
 	if !e.gzipOutput() {
 		return path, nil
 	}
 	final := gzName(path)
-	if e.compressAfterEmbed() {
-		return e.gzipFile(path, final)
-	}
 	if final != path { // compressed while written, under a caller-chosen plain name
 		if err := os.Rename(path, final); err != nil {
 			os.Remove(path) // #nosec G104 -- best effort cleanup; the error is returned
@@ -420,42 +403,6 @@ func gzName(name string) string {
 		return name
 	}
 	return name + ".gz"
-}
-
-// gzipFile compresses the plain file src to dst (which may equal src) and
-// removes src. On failure both are removed, so a run never leaves a file
-// that silently lacks the requested compression.
-func (e *Engine) gzipFile(src, dst string) (string, error) {
-	tmp := dst + ".tmp"
-	fail := func(err error) (string, error) {
-		os.Remove(tmp) // #nosec G104 -- best effort cleanup; the error is returned
-		os.Remove(src) // #nosec G104
-		return "", fmt.Errorf("compressing %s: %w", filepath.Base(src), err)
-	}
-	in, err := os.Open(src) // #nosec G304 -- src is an output file this engine wrote
-	if err != nil {
-		return fail(err)
-	}
-	out, err := security.SecureFileCreate(tmp, e.config.OutputDir)
-	if err != nil {
-		in.Close() // #nosec G104 -- read-only
-		return fail(err)
-	}
-	gw := gzip.NewWriter(out)
-	_, err = io.Copy(gw, in)
-	err = errors.Join(err, gw.Close(), out.Close(), in.Close())
-	if err != nil {
-		return fail(err)
-	}
-	if err := os.Rename(tmp, dst); err != nil {
-		return fail(err)
-	}
-	if src != dst {
-		if err := os.Remove(src); err != nil {
-			return "", fmt.Errorf("removing uncompressed %s: %w", filepath.Base(src), err)
-		}
-	}
-	return dst, nil
 }
 
 // observer returns the run's read observer, or nil for none.

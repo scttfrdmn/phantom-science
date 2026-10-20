@@ -5,7 +5,6 @@ package fingerprinting
 
 import (
 	"errors"
-	"fmt"
 	"os"
 	"strings"
 	"time"
@@ -13,8 +12,10 @@ import (
 	stegano "github.com/scttfrdmn/stegano/go"
 )
 
-// SteganoEngine implements Engine and SAMFingerprintingEngine on top of the
-// stegano library (github.com/scttfrdmn/stegano/go).
+// SteganoEngine implements FileFingerprinter and SAMFingerprintingEngine on
+// top of the stegano library (github.com/scttfrdmn/stegano/go). It writes and
+// reads the legacy quality-score fingerprints of phantom-science 0.9.0 and
+// earlier; generation no longer uses it (see ErrQualityScoresLayer).
 //
 // With WithKey, payloads are encrypted (Argon2id key derivation and
 // AES-256-GCM, as implemented by stegano) and can only be read back with the same
@@ -32,11 +33,6 @@ func NewSteganoEngine(customerID string, opts ...Option) (*SteganoEngine, error)
 		return nil, NewFingerprintingError("new_engine", errors.New("customer ID is required"), ErrorCodeValidation)
 	}
 	return &SteganoEngine{customerID: customerID, key: applyOptions(opts).key}, nil
-}
-
-// newDefaultEngine returns the stegano-backed engine used by New.
-func newDefaultEngine(customerID string, opts []Option) (Engine, error) {
-	return NewSteganoEngine(customerID, opts...)
 }
 
 // newDefaultVerifier returns the stegano-backed Verifier used by NewVerifier.
@@ -163,20 +159,6 @@ func (e *SteganoEngine) ExtractFromFASTQFile(path string) (string, error) {
 func (e *SteganoEngine) VerifyFingerprint(fastqData []byte) bool {
 	_, err := e.ExtractFingerprint(fastqData)
 	return err == nil
-}
-
-// EmbedCustomerID tags a read ID with the customer identifier.
-//
-// Deprecated: use ReadTags, which writes SAM-style comment fields.
-func (e *SteganoEngine) EmbedCustomerID(readID string) string {
-	return fmt.Sprintf("%s:cust:%s", readID, e.customerID)
-}
-
-// EmbedDatasetFingerprint tags a read ID with the dataset identifier.
-//
-// Deprecated: use ReadTags, which writes SAM-style comment fields.
-func (e *SteganoEngine) EmbedDatasetFingerprint(readID, datasetID string) string {
-	return fmt.Sprintf("%s:ds:%s", readID, datasetID)
 }
 
 // EmbedInSAMRecords embeds fingerprint in SAM records using the auxiliary

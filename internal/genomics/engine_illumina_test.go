@@ -328,7 +328,7 @@ func TestIllumina_FingerprintTagsInComment(t *testing.T) {
 	c := binnedConfig(t.TempDir())
 	c.DatasetID = "ds 7"
 	c.Enterprise.CustomerID = "CUST_001"
-	c.Fingerprinting = types.FingerprintConfig{Enable: true, CustomerFingerprint: true, DatasetFingerprint: true}
+	c.Fingerprinting = types.FingerprintConfig{Enable: true, CustomerFingerprint: true, DatasetFingerprint: true, SteganographyLayers: []string{"read_ids"}}
 	plain := binnedConfig(t.TempDir())
 	for _, tc := range []struct {
 		name   string
