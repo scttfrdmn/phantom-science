@@ -60,6 +60,21 @@ type Profile struct {
 	// Reverse walks the sequence 3'→5' (direct RNA). Model k-mers are always
 	// looked up in 5'→3' orientation, as ONT's RNA tables are stored.
 	Reverse bool
+	// LevelTau is the time constant, in samples, of the transition between
+	// consecutive segment levels. 0 gives squigulator's step function: every
+	// sample of a k-mer is centred on its model level. With τ > 0 the mean
+	// level relaxes exponentially from the level reached at the end of the
+	// previous segment, prev, towards the k-mer's level, target: the i-th
+	// sample (0-based) of a segment is centred on
+	//
+	//	target + (prev − target)·exp(−(i+1)/τ)
+	//
+	// a first-order low-pass of the step function. A segment shorter than a
+	// few τ hands an unfinished level to the next one, and a skipped k-mer
+	// (no samples) leaves the level unchanged. The first segment of a read
+	// starts at its own level. Event.LevelPA still records the k-mer's
+	// target level.
+	LevelTau float64
 
 	// Noise.
 	LevelNoiseScale float64 // multiplies the model's per-k-mer stdv (squigulator --amp-noise)
@@ -175,7 +190,7 @@ func (p *Profile) tunable() map[string]*float64 {
 		"drift_pa": &p.DriftPA, "drift_tau": &p.DriftTau,
 		"read_shift_sd": &p.ReadShiftSD, "read_scale_sd": &p.ReadScaleSD,
 		"stall_prob": &p.StallProb, "stall_min": &p.StallMin, "stall_max": &p.StallMax,
-		"skip_prob":       &p.SkipProb,
+		"skip_prob": &p.SkipProb, "level_tau": &p.LevelTau,
 		"adapter_seconds": &p.AdapterSeconds, "adapter_level_pa": &p.AdapterLevelPA,
 		"adapter_noise_pa": &p.AdapterNoisePA, "polya_noise_pa": &p.PolyANoisePA,
 		"offset_mean": &p.OffsetMean, "offset_std": &p.OffsetStd,
@@ -241,7 +256,7 @@ func (p Profile) Validate() error {
 		v    float64
 	}{
 		{"offset_std", p.OffsetStd}, {"median_before_std", p.MedianBeforeStd}, {"dwell_cv", p.DwellCV},
-		{"level_noise_scale", p.LevelNoiseScale}, {"white_noise_pa", p.WhiteNoisePA},
+		{"level_noise_scale", p.LevelNoiseScale}, {"white_noise_pa", p.WhiteNoisePA}, {"level_tau", p.LevelTau},
 		{"drift_pa", p.DriftPA}, {"read_shift_sd", p.ReadShiftSD}, {"read_scale_sd", p.ReadScaleSD},
 		{"adapter_seconds", p.AdapterSeconds}, {"adapter_noise_pa", p.AdapterNoisePA}, {"polya_noise_pa", p.PolyANoisePA},
 	}

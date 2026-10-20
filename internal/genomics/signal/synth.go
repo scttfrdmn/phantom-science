@@ -201,7 +201,9 @@ var ErrShortRead = errors.New("sequence shorter than the pore model k")
 // 1 + N(0, ReadScaleSD) and shift N(0, ReadShiftSD), and the initial
 // drift. Every k-mer level μ and stdv σ from the model becomes
 // μ·scale + shift and σ·LevelNoiseScale·scale; each sample is
-// N(level, sqrt(σ'² + WhiteNoisePA²)) plus the drift.
+// N(level, sqrt(σ'² + WhiteNoisePA²)) plus the drift. With LevelTau > 0 the
+// sample means approach each new level exponentially (see Profile.LevelTau);
+// this draws nothing extra from r.
 //
 // Dwell times are gamma(mean = SamplingRate/SpeedBPS, CV = DwellCV); a stall
 // multiplies the dwell by U(StallMin, StallMax), a skip makes it zero.
@@ -255,6 +257,9 @@ func Synthesize(r *rand.Rand, seq []byte, p Profile, model *PoreModel, opts ...O
 		s.driftA = math.Exp(-1 / (p.DriftTau * p.SamplingRate))
 		s.driftB = p.DriftPA * math.Sqrt(1-s.driftA*s.driftA)
 		s.drift = p.DriftPA * r.NormFloat64()
+	}
+	if p.LevelTau > 0 {
+		s.levelA = math.Exp(-1 / p.LevelTau)
 	}
 	s.dig = p.Digitiser(offset)
 	nk := len(s.seq) - k + 1
@@ -365,12 +370,18 @@ type synth struct {
 	drift        float64
 	driftA       float64
 	driftB       float64
-	dig          Digitiser
-	raw          []int16
-	clipped      int
-	events       bool
-	ev           []Event
-	stall, skip  []bool
+	// level is the smoothed mean level of the last sample emitted and
+	// levelA = exp(−1/LevelTau) its per-sample decay (0 when LevelTau is 0);
+	// levelSet is false until the first segment.
+	level       float64
+	levelA      float64
+	levelSet    bool
+	dig         Digitiser
+	raw         []int16
+	clipped     int
+	events      bool
+	ev          []Event
+	stall, skip []bool
 }
 
 // dwells draws n k-mer dwells (in samples). With events=true it also draws
@@ -415,11 +426,28 @@ func (s *synth) emit(level, sd float64) {
 	s.raw = append(s.raw, raw)
 }
 
+// segment emits n samples around target with SD sd. With LevelTau > 0 the
+// mean approaches target from the previous segment's last level (see
+// Profile.LevelTau); the first segment of a read starts at its target.
+func (s *synth) segment(n int, target, sd float64) {
+	if s.levelA == 0 {
+		for i := 0; i < n; i++ {
+			s.emit(target, sd)
+		}
+		return
+	}
+	if !s.levelSet {
+		s.level, s.levelSet = target, true
+	}
+	for i := 0; i < n; i++ {
+		s.level = target + (s.level-target)*s.levelA
+		s.emit(s.level, sd)
+	}
+}
+
 func (s *synth) plateau(kind EventKind, n int, level, sd float64) {
 	start := len(s.raw)
-	for i := 0; i < n; i++ {
-		s.emit(level, sd)
-	}
+	s.segment(n, level, sd)
 	if s.events {
 		s.ev = append(s.ev, Event{Kind: kind, Pos: -1, Kmer: -1, Start: start, Len: n, LevelPA: level, NoisePA: sd})
 	}
@@ -431,9 +459,7 @@ func (s *synth) kmer(kind EventKind, seq []byte, pos, n int, stall, skip bool) {
 	lsd := float64(s.model.Stdv[idx]) * s.p.LevelNoiseScale * s.scale
 	sd := math.Sqrt(lsd*lsd + s.p.WhiteNoisePA*s.p.WhiteNoisePA)
 	start := len(s.raw)
-	for i := 0; i < n; i++ {
-		s.emit(level, sd)
-	}
+	s.segment(n, level, sd)
 	if s.events {
 		s.ev = append(s.ev, Event{Kind: kind, Pos: pos, Kmer: idx, Start: start, Len: n, LevelPA: level, NoisePA: sd, Stall: stall, Skip: skip})
 	}
