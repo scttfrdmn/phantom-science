@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-const seedTestKey = "test-key-0123456789abcdef"
+const seedTestKey = "test-key-0123456789abcdef" // gitleaks:allow -- test fixture, not a real key
 
 // Known answer, computed independently with Python's hmac module:
 //
@@ -37,7 +37,7 @@ func TestDeriveSeed_EveryInputMatters(t *testing.T) {
 		cust, ds string
 		salt     uint64
 	}{
-		{"key", "other-key-0123456789abcdef", "ACME", "study_1", 42},
+		{"key", "other-key-0123456789abcdef", "ACME", "study_1", 42}, // gitleaks:allow -- test fixture
 		{"customer", seedTestKey, "ACMF", "study_1", 42},
 		{"dataset", seedTestKey, "ACME", "study_2", 42},
 		{"salt", seedTestKey, "ACME", "study_1", 43},
