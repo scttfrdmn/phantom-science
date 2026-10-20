@@ -1,57 +1,81 @@
-// Command sequence_validator reads every POP_L<len>_S<n>.fasta under
-// sequences/validation (path hard-coded), computes length, invalid bases,
-// GC content against the header's model_target_gc, 8-mer complexity and the
-// longest homopolymer, flags sequences that miss fixed thresholds, and writes
-// per-population and per-region summaries to validation_report.json.
+// Command sequence_validator is a developer tool, not part of the
+// phantom-science CLI. It checks single-record FASTA files named
+// <POP>_L<length>_S<n>.fasta (or .fa) found under the paths given on the
+// command line, and writes per-file results plus per-population and
+// per-region summaries as JSON.
 //
-// It is a one-off experiment, not part of the supported phantom-science CLI.
-// The checks are format and summary-statistic checks; they say nothing about
-// biological realism.
+// For each file it reports the length against the L<length> in the name,
+// bases other than ACGT, GC content of the ACGT bases against the header's
+// model_target_gc=<x> (when the header has one), distinct-8-mer fraction and
+// the longest homopolymer, and flags values outside the thresholds set by
+// the flags. These are format and summary-statistic checks; they say nothing
+// about biological realism. Files that cannot be parsed are listed in the
+// report as skipped.
+//
+// Usage:
+//
+//	sequence_validator [flags] PATH...
+//
+// Each PATH is a FASTA file or a directory searched recursively. Exit status
+// is 0 when every sequence passes, 2 when any fails, and 1 on an error or
+// when no sequences are found.
 package main
 
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
+	"flag"
 	"fmt"
-	"log"
+	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
-// ValidationResult represents validation results for a single sequence
+// complexityK is the k-mer size of the complexity measure.
+const complexityK = 8
+
+// thresholds are the limits a sequence must meet to pass.
+type thresholds struct {
+	GCTolerance    float64 `json:"gc_tolerance"`    // max |GC - model_target_gc|
+	MinComplexity  float64 `json:"min_complexity"`  // min distinct-8-mer fraction
+	MaxHomopolymer int     `json:"max_homopolymer"` // longest allowed single-base run
+}
+
+var defaultThresholds = thresholds{GCTolerance: 0.05, MinComplexity: 0.3, MaxHomopolymer: 10}
+
+// ValidationResult is the result for one FASTA file.
 type ValidationResult struct {
 	Population     string `json:"population"`
 	Region         string `json:"region"`
-	Length         int    `json:"length"`
+	Length         int    `json:"length"` // expected, from the file name
 	SequenceNumber int    `json:"sequence_number"`
 	Filename       string `json:"filename"`
 
-	// Sequence Quality Metrics
 	ActualLength int     `json:"actual_length"`
-	GCContent    float64 `json:"gc_content"`
-	Complexity   float64 `json:"complexity"`
+	GCContent    float64 `json:"gc_content"` // of the ACGT bases
+	Complexity   float64 `json:"complexity"` // distinct / total ACGT-only 8-mers
 	ValidBases   int     `json:"valid_bases"`
 	InvalidBases int     `json:"invalid_bases"`
 
-	// Genomic Validity
-	MaxHomopolymer int  `json:"max_homopolymer"`
-	HasStopCodons  bool `json:"has_stop_codons"`
+	MaxHomopolymer int `json:"max_homopolymer"`
 
-	// Population-Specific Metrics
-	TargetGC        float64 `json:"target_gc"`
-	GCDeviation     float64 `json:"gc_deviation"`
+	HasTargetGC     bool    `json:"has_target_gc"`
+	TargetGC        float64 `json:"target_gc,omitempty"`
+	GCDeviation     float64 `json:"gc_deviation,omitempty"`
 	ComplexityScore string  `json:"complexity_score"`
 
-	// Overall Assessment
 	IsValid         bool     `json:"is_valid"`
 	ValidationScore float64  `json:"validation_score"`
 	Issues          []string `json:"issues"`
 }
 
-// PopulationSummary represents summary statistics for a population
+// PopulationSummary summarises the results for one population.
 type PopulationSummary struct {
 	Population     string         `json:"population"`
 	Region         string         `json:"region"`
@@ -63,7 +87,13 @@ type PopulationSummary struct {
 	Issues         map[string]int `json:"issues"`
 }
 
-// ValidationReport represents the complete validation report
+// SkippedFile is a FASTA file that could not be validated.
+type SkippedFile struct {
+	Path   string `json:"path"`
+	Reason string `json:"reason"`
+}
+
+// ValidationReport is the JSON report.
 type ValidationReport struct {
 	TotalSequences     int                 `json:"total_sequences"`
 	ValidSequences     int                 `json:"valid_sequences"`
@@ -71,313 +101,324 @@ type ValidationReport struct {
 	PopulationResults  []ValidationResult  `json:"population_results"`
 	PopulationSummary  []PopulationSummary `json:"population_summary"`
 	RegionalAnalysis   map[string]float64  `json:"regional_analysis"`
+	Skipped            []SkippedFile       `json:"skipped,omitempty"`
+	Thresholds         thresholds          `json:"thresholds"`
 	ValidationCriteria string              `json:"validation_criteria"`
 	Timestamp          string              `json:"timestamp"`
 }
 
+const validationCriteria = "Format and summary-statistic checks: length vs file name, non-ACGT bases, " +
+	"GC vs model_target_gc, distinct 8-mer fraction, longest homopolymer. Not a test of biological realism."
+
 func main() {
-	log.SetFlags(log.LstdFlags)
-
-	fmt.Println("=== GENOMIC SEQUENCE VALIDATION ===")
-	fmt.Println("Checking generated sequences against length, base, GC, complexity and homopolymer thresholds")
-	fmt.Println()
-
-	inputDir := "sequences/validation"
-	outputFile := "validation_report.json"
-
-	// Check if input directory exists
-	if _, err := os.Stat(inputDir); os.IsNotExist(err) {
-		log.Fatalf("Input directory does not exist: %s", inputDir)
-	}
-
-	fmt.Printf("📁 Input directory: %s\n", inputDir)
-	fmt.Printf("📄 Output report: %s\n", outputFile)
-	fmt.Println()
-
-	// Validate all sequences
-	results, err := validateAllSequences(inputDir)
-	if err != nil {
-		log.Fatalf("Validation failed: %v", err)
-	}
-
-	// Generate summary statistics
-	report := generateValidationReport(results)
-
-	// Display results
-	displayValidationResults(report)
-
-	// Save JSON report
-	err = saveValidationReport(report, outputFile)
-	if err != nil {
-		log.Printf("Warning: Failed to save validation report: %v", err)
-	} else {
-		fmt.Printf("\n✅ Validation report saved to: %s\n", outputFile)
-	}
-
-	fmt.Println("\n🔬 Sequence validation completed")
+	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
 
-func validateAllSequences(inputDir string) ([]ValidationResult, error) {
+func run(args []string, stdout, stderr io.Writer) int {
+	fl := flag.NewFlagSet("sequence_validator", flag.ContinueOnError)
+	fl.SetOutput(stderr)
+	out := fl.String("out", "validation_report.json", "JSON report path")
+	th := defaultThresholds
+	fl.Float64Var(&th.GCTolerance, "gc-tolerance", th.GCTolerance, "max |GC - model_target_gc|")
+	fl.Float64Var(&th.MinComplexity, "min-complexity", th.MinComplexity, "min distinct-8-mer fraction")
+	fl.IntVar(&th.MaxHomopolymer, "max-homopolymer", th.MaxHomopolymer, "longest allowed single-base run")
+	fl.Usage = func() {
+		fmt.Fprintf(stderr, "usage: sequence_validator [flags] PATH...\n\n"+
+			"Validates <POP>_L<length>_S<n>.fasta files; each PATH is a file or a directory.\n\n")
+		fl.PrintDefaults()
+	}
+	if err := fl.Parse(args); err != nil {
+		return 1
+	}
+	if fl.NArg() == 0 {
+		fl.Usage()
+		return 1
+	}
+
+	results, skipped, err := validatePaths(fl.Args(), th)
+	if err != nil {
+		fmt.Fprintf(stderr, "sequence_validator: %v\n", err)
+		return 1
+	}
+	for _, s := range skipped {
+		fmt.Fprintf(stderr, "skipped %s: %s\n", s.Path, s.Reason)
+	}
+
+	report := generateValidationReport(results, th)
+	report.Skipped = skipped
+	displayValidationResults(stdout, report)
+
+	if err := saveValidationReport(report, *out); err != nil {
+		fmt.Fprintf(stderr, "sequence_validator: write report: %v\n", err)
+		return 1
+	}
+	fmt.Fprintf(stdout, "\nreport written to %s\n", *out)
+
+	switch {
+	case report.TotalSequences == 0:
+		fmt.Fprintf(stderr, "sequence_validator: no sequences found in %s\n", strings.Join(fl.Args(), " "))
+		return 1
+	case report.ValidSequences < report.TotalSequences:
+		return 2
+	}
+	return 0
+}
+
+func isFASTAName(name string) bool {
+	ext := strings.ToLower(filepath.Ext(name))
+	return ext == ".fasta" || ext == ".fa"
+}
+
+// validatePaths validates every FASTA file under paths. Files that cannot be
+// parsed are returned as skipped; an unreadable path is an error.
+func validatePaths(paths []string, th thresholds) ([]ValidationResult, []SkippedFile, error) {
 	var results []ValidationResult
-
-	// Walk through all population directories
-	err := filepath.Walk(inputDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-
-		// Skip directories and non-FASTA files
-		if info.IsDir() || !strings.HasSuffix(strings.ToLower(info.Name()), ".fasta") {
+	var skipped []SkippedFile
+	for _, root := range paths {
+		err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if d.IsDir() || !isFASTAName(d.Name()) {
+				return nil
+			}
+			r, verr := validateFile(path, th)
+			if verr != nil {
+				skipped = append(skipped, SkippedFile{Path: path, Reason: verr.Error()})
+				return nil
+			}
+			results = append(results, *r)
 			return nil
-		}
-
-		// Parse filename to extract metadata
-		population, length, seqNum, err := parseFilename(info.Name())
+		})
 		if err != nil {
-			log.Printf("Warning: Could not parse filename %s: %v", info.Name(), err)
-			return nil
+			return nil, nil, err
 		}
-
-		// Validate sequence
-		result, err := validateSequenceFile(path, population, length, seqNum)
-		if err != nil {
-			log.Printf("Warning: Failed to validate %s: %v", path, err)
-			return nil
-		}
-
-		results = append(results, *result)
-		return nil
-	})
-
-	return results, err
+	}
+	return results, skipped, nil
 }
 
+func validateFile(path string, th thresholds) (*ValidationResult, error) {
+	population, length, seqNum, err := parseFilename(filepath.Base(path))
+	if err != nil {
+		return nil, err
+	}
+	return validateSequenceFile(path, population, length, seqNum, th)
+}
+
+// parseFilename parses <POP>_L<length>_S<n>.fasta (or .fa). POP may itself
+// contain underscores.
 func parseFilename(filename string) (population string, length int, seqNum int, err error) {
-	// Expected format: POP_L1000_S01.fasta
-	name := strings.TrimSuffix(filename, ".fasta")
+	name := strings.TrimSuffix(filename, filepath.Ext(filename))
 	parts := strings.Split(name, "_")
-
-	if len(parts) != 3 {
-		return "", 0, 0, fmt.Errorf("unexpected filename format: %s", filename)
+	if len(parts) < 3 {
+		return "", 0, 0, fmt.Errorf("file name %q is not <POP>_L<length>_S<n>.fasta", filename)
 	}
-
-	population = parts[0]
-
-	// Parse length (L1000 -> 1000)
-	lengthStr := strings.TrimPrefix(parts[1], "L")
+	n := len(parts)
+	population = strings.Join(parts[:n-2], "_")
+	lengthStr, okL := strings.CutPrefix(parts[n-2], "L")
+	seqStr, okS := strings.CutPrefix(parts[n-1], "S")
+	if population == "" || !okL || !okS {
+		return "", 0, 0, fmt.Errorf("file name %q is not <POP>_L<length>_S<n>.fasta", filename)
+	}
 	length, err = strconv.Atoi(lengthStr)
-	if err != nil {
-		return "", 0, 0, fmt.Errorf("invalid length in filename: %s", parts[1])
+	if err != nil || length <= 0 {
+		return "", 0, 0, fmt.Errorf("invalid length %q in file name %q", parts[n-2], filename)
 	}
-
-	// Parse sequence number (S01 -> 1)
-	seqNumStr := strings.TrimPrefix(parts[2], "S")
-	seqNum, err = strconv.Atoi(seqNumStr)
+	seqNum, err = strconv.Atoi(seqStr)
 	if err != nil {
-		return "", 0, 0, fmt.Errorf("invalid sequence number in filename: %s", parts[2])
+		return "", 0, 0, fmt.Errorf("invalid sequence number %q in file name %q", parts[n-1], filename)
 	}
-
 	return population, length, seqNum, nil
 }
 
-func validateSequenceFile(filepath, population string, expectedLength, seqNum int) (*ValidationResult, error) {
-	file, err := os.Open(filepath) // #nosec G304
+// readSingleFASTA returns the header (without '>') and sequence of a
+// one-record FASTA file.
+func readSingleFASTA(r io.Reader) (header, sequence string, err error) {
+	sc := bufio.NewScanner(r)
+	sc.Buffer(make([]byte, 0, 1<<20), 1<<30) // sequences may be on one long line
+	if !sc.Scan() {
+		if err := sc.Err(); err != nil {
+			return "", "", err
+		}
+		return "", "", errors.New("empty file")
+	}
+	header = sc.Text()
+	if !strings.HasPrefix(header, ">") {
+		return "", "", errors.New("not FASTA: first line does not start with '>'")
+	}
+	var b strings.Builder
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if strings.HasPrefix(line, ">") {
+			return "", "", errors.New("more than one record; expected one sequence per file")
+		}
+		b.WriteString(line)
+	}
+	if err := sc.Err(); err != nil {
+		return "", "", err
+	}
+	if b.Len() == 0 {
+		return "", "", errors.New("empty sequence")
+	}
+	return header[1:], b.String(), nil
+}
+
+func validateSequenceFile(path, population string, expectedLength, seqNum int, th thresholds) (*ValidationResult, error) {
+	f, err := os.Open(path) // #nosec G304 -- path comes from the user's command line
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
-
-	scanner := bufio.NewScanner(file)
-
-	// Read header line
-	if !scanner.Scan() {
-		return nil, fmt.Errorf("empty file or missing header")
-	}
-
-	header := scanner.Text()
-	if !strings.HasPrefix(header, ">") {
-		return nil, fmt.Errorf("invalid FASTA format: missing header")
-	}
-
-	// Parse header metadata
-	targetGC, region := parseHeaderMetadata(header)
-
-	// Read sequence
-	var sequence strings.Builder
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line != "" {
-			sequence.WriteString(line)
-		}
-	}
-
-	if err := scanner.Err(); err != nil {
+	defer f.Close()
+	header, seq, err := readSingleFASTA(f)
+	if err != nil {
 		return nil, err
 	}
-
-	seqData := sequence.String()
-	if len(seqData) == 0 {
-		return nil, fmt.Errorf("empty sequence")
+	targetGC, hasTarget, region := parseHeaderMetadata(header)
+	r := validateSequence(seq, population, region, expectedLength, seqNum, path, th)
+	if hasTarget {
+		r.HasTargetGC, r.TargetGC = true, targetGC
+		r.GCDeviation = r.GCContent - targetGC
+		if abs(r.GCDeviation) > th.GCTolerance {
+			r.Issues = append(r.Issues, fmt.Sprintf("GC content %.3f differs from target %.3f by more than %.3f",
+				r.GCContent, targetGC, th.GCTolerance))
+		}
 	}
-
-	// Validate sequence
-	return validateSequence(seqData, population, region, expectedLength, seqNum, targetGC, filepath)
+	finalise(r)
+	return r, nil
 }
 
-func parseHeaderMetadata(header string) (targetGC float64, region string) {
-	// Extract target_gc and region from header
-	// Format: >POP_L1000_S01 population=POP region=Region ... model_target_gc=0.496
-	parts := strings.Fields(header)
-
-	for _, part := range parts {
-		if strings.HasPrefix(part, "region=") {
-			region = strings.TrimPrefix(part, "region=")
-		} else if strings.HasPrefix(part, "model_target_gc=") {
-			gcStr := strings.TrimPrefix(part, "model_target_gc=")
-			if gc, err := strconv.ParseFloat(gcStr, 64); err == nil {
-				targetGC = gc
+// parseHeaderMetadata reads region=<name> and model_target_gc=<x> from a
+// FASTA header such as "POP_L1000_S01 population=POP region=Africa
+// model_target_gc=0.496". hasTarget is false when model_target_gc is
+// missing or not a number.
+func parseHeaderMetadata(header string) (targetGC float64, hasTarget bool, region string) {
+	for _, field := range strings.Fields(header) {
+		if v, ok := strings.CutPrefix(field, "region="); ok {
+			region = v
+		} else if v, ok := strings.CutPrefix(field, "model_target_gc="); ok {
+			if gc, err := strconv.ParseFloat(v, 64); err == nil {
+				targetGC, hasTarget = gc, true
 			}
 		}
 	}
-
-	return targetGC, region
+	return targetGC, hasTarget, region
 }
 
-func validateSequence(sequence, population, region string, expectedLength, seqNum int, targetGC float64, filename string) (*ValidationResult, error) {
-	result := &ValidationResult{
+// validateSequence computes the sequence statistics and the length, base,
+// complexity and homopolymer issues. The GC-target check needs the header
+// and is added by the caller; call finalise afterwards.
+func validateSequence(sequence, population, region string, expectedLength, seqNum int, filename string, th thresholds) *ValidationResult {
+	seq := strings.ToUpper(sequence)
+	r := &ValidationResult{
 		Population:     population,
 		Region:         region,
 		Length:         expectedLength,
 		SequenceNumber: seqNum,
 		Filename:       filepath.Base(filename),
-		TargetGC:       targetGC,
 		Issues:         []string{},
 	}
+	r.ActualLength = len(seq)
+	r.ValidBases, r.InvalidBases = countValidBases(seq)
+	r.GCContent = calculateGCContent(seq)
+	r.Complexity = calculateComplexity(seq, complexityK)
+	r.MaxHomopolymer = findMaxHomopolymer(seq)
+	r.ComplexityScore = classifyComplexity(r.Complexity)
 
-	// Basic sequence validation
-	result.ActualLength = len(sequence)
-	result.ValidBases, result.InvalidBases = countValidBases(sequence)
-	result.GCContent = calculateGCContent(sequence)
-	result.Complexity = calculateComplexity(sequence, 8)
-	result.MaxHomopolymer = findMaxHomopolymer(sequence)
-	result.HasStopCodons = hasStopCodons(sequence)
-
-	// Calculate deviations
-	result.GCDeviation = result.GCContent - targetGC
-
-	// Assign complexity score
-	result.ComplexityScore = classifyComplexity(result.Complexity)
-
-	// Check for issues
-	if result.ActualLength != expectedLength {
-		result.Issues = append(result.Issues, fmt.Sprintf("Length mismatch: expected %d, got %d", expectedLength, result.ActualLength))
+	if r.ActualLength != expectedLength {
+		r.Issues = append(r.Issues, fmt.Sprintf("length %d, file name says %d", r.ActualLength, expectedLength))
 	}
-
-	if result.InvalidBases > 0 {
-		result.Issues = append(result.Issues, fmt.Sprintf("Contains %d invalid bases", result.InvalidBases))
+	if r.InvalidBases > 0 {
+		r.Issues = append(r.Issues, fmt.Sprintf("%d non-ACGT bases", r.InvalidBases))
 	}
-
-	if abs(result.GCDeviation) > 0.05 { // 5% tolerance
-		result.Issues = append(result.Issues, fmt.Sprintf("GC content deviation: %.3f (target: %.3f)", result.GCContent, targetGC))
+	if r.Complexity < th.MinComplexity {
+		r.Issues = append(r.Issues, fmt.Sprintf("complexity %.4f below %.4f", r.Complexity, th.MinComplexity))
 	}
-
-	if result.Complexity < 0.3 {
-		result.Issues = append(result.Issues, fmt.Sprintf("Low complexity: %.4f", result.Complexity))
+	if r.MaxHomopolymer > th.MaxHomopolymer {
+		r.Issues = append(r.Issues, fmt.Sprintf("homopolymer run of %d bases exceeds %d", r.MaxHomopolymer, th.MaxHomopolymer))
 	}
+	return r
+}
 
-	if result.MaxHomopolymer > 10 {
-		result.Issues = append(result.Issues, fmt.Sprintf("Long homopolymer run: %d bases", result.MaxHomopolymer))
-	}
+// finalise sets the score and pass/fail once all issues are recorded.
+func finalise(r *ValidationResult) {
+	r.ValidationScore = calculateValidationScore(r)
+	r.IsValid = len(r.Issues) == 0
+}
 
-	// Calculate overall validation score
-	result.ValidationScore = calculateValidationScore(result)
-	result.IsValid = result.ValidationScore >= 0.7 && len(result.Issues) == 0
-
-	return result, nil
+func isACGT(b byte) bool {
+	return b == 'A' || b == 'C' || b == 'G' || b == 'T' || b == 'a' || b == 'c' || b == 'g' || b == 't'
 }
 
 func countValidBases(sequence string) (valid, invalid int) {
-	for _, base := range sequence {
-		switch base {
-		case 'A', 'T', 'G', 'C', 'a', 't', 'g', 'c':
+	for i := 0; i < len(sequence); i++ {
+		if isACGT(sequence[i]) {
 			valid++
-		default:
+		} else {
 			invalid++
 		}
 	}
 	return valid, invalid
 }
 
+// calculateGCContent returns the G+C fraction of the ACGT bases, ignoring
+// N and other symbols; 0 when there are none.
 func calculateGCContent(sequence string) float64 {
-	if len(sequence) == 0 {
-		return 0.0
-	}
-
-	gcCount := 0
-	for _, base := range strings.ToUpper(sequence) {
-		if base == 'G' || base == 'C' {
-			gcCount++
+	gc, acgt := 0, 0
+	for i := 0; i < len(sequence); i++ {
+		switch sequence[i] {
+		case 'G', 'C', 'g', 'c':
+			gc++
+			acgt++
+		case 'A', 'T', 'a', 't':
+			acgt++
 		}
 	}
-
-	return float64(gcCount) / float64(len(sequence))
+	if acgt == 0 {
+		return 0
+	}
+	return float64(gc) / float64(acgt)
 }
 
+// calculateComplexity returns distinct / total over the k-mers made only of
+// ACGT bases (case-insensitive); 0 when there are none.
 func calculateComplexity(sequence string, k int) float64 {
-	if len(sequence) < k {
-		return 0.0
+	seq := strings.ToUpper(sequence)
+	seen := make(map[string]struct{})
+	total, run := 0, 0 // run: ACGT bases ending at i
+	for i := 0; i < len(seq); i++ {
+		if !isACGT(seq[i]) {
+			run = 0
+			continue
+		}
+		run++
+		if run >= k {
+			seen[seq[i-k+1:i+1]] = struct{}{}
+			total++
+		}
 	}
-
-	uniqueKmers := make(map[string]bool)
-	sequence = strings.ToUpper(sequence)
-
-	for i := 0; i <= len(sequence)-k; i++ {
-		kmer := sequence[i : i+k]
-		uniqueKmers[kmer] = true
+	if total == 0 {
+		return 0
 	}
-
-	totalKmers := len(sequence) - k + 1
-	return float64(len(uniqueKmers)) / float64(totalKmers)
+	return float64(len(seen)) / float64(total)
 }
 
+// findMaxHomopolymer returns the longest run of one repeated base,
+// case-insensitively.
 func findMaxHomopolymer(sequence string) int {
 	if len(sequence) == 0 {
 		return 0
 	}
-
-	maxRun := 1
-	currentRun := 1
-	sequence = strings.ToUpper(sequence)
-
-	for i := 1; i < len(sequence); i++ {
-		if sequence[i] == sequence[i-1] {
-			currentRun++
+	seq := strings.ToUpper(sequence)
+	maxRun, cur := 1, 1
+	for i := 1; i < len(seq); i++ {
+		if seq[i] == seq[i-1] {
+			cur++
+			maxRun = max(maxRun, cur)
 		} else {
-			if currentRun > maxRun {
-				maxRun = currentRun
-			}
-			currentRun = 1
+			cur = 1
 		}
 	}
-
-	if currentRun > maxRun {
-		maxRun = currentRun
-	}
-
 	return maxRun
-}
-
-func hasStopCodons(sequence string) bool {
-	stopCodons := []string{"TAA", "TAG", "TGA"}
-	sequence = strings.ToUpper(sequence)
-
-	for _, codon := range stopCodons {
-		if strings.Contains(sequence, codon) {
-			return true
-		}
-	}
-
-	return false
 }
 
 func classifyComplexity(complexity float64) string {
@@ -395,168 +436,149 @@ func classifyComplexity(complexity float64) string {
 	}
 }
 
-func calculateValidationScore(result *ValidationResult) float64 {
-	score := 1.0
-
-	// Penalize for issues
-	score -= float64(len(result.Issues)) * 0.1
-
-	// Reward high complexity
-	if result.Complexity >= 0.6 {
+// calculateValidationScore is a heuristic summary in [0, 1]: start at 1,
+// subtract 0.1 per issue, 0.3 below 0.3 complexity, 2x the GC deviation
+// (when there is a target) and 0.5 for any non-ACGT base; add 0.2 at or
+// above 0.6 complexity.
+func calculateValidationScore(r *ValidationResult) float64 {
+	score := 1.0 - 0.1*float64(len(r.Issues))
+	if r.Complexity >= 0.6 {
 		score += 0.2
-	} else if result.Complexity < 0.3 {
+	} else if r.Complexity < 0.3 {
 		score -= 0.3
 	}
-
-	// Penalize GC deviation
-	gcPenalty := abs(result.GCDeviation) * 2.0
-	score -= gcPenalty
-
-	// Penalize invalid bases
-	if result.InvalidBases > 0 {
+	if r.HasTargetGC {
+		score -= 2 * abs(r.GCDeviation)
+	}
+	if r.InvalidBases > 0 {
 		score -= 0.5
 	}
-
-	// Clamp between 0 and 1
-	if score < 0 {
-		score = 0
-	}
-	if score > 1 {
-		score = 1
-	}
-
-	return score
+	return min(max(score, 0), 1)
 }
 
-func generateValidationReport(results []ValidationResult) *ValidationReport {
+func generateValidationReport(results []ValidationResult, th thresholds) *ValidationReport {
 	report := &ValidationReport{
 		TotalSequences:     len(results),
 		PopulationResults:  results,
+		PopulationSummary:  []PopulationSummary{},
 		RegionalAnalysis:   make(map[string]float64),
-		ValidationCriteria: "Biological authenticity based on GC content, k-mer complexity, homopolymer analysis",
-		Timestamp:          fmt.Sprintf("%v", os.Getenv("NOW")),
+		Thresholds:         th,
+		ValidationCriteria: validationCriteria,
+		Timestamp:          time.Now().UTC().Format(time.RFC3339),
+	}
+	if report.PopulationResults == nil {
+		report.PopulationResults = []ValidationResult{}
 	}
 
-	// Calculate overall statistics
-	validCount := 0
-	totalScore := 0.0
-
-	for _, result := range results {
-		if result.IsValid {
-			validCount++
-		}
-		totalScore += result.ValidationScore
-	}
-
-	report.ValidSequences = validCount
-	if len(results) > 0 {
-		report.OverallScore = totalScore / float64(len(results))
-	}
-
-	// Generate population summaries
+	total := 0.0
 	popStats := make(map[string]*PopulationSummary)
-
-	for _, result := range results {
-		if _, exists := popStats[result.Population]; !exists {
-			popStats[result.Population] = &PopulationSummary{
-				Population: result.Population,
-				Region:     result.Region,
-				Issues:     make(map[string]int),
-			}
+	regionScores := make(map[string][]float64)
+	for _, r := range results {
+		if r.IsValid {
+			report.ValidSequences++
 		}
+		total += r.ValidationScore
 
-		summary := popStats[result.Population]
-		summary.TotalSequences++
-
-		if result.IsValid {
-			summary.ValidSequences++
+		s, ok := popStats[r.Population]
+		if !ok {
+			s = &PopulationSummary{Population: r.Population, Region: r.Region, Issues: make(map[string]int)}
+			popStats[r.Population] = s
 		}
-
-		summary.AvgGCContent += result.GCContent
-		summary.AvgComplexity += result.Complexity
-		summary.AvgScore += result.ValidationScore
-
-		for _, issue := range result.Issues {
-			summary.Issues[issue]++
+		s.TotalSequences++
+		if r.IsValid {
+			s.ValidSequences++
 		}
+		s.AvgGCContent += r.GCContent
+		s.AvgComplexity += r.Complexity
+		s.AvgScore += r.ValidationScore
+		for _, issue := range r.Issues {
+			s.Issues[issue]++
+		}
+		regionScores[r.Region] = append(regionScores[r.Region], r.ValidationScore)
+	}
+	if len(results) > 0 {
+		report.OverallScore = total / float64(len(results))
 	}
 
-	// Finalize population summaries
-	for _, summary := range popStats {
-		if summary.TotalSequences > 0 {
-			summary.AvgGCContent /= float64(summary.TotalSequences)
-			summary.AvgComplexity /= float64(summary.TotalSequences)
-			summary.AvgScore /= float64(summary.TotalSequences)
-		}
-		report.PopulationSummary = append(report.PopulationSummary, *summary)
+	for _, s := range popStats {
+		n := float64(s.TotalSequences)
+		s.AvgGCContent /= n
+		s.AvgComplexity /= n
+		s.AvgScore /= n
+		report.PopulationSummary = append(report.PopulationSummary, *s)
 	}
-
-	// Sort population summaries
 	sort.Slice(report.PopulationSummary, func(i, j int) bool {
-		return report.PopulationSummary[i].AvgScore > report.PopulationSummary[j].AvgScore
+		a, b := report.PopulationSummary[i], report.PopulationSummary[j]
+		if a.AvgScore != b.AvgScore {
+			return a.AvgScore > b.AvgScore
+		}
+		return a.Population < b.Population
 	})
 
-	// Regional analysis
-	regionStats := make(map[string][]float64)
-	for _, result := range results {
-		regionStats[result.Region] = append(regionStats[result.Region], result.ValidationScore)
-	}
-
-	for region, scores := range regionStats {
-		total := 0.0
-		for _, score := range scores {
-			total += score
+	for region, scores := range regionScores {
+		sum := 0.0
+		for _, s := range scores {
+			sum += s
 		}
-		report.RegionalAnalysis[region] = total / float64(len(scores))
+		report.RegionalAnalysis[region] = sum / float64(len(scores))
 	}
-
 	return report
 }
 
-func displayValidationResults(report *ValidationReport) {
-	fmt.Println("🔬 VALIDATION RESULTS SUMMARY:")
-	fmt.Println("==============================")
-	fmt.Printf("✅ Valid sequences: %d/%d (%.1f%%)\n",
+func percent(n, d int) float64 {
+	if d == 0 {
+		return 0
+	}
+	return 100 * float64(n) / float64(d)
+}
+
+func displayValidationResults(w io.Writer, report *ValidationReport) {
+	fmt.Fprintf(w, "Valid sequences: %d/%d (%.1f%%), mean score %.3f\n",
 		report.ValidSequences, report.TotalSequences,
-		float64(report.ValidSequences)/float64(report.TotalSequences)*100)
-	fmt.Printf("📊 Overall validation score: %.3f\n", report.OverallScore)
-	fmt.Println()
-
-	fmt.Println("🌍 POPULATION PERFORMANCE:")
-	fmt.Println("==========================")
-	for i, summary := range report.PopulationSummary {
-		fmt.Printf("[%2d] %s (%s):\n", i+1, summary.Population, summary.Region)
-		fmt.Printf("     Valid: %d/%d (%.1f%%) | Score: %.3f\n",
-			summary.ValidSequences, summary.TotalSequences,
-			float64(summary.ValidSequences)/float64(summary.TotalSequences)*100,
-			summary.AvgScore)
-		fmt.Printf("     GC: %.3f | Complexity: %.3f\n",
-			summary.AvgGCContent, summary.AvgComplexity)
-
-		if len(summary.Issues) > 0 {
-			fmt.Printf("     Issues: ")
-			issueCount := 0
-			for issue, count := range summary.Issues {
-				if issueCount > 0 {
-					fmt.Printf(", ")
-				}
-				fmt.Printf("%s (%d)", issue, count)
-				issueCount++
-				if issueCount >= 2 { // Limit display
-					break
-				}
-			}
-			fmt.Println()
-		}
-		fmt.Println()
+		percent(report.ValidSequences, report.TotalSequences), report.OverallScore)
+	if len(report.Skipped) > 0 {
+		fmt.Fprintf(w, "Skipped files: %d\n", len(report.Skipped))
 	}
 
-	fmt.Println("🌍 REGIONAL ANALYSIS:")
-	fmt.Println("====================")
-	regions := []string{"Africa", "Europe", "East Asia", "Americas"}
-	for _, region := range regions {
-		if score, exists := report.RegionalAnalysis[region]; exists {
-			fmt.Printf("🌍 %s: %.3f average validation score\n", region, score)
+	if len(report.PopulationSummary) > 0 {
+		fmt.Fprintf(w, "\nBy population:\n")
+	}
+	for _, s := range report.PopulationSummary {
+		region := s.Region
+		if region == "" {
+			region = "no region"
+		}
+		fmt.Fprintf(w, "  %s (%s): valid %d/%d (%.1f%%), score %.3f, GC %.3f, complexity %.3f\n",
+			s.Population, region, s.ValidSequences, s.TotalSequences,
+			percent(s.ValidSequences, s.TotalSequences), s.AvgScore, s.AvgGCContent, s.AvgComplexity)
+		issues := make([]string, 0, len(s.Issues))
+		for issue := range s.Issues {
+			issues = append(issues, issue)
+		}
+		sort.Slice(issues, func(i, j int) bool {
+			if s.Issues[issues[i]] != s.Issues[issues[j]] {
+				return s.Issues[issues[i]] > s.Issues[issues[j]]
+			}
+			return issues[i] < issues[j]
+		})
+		for _, issue := range issues {
+			fmt.Fprintf(w, "    %dx %s\n", s.Issues[issue], issue)
+		}
+	}
+
+	if len(report.RegionalAnalysis) > 0 {
+		regions := make([]string, 0, len(report.RegionalAnalysis))
+		for r := range report.RegionalAnalysis {
+			regions = append(regions, r)
+		}
+		sort.Strings(regions)
+		fmt.Fprintf(w, "\nMean score by region:\n")
+		for _, r := range regions {
+			name := r
+			if name == "" {
+				name = "no region"
+			}
+			fmt.Fprintf(w, "  %s: %.3f\n", name, report.RegionalAnalysis[r])
 		}
 	}
 }
@@ -566,8 +588,7 @@ func saveValidationReport(report *ValidationReport, filename string) error {
 	if err != nil {
 		return err
 	}
-
-	return os.WriteFile(filename, data, 0600)
+	return os.WriteFile(filename, data, 0o600)
 }
 
 func abs(x float64) float64 {

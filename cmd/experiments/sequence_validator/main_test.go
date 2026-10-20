@@ -1,703 +1,376 @@
 //go:build !release
-// +build !release
 
 package main
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
+	"math"
+	"math/rand/v2"
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
-func TestParseFilename_Valid(t *testing.T) {
-	pop, length, seqNum, err := parseFilename("YRI_L1000_S01.fasta")
-	if err != nil {
-		t.Fatalf("Expected no error, got: %v", err)
+func TestParseFilename(t *testing.T) {
+	cases := []struct {
+		name    string
+		pop     string
+		length  int
+		seq     int
+		wantErr bool
+	}{
+		{"YRI_L1000_S01.fasta", "YRI", 1000, 1, false},
+		{"YRI_L50_S7.fa", "YRI", 50, 7, false},
+		{"HG_YRI_L200_S03.FASTA", "HG_YRI", 200, 3, false}, // underscore in population
+		{"invalid_name.fasta", "", 0, 0, true},
+		{"YRI_1000_S01.fasta", "", 0, 0, true}, // missing L
+		{"YRI_L1000_01.fasta", "", 0, 0, true}, // missing S
+		{"YRI_Lxxx_S01.fasta", "", 0, 0, true},
+		{"YRI_L0_S01.fasta", "", 0, 0, true},
+		{"YRI_L1000_Sxx.fasta", "", 0, 0, true},
+		{"_L1000_S01.fasta", "", 0, 0, true},
 	}
-	if pop != "YRI" {
-		t.Errorf("Expected population 'YRI', got '%s'", pop)
-	}
-	if length != 1000 {
-		t.Errorf("Expected length 1000, got %d", length)
-	}
-	if seqNum != 1 {
-		t.Errorf("Expected seqNum 1, got %d", seqNum)
-	}
-}
-
-func TestParseFilename_Invalid(t *testing.T) {
-	_, _, _, err := parseFilename("invalid_name.fasta")
-	if err == nil {
-		t.Error("Expected error for invalid filename format")
-	}
-}
-
-func TestParseFilename_InvalidLength(t *testing.T) {
-	_, _, _, err := parseFilename("YRI_Lxxx_S01.fasta")
-	if err == nil {
-		t.Error("Expected error for non-numeric length")
-	}
-}
-
-func TestParseFilename_InvalidSeqNum(t *testing.T) {
-	_, _, _, err := parseFilename("YRI_L1000_Sxxx.fasta")
-	if err == nil {
-		t.Error("Expected error for non-numeric sequence number")
+	for _, c := range cases {
+		pop, length, seq, err := parseFilename(c.name)
+		if c.wantErr {
+			if err == nil {
+				t.Errorf("parseFilename(%q) = %q,%d,%d; want error", c.name, pop, length, seq)
+			}
+			continue
+		}
+		if err != nil || pop != c.pop || length != c.length || seq != c.seq {
+			t.Errorf("parseFilename(%q) = %q,%d,%d,%v; want %q,%d,%d", c.name, pop, length, seq, err, c.pop, c.length, c.seq)
+		}
 	}
 }
 
-func TestParseHeaderMetadata_WithGC(t *testing.T) {
-	header := ">YRI_L1000_S01 population=YRI region=Coding model_target_gc=0.496"
-	gc, region := parseHeaderMetadata(header)
-	if gc < 0.495 || gc > 0.497 {
-		t.Errorf("Expected GC ~0.496, got %f", gc)
+func TestParseHeaderMetadata(t *testing.T) {
+	gc, ok, region := parseHeaderMetadata("YRI_L1000_S01 population=YRI region=Africa model_target_gc=0.496")
+	if !ok || math.Abs(gc-0.496) > 1e-12 || region != "Africa" {
+		t.Errorf("got gc=%v ok=%t region=%q", gc, ok, region)
 	}
-	if region != "Coding" {
-		t.Errorf("Expected region 'Coding', got '%s'", region)
+	if _, ok, _ := parseHeaderMetadata("YRI_L1000_S01 population=YRI"); ok {
+		t.Error("hasTarget true for a header without model_target_gc")
 	}
-}
-
-func TestParseHeaderMetadata_NoGC(t *testing.T) {
-	header := ">YRI_L1000_S01 population=YRI"
-	gc, region := parseHeaderMetadata(header)
-	if gc != 0.0 {
-		t.Errorf("Expected GC 0.0 when not present, got %f", gc)
-	}
-	if region != "" {
-		t.Errorf("Expected empty region when not present, got '%s'", region)
+	if _, ok, _ := parseHeaderMetadata("x model_target_gc=abc"); ok {
+		t.Error("hasTarget true for a non-numeric model_target_gc")
 	}
 }
 
-func TestCountValidBases_AllValid(t *testing.T) {
-	valid, invalid := countValidBases("ATCGATCG")
-	if valid != 8 {
-		t.Errorf("Expected 8 valid bases, got %d", valid)
-	}
-	if invalid != 0 {
-		t.Errorf("Expected 0 invalid bases, got %d", invalid)
+func TestCountValidBases(t *testing.T) {
+	if v, i := countValidBases("ATCGatcgNNXX"); v != 8 || i != 4 {
+		t.Errorf("countValidBases = %d,%d; want 8,4", v, i)
 	}
 }
 
-func TestCountValidBases_WithInvalid(t *testing.T) {
-	valid, invalid := countValidBases("ATCGNNXX")
-	if valid != 4 {
-		t.Errorf("Expected 4 valid bases, got %d", valid)
+func TestCalculateGCContent(t *testing.T) {
+	cases := map[string]float64{
+		"GCGCGCGC": 1,
+		"ATATATAT": 0,
+		"GCATgcat": 0.5,
+		"":         0,
+		"NNNN":     0,
+		// N is not a base of known composition: 2 GC of 4 ACGT bases, not 2 of 6.
+		"GGNNAA": 0.5,
 	}
-	if invalid != 4 {
-		t.Errorf("Expected 4 invalid bases, got %d", invalid)
-	}
-}
-
-func TestCountValidBases_LowerCase(t *testing.T) {
-	valid, invalid := countValidBases("atcgatcg")
-	if valid != 8 {
-		t.Errorf("Expected 8 valid bases (lowercase), got %d", valid)
-	}
-	if invalid != 0 {
-		t.Errorf("Expected 0 invalid bases, got %d", invalid)
+	for seq, want := range cases {
+		if got := calculateGCContent(seq); math.Abs(got-want) > 1e-12 {
+			t.Errorf("calculateGCContent(%q) = %v, want %v", seq, got, want)
+		}
 	}
 }
 
-func TestCalculateGCContent_AllGC(t *testing.T) {
-	gc := calculateGCContent("GCGCGCGC")
-	if gc < 0.99 || gc > 1.01 {
-		t.Errorf("Expected GC ~1.0 for all-GC, got %f", gc)
+func TestCalculateComplexity(t *testing.T) {
+	// 7 windows of 4, distinct: ACGT CGTA GTAC TACG.
+	if got := calculateComplexity("ACGTACGTAC", 4); math.Abs(got-4.0/7) > 1e-12 {
+		t.Errorf("complexity = %v, want 4/7", got)
+	}
+	if got := calculateComplexity(strings.Repeat("A", 100), 4); math.Abs(got-1.0/97) > 1e-12 {
+		t.Errorf("homopolymer complexity = %v, want 1/97", got)
+	}
+	// Windows spanning N are not k-mers: ACGT and TTTT only.
+	if got := calculateComplexity("ACGTNTTTT", 4); got != 1 {
+		t.Errorf("complexity with N = %v, want 1 (2 distinct of 2)", got)
+	}
+	if got := calculateComplexity("acgt", 4); got != 1 {
+		t.Errorf("lower-case complexity = %v, want 1", got)
+	}
+	if got := calculateComplexity("AT", 8); got != 0 {
+		t.Errorf("complexity of a sequence shorter than k = %v, want 0", got)
 	}
 }
 
-func TestCalculateGCContent_NoGC(t *testing.T) {
-	gc := calculateGCContent("ATATATAT")
-	if gc > 0.01 {
-		t.Errorf("Expected GC ~0.0 for no-GC, got %f", gc)
-	}
-}
-
-func TestCalculateGCContent_FiftyPercent(t *testing.T) {
-	gc := calculateGCContent("GCATGCAT")
-	if gc < 0.49 || gc > 0.51 {
-		t.Errorf("Expected GC ~0.5, got %f", gc)
-	}
-}
-
-func TestCalculateGCContent_Empty(t *testing.T) {
-	gc := calculateGCContent("")
-	if gc != 0.0 {
-		t.Errorf("Expected GC 0.0 for empty sequence, got %f", gc)
-	}
-}
-
-func TestCalculateComplexity_HighComplexity(t *testing.T) {
-	// Diverse sequence should have high complexity
-	seq := "ATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCG"
-	complexity := calculateComplexity(seq, 4)
-	if complexity <= 0 {
-		t.Errorf("Expected positive complexity for diverse sequence, got %f", complexity)
-	}
-}
-
-func TestCalculateComplexity_LowComplexity(t *testing.T) {
-	// Repetitive sequence should have low complexity
-	seq := "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-	complexity := calculateComplexity(seq, 4)
-	if complexity >= 0.5 {
-		t.Errorf("Expected low complexity for repetitive sequence, got %f", complexity)
-	}
-}
-
-func TestCalculateComplexity_TooShort(t *testing.T) {
-	complexity := calculateComplexity("AT", 8)
-	if complexity != 0.0 {
-		t.Errorf("Expected 0.0 for sequence shorter than k, got %f", complexity)
-	}
-}
-
-func TestFindMaxHomopolymer_Single(t *testing.T) {
-	max := findMaxHomopolymer("ATCG")
-	if max != 1 {
-		t.Errorf("Expected max 1 for no homopolymers, got %d", max)
-	}
-}
-
-func TestFindMaxHomopolymer_Run(t *testing.T) {
-	max := findMaxHomopolymer("ATAAAATCG")
-	if max != 4 {
-		t.Errorf("Expected max 4 for AAAA, got %d", max)
-	}
-}
-
-func TestFindMaxHomopolymer_AtEnd(t *testing.T) {
-	max := findMaxHomopolymer("ATCGGGGG")
-	if max != 5 {
-		t.Errorf("Expected max 5 for GGGGG at end, got %d", max)
-	}
-}
-
-func TestFindMaxHomopolymer_Empty(t *testing.T) {
-	max := findMaxHomopolymer("")
-	if max != 0 {
-		t.Errorf("Expected max 0 for empty sequence, got %d", max)
-	}
-}
-
-func TestHasStopCodons_Present(t *testing.T) {
-	if !hasStopCodons("ATCGTAA") {
-		t.Error("Expected stop codon TAA to be detected")
-	}
-	if !hasStopCodons("ATCGTAG") {
-		t.Error("Expected stop codon TAG to be detected")
-	}
-	if !hasStopCodons("ATCGTGA") {
-		t.Error("Expected stop codon TGA to be detected")
-	}
-}
-
-func TestHasStopCodons_Absent(t *testing.T) {
-	if hasStopCodons("ATCGATCG") {
-		t.Error("Should not detect stop codon in ATCGATCG")
-	}
-}
-
-func TestHasStopCodons_CaseInsensitive(t *testing.T) {
-	if !hasStopCodons("atcgtaa") {
-		t.Error("Stop codon detection should be case insensitive")
+func TestFindMaxHomopolymer(t *testing.T) {
+	cases := map[string]int{"": 0, "ATCG": 1, "ATAAAATCG": 4, "ATCGGGGG": 5, "aAAa": 4, "GGGGAAAAAAT": 6}
+	for seq, want := range cases {
+		if got := findMaxHomopolymer(seq); got != want {
+			t.Errorf("findMaxHomopolymer(%q) = %d, want %d", seq, got, want)
+		}
 	}
 }
 
 func TestClassifyComplexity(t *testing.T) {
-	tests := []struct {
-		complexity float64
-		expected   string
-	}{
-		{0.9, "Very High"},
-		{0.7, "High"},
-		{0.5, "Medium"},
-		{0.3, "Low"},
-		{0.1, "Very Low"},
-	}
-
-	for _, tt := range tests {
-		result := classifyComplexity(tt.complexity)
-		if result != tt.expected {
-			t.Errorf("classifyComplexity(%f) = %q, expected %q", tt.complexity, result, tt.expected)
+	cases := map[float64]string{0.9: "Very High", 0.8: "Very High", 0.7: "High", 0.5: "Medium", 0.3: "Low", 0.1: "Very Low"}
+	for c, want := range cases {
+		if got := classifyComplexity(c); got != want {
+			t.Errorf("classifyComplexity(%v) = %q, want %q", c, got, want)
 		}
 	}
 }
 
-func TestAbsFunction(t *testing.T) {
-	if abs(5.0) != 5.0 {
-		t.Errorf("abs(5.0) should be 5.0")
+func TestReadSingleFASTA(t *testing.T) {
+	h, s, err := readSingleFASTA(strings.NewReader(">id a=b\nACGT\n  acgt  \n\n"))
+	if err != nil || h != "id a=b" || s != "ACGTacgt" {
+		t.Errorf("got %q %q %v", h, s, err)
 	}
-	if abs(-5.0) != 5.0 {
-		t.Errorf("abs(-5.0) should be 5.0")
-	}
-	if abs(0.0) != 0.0 {
-		t.Errorf("abs(0.0) should be 0.0")
-	}
-}
-
-// ---- Tests for file-writing and aggregation functions ----
-
-func TestSaveValidationReport_CreatesFile(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "test-save-report-*")
-	if err != nil {
-		t.Fatalf("MkdirTemp: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	report := &ValidationReport{
-		TotalSequences: 2,
-		ValidSequences: 1,
-		OverallScore:   0.75,
-		ValidationCriteria: "test",
-		PopulationResults:  []ValidationResult{},
-		PopulationSummary:  []PopulationSummary{},
-		RegionalAnalysis:   map[string]float64{"Africa": 0.8},
-	}
-
-	outFile := tmpDir + "/report.json"
-	if err := saveValidationReport(report, outFile); err != nil {
-		t.Fatalf("saveValidationReport returned error: %v", err)
-	}
-
-	info, err := os.Stat(outFile)
-	if err != nil {
-		t.Fatalf("output file not created: %v", err)
-	}
-	if info.Size() == 0 {
-		t.Error("output file is empty")
+	for name, in := range map[string]string{
+		"empty":          "",
+		"no header":      "ACGT\n",
+		"empty sequence": ">id\n\n",
+		"two records":    ">a\nACGT\n>b\nACGT\n",
+	} {
+		if _, _, err := readSingleFASTA(strings.NewReader(in)); err == nil {
+			t.Errorf("%s: no error", name)
+		}
 	}
 }
 
-func TestSaveValidationReport_ValidJSON(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "test-save-json-*")
+// bufio.Scanner's default 64 KiB token limit used to reject sequences
+// written on one line.
+func TestReadSingleFASTA_LongLine(t *testing.T) {
+	seq := strings.Repeat("ACGT", 100000)
+	_, s, err := readSingleFASTA(strings.NewReader(">id\n" + seq + "\n"))
+	if err != nil || len(s) != len(seq) {
+		t.Fatalf("len=%d err=%v; want %d bases", len(s), err, len(seq))
+	}
+}
+
+// randomSeq returns seeded uniform ACGT sequence and its GC fraction.
+func randomSeq(n int, seed uint64) (string, float64) {
+	rng := rand.New(rand.NewPCG(seed, 1))
+	b := make([]byte, n)
+	gc := 0
+	for i := range b {
+		b[i] = "ACGT"[rng.IntN(4)]
+		if b[i] == 'C' || b[i] == 'G' {
+			gc++
+		}
+	}
+	return string(b), float64(gc) / float64(n)
+}
+
+func writeFASTA(t *testing.T, dir, name, header, seq string) string {
+	t.Helper()
+	p := filepath.Join(dir, name)
+	if err := os.WriteFile(p, []byte(">"+header+"\n"+seq+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func TestValidateSequenceFile_PassingSequence(t *testing.T) {
+	seq, gc := randomSeq(1000, 1)
+	p := writeFASTA(t, t.TempDir(), "YRI_L1000_S01.fasta",
+		fmt.Sprintf("YRI_L1000_S01 region=Africa model_target_gc=%.4f", gc), seq)
+	r, err := validateFile(p, defaultThresholds)
 	if err != nil {
-		t.Fatalf("MkdirTemp: %v", err)
+		t.Fatal(err)
 	}
-	defer os.RemoveAll(tmpDir)
-
-	report := &ValidationReport{
-		TotalSequences: 5,
-		ValidSequences: 4,
-		OverallScore:   0.9,
-		ValidationCriteria: "k-mer complexity",
-		PopulationResults:  []ValidationResult{},
-		PopulationSummary:  []PopulationSummary{},
-		RegionalAnalysis:   map[string]float64{},
+	if !r.IsValid || len(r.Issues) != 0 {
+		t.Errorf("random 1 kb sequence at its own GC failed: %v", r.Issues)
 	}
-
-	outFile := tmpDir + "/report.json"
-	if err := saveValidationReport(report, outFile); err != nil {
-		t.Fatalf("saveValidationReport: %v", err)
+	if r.Population != "YRI" || r.Region != "Africa" || r.ActualLength != 1000 || !r.HasTargetGC {
+		t.Errorf("unexpected result %+v", r)
 	}
+}
 
-	data, err := os.ReadFile(outFile)
+// Without model_target_gc the target used to be 0, so every sequence was
+// flagged for a ~0.5 GC deviation.
+func TestValidateSequenceFile_NoTargetGCIsNotAnIssue(t *testing.T) {
+	seq, _ := randomSeq(1000, 2)
+	p := writeFASTA(t, t.TempDir(), "CEU_L1000_S01.fasta", "CEU_L1000_S01 region=Europe", seq)
+	r, err := validateFile(p, defaultThresholds)
 	if err != nil {
-		t.Fatalf("ReadFile: %v", err)
+		t.Fatal(err)
+	}
+	if r.HasTargetGC || !r.IsValid {
+		t.Errorf("HasTargetGC=%t IsValid=%t issues=%v; want no target and valid", r.HasTargetGC, r.IsValid, r.Issues)
+	}
+}
+
+func TestValidateSequenceFile_Failures(t *testing.T) {
+	dir := t.TempDir()
+	seq, gc := randomSeq(1000, 3)
+	cases := []struct {
+		name, header, seq, issue string
+	}{
+		{"A_L1000_S01.fasta", fmt.Sprintf("x model_target_gc=%.3f", gc+0.1), seq, "differs from target"},
+		{"A_L999_S02.fasta", "x", seq, "length 1000, file name says 999"},
+		{"A_L1000_S03.fasta", "x", seq[:500] + "NN" + seq[502:], "2 non-ACGT bases"},
+		{"A_L1000_S04.fasta", "x", seq[:400] + strings.Repeat("G", 12) + seq[412:], "homopolymer run of 12"},
+		{"A_L1000_S05.fasta", "x", strings.Repeat("ACGTTGCA", 125), "complexity"},
+	}
+	for _, c := range cases {
+		r, err := validateFile(writeFASTA(t, dir, c.name, c.header, c.seq), defaultThresholds)
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		if r.IsValid || !strings.Contains(strings.Join(r.Issues, "; "), c.issue) {
+			t.Errorf("%s: IsValid=%t issues=%v; want an issue containing %q", c.name, r.IsValid, r.Issues, c.issue)
+		}
+	}
+}
+
+func TestCalculateValidationScore(t *testing.T) {
+	perfect := &ValidationResult{Complexity: 0.8}
+	if s := calculateValidationScore(perfect); s != 1 {
+		t.Errorf("perfect score = %v, want 1 (clamped)", s)
+	}
+	// 1 - 2*0.1 = 0.8; the deviation only counts when there is a target.
+	dev := &ValidationResult{Complexity: 0.5, HasTargetGC: true, GCDeviation: -0.1}
+	if s := calculateValidationScore(dev); math.Abs(s-0.8) > 1e-12 {
+		t.Errorf("score with GC deviation = %v, want 0.8", s)
+	}
+	dev.HasTargetGC = false
+	if s := calculateValidationScore(dev); s != 1 {
+		t.Errorf("score ignoring absent target = %v, want 1", s)
+	}
+	worst := &ValidationResult{Complexity: 0.1, InvalidBases: 1, HasTargetGC: true, GCDeviation: 0.5,
+		Issues: []string{"a", "b", "c"}}
+	if s := calculateValidationScore(worst); s != 0 {
+		t.Errorf("worst score = %v, want 0 (clamped)", s)
+	}
+}
+
+func TestGenerateValidationReport_Aggregates(t *testing.T) {
+	results := []ValidationResult{
+		{Population: "YRI", Region: "Africa", IsValid: true, ValidationScore: 0.9, GCContent: 0.40, Complexity: 0.8},
+		{Population: "CEU", Region: "Europe", IsValid: false, ValidationScore: 0.4, GCContent: 0.50, Complexity: 0.6, Issues: []string{"x"}},
+		{Population: "YRI", Region: "Africa", IsValid: false, ValidationScore: 0.7, GCContent: 0.44, Complexity: 0.6, Issues: []string{"x"}},
+		{Population: "PEL", Region: "Americas", IsValid: true, ValidationScore: 0.4},
+	}
+	r := generateValidationReport(results, defaultThresholds)
+	if r.TotalSequences != 4 || r.ValidSequences != 2 {
+		t.Errorf("total/valid = %d/%d, want 4/2", r.TotalSequences, r.ValidSequences)
+	}
+	if math.Abs(r.OverallScore-0.6) > 1e-12 {
+		t.Errorf("overall score = %v, want 0.6", r.OverallScore)
+	}
+	var order []string
+	for _, s := range r.PopulationSummary {
+		order = append(order, s.Population)
+	}
+	// YRI 0.8 first; CEU and PEL tie at 0.4 and sort by name.
+	if strings.Join(order, ",") != "YRI,CEU,PEL" {
+		t.Errorf("population order %v, want YRI,CEU,PEL", order)
+	}
+	yri := r.PopulationSummary[0]
+	if yri.TotalSequences != 2 || yri.ValidSequences != 1 || math.Abs(yri.AvgGCContent-0.42) > 1e-12 ||
+		math.Abs(yri.AvgComplexity-0.7) > 1e-12 || yri.Issues["x"] != 1 {
+		t.Errorf("YRI summary %+v", yri)
+	}
+	if math.Abs(r.RegionalAnalysis["Africa"]-0.8) > 1e-12 || r.RegionalAnalysis["Americas"] != 0.4 {
+		t.Errorf("regional analysis %v", r.RegionalAnalysis)
+	}
+	if r.Timestamp == "" {
+		t.Error("timestamp not set")
+	}
+}
+
+// The display used to list only four hard-coded regions (one of them,
+// "East Asia", impossible to parse from a header) and divide by zero on an
+// empty report.
+func TestDisplayValidationResults(t *testing.T) {
+	var out bytes.Buffer
+	displayValidationResults(&out, &ValidationReport{
+		TotalSequences: 1, ValidSequences: 1,
+		PopulationSummary: []PopulationSummary{{Population: "PNG", Region: "Oceania", TotalSequences: 1, ValidSequences: 1,
+			Issues: map[string]int{"b issue": 2, "a issue": 2, "c issue": 5}}},
+		RegionalAnalysis: map[string]float64{"Oceania": 0.9, "EastAsia": 0.8},
+	})
+	s := out.String()
+	for _, want := range []string{"Oceania: 0.900", "EastAsia: 0.800", "PNG (Oceania)"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("output missing %q:\n%s", want, s)
+		}
+	}
+	if !(strings.Index(s, "c issue") < strings.Index(s, "a issue") && strings.Index(s, "a issue") < strings.Index(s, "b issue")) {
+		t.Errorf("issues not ordered by count then name:\n%s", s)
 	}
 
-	// Parse back and verify fields
-	var loaded ValidationReport
-	if err := json.Unmarshal(data, &loaded); err != nil {
-		t.Fatalf("json.Unmarshal: %v", err)
+	out.Reset()
+	displayValidationResults(&out, generateValidationReport(nil, defaultThresholds))
+	if strings.Contains(out.String(), "NaN") {
+		t.Errorf("empty report printed NaN:\n%s", out.String())
 	}
-	if loaded.TotalSequences != 5 {
-		t.Errorf("TotalSequences = %d, want 5", loaded.TotalSequences)
+}
+
+func TestRun_ExitStatusAndReport(t *testing.T) {
+	dir := t.TempDir()
+	good, gc := randomSeq(1000, 10)
+	writeFASTA(t, dir, "YRI_L1000_S01.fasta", fmt.Sprintf("h region=Africa model_target_gc=%.4f", gc), good)
+	sub := filepath.Join(dir, "CEU")
+	if err := os.Mkdir(sub, 0o700); err != nil {
+		t.Fatal(err)
 	}
-	if loaded.ValidSequences != 4 {
-		t.Errorf("ValidSequences = %d, want 4", loaded.ValidSequences)
+	writeFASTA(t, sub, "CEU_L1000_S01.fasta", "h region=Europe", good[:900]) // wrong length
+	writeFASTA(t, dir, "notes.fasta", "h", good)                             // unparseable name
+	if err := os.WriteFile(filepath.Join(dir, "README.txt"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
 	}
-	if loaded.OverallScore < 0.89 || loaded.OverallScore > 0.91 {
-		t.Errorf("OverallScore = %f, want ~0.9", loaded.OverallScore)
+
+	report := filepath.Join(t.TempDir(), "report.json")
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"-out", report, dir}, &stdout, &stderr); code != 2 {
+		t.Fatalf("exit %d, want 2 (one sequence fails)\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	data, err := os.ReadFile(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got ValidationReport
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.TotalSequences != 2 || got.ValidSequences != 1 {
+		t.Errorf("report total/valid = %d/%d, want 2/1", got.TotalSequences, got.ValidSequences)
+	}
+	if len(got.Skipped) != 1 || filepath.Base(got.Skipped[0].Path) != "notes.fasta" {
+		t.Errorf("skipped = %+v, want notes.fasta", got.Skipped)
+	}
+	if !strings.Contains(stderr.String(), "skipped") {
+		t.Errorf("stderr does not mention the skipped file:\n%s", stderr.String())
+	}
+
+	// Just the passing file, given as a file path.
+	if code := run([]string{"-out", report, filepath.Join(dir, "YRI_L1000_S01.fasta")}, &stdout, &stderr); code != 0 {
+		t.Errorf("exit %d for a passing file, want 0", code)
+	}
+	// Tightening a threshold makes it fail.
+	if code := run([]string{"-out", report, "-max-homopolymer", "2", filepath.Join(dir, "YRI_L1000_S01.fasta")}, &stdout, &stderr); code != 2 {
+		t.Errorf("exit %d with -max-homopolymer 2, want 2", code)
+	}
+}
+
+func TestRun_UsageErrors(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if code := run(nil, &stdout, &stderr); code != 1 || !strings.Contains(stderr.String(), "usage") {
+		t.Errorf("no paths: exit %d, stderr %q; want 1 and usage", code, stderr.String())
+	}
+	report := filepath.Join(t.TempDir(), "r.json")
+	if code := run([]string{"-out", report, t.TempDir()}, &stdout, &stderr); code != 1 {
+		t.Errorf("empty directory: exit %d, want 1", code)
+	}
+	if code := run([]string{"-out", report, filepath.Join(t.TempDir(), "missing")}, &stdout, &stderr); code != 1 {
+		t.Errorf("missing path: exit %d, want 1", code)
 	}
 }
 
 func TestSaveValidationReport_InvalidPath(t *testing.T) {
-	report := &ValidationReport{}
-	err := saveValidationReport(report, "/nonexistent/dir/report.json")
-	if err == nil {
-		t.Error("expected error writing to nonexistent directory, got nil")
+	if err := saveValidationReport(&ValidationReport{}, filepath.Join(t.TempDir(), "no", "such", "r.json")); err == nil {
+		t.Error("expected an error writing into a missing directory")
 	}
-}
-
-func TestCalculateValidationScore_PerfectSequence(t *testing.T) {
-	result := &ValidationResult{
-		Complexity:   0.8,
-		GCDeviation:  0.0,
-		InvalidBases: 0,
-		Issues:       []string{},
-	}
-	score := calculateValidationScore(result)
-	if score < 0.0 || score > 1.0 {
-		t.Errorf("score %f out of [0,1] range", score)
-	}
-	// High complexity, no deviation, no issues -> should be near top
-	if score < 0.9 {
-		t.Errorf("expected high score for perfect sequence, got %f", score)
-	}
-}
-
-func TestCalculateValidationScore_LowComplexity(t *testing.T) {
-	result := &ValidationResult{
-		Complexity:   0.1,
-		GCDeviation:  0.0,
-		InvalidBases: 0,
-		Issues:       []string{},
-	}
-	score := calculateValidationScore(result)
-	if score < 0.0 || score > 1.0 {
-		t.Errorf("score %f out of [0,1] range", score)
-	}
-	// Low complexity penalizes
-	if score >= 0.9 {
-		t.Errorf("expected lower score for low-complexity sequence, got %f", score)
-	}
-}
-
-func TestCalculateValidationScore_ManyIssues(t *testing.T) {
-	result := &ValidationResult{
-		Complexity:   0.7,
-		GCDeviation:  0.0,
-		InvalidBases: 0,
-		Issues:       []string{"issue1", "issue2", "issue3", "issue4", "issue5"},
-	}
-	score := calculateValidationScore(result)
-	if score < 0.0 || score > 1.0 {
-		t.Errorf("score %f out of [0,1] range", score)
-	}
-}
-
-func TestCalculateValidationScore_LargeGCDeviation(t *testing.T) {
-	result := &ValidationResult{
-		Complexity:   0.7,
-		GCDeviation:  0.5, // large deviation
-		InvalidBases: 0,
-		Issues:       []string{},
-	}
-	score := calculateValidationScore(result)
-	if score < 0.0 || score > 1.0 {
-		t.Errorf("score %f out of [0,1] range", score)
-	}
-	// Large GC deviation should produce a lower score
-	perfectResult := &ValidationResult{
-		Complexity:   0.7,
-		GCDeviation:  0.0,
-		InvalidBases: 0,
-		Issues:       []string{},
-	}
-	perfectScore := calculateValidationScore(perfectResult)
-	if score >= perfectScore {
-		t.Errorf("large GC deviation score (%f) should be lower than zero-deviation score (%f)", score, perfectScore)
-	}
-}
-
-func TestCalculateValidationScore_InvalidBases(t *testing.T) {
-	result := &ValidationResult{
-		Complexity:   0.7,
-		GCDeviation:  0.0,
-		InvalidBases: 5,
-		Issues:       []string{},
-	}
-	score := calculateValidationScore(result)
-	if score < 0.0 || score > 1.0 {
-		t.Errorf("score %f out of [0,1] range", score)
-	}
-}
-
-func TestGenerateValidationReport_Empty(t *testing.T) {
-	report := generateValidationReport([]ValidationResult{})
-	if report == nil {
-		t.Fatal("expected non-nil report")
-	}
-	if report.TotalSequences != 0 {
-		t.Errorf("TotalSequences = %d, want 0", report.TotalSequences)
-	}
-	if report.ValidSequences != 0 {
-		t.Errorf("ValidSequences = %d, want 0", report.ValidSequences)
-	}
-	if report.OverallScore != 0.0 {
-		t.Errorf("OverallScore = %f, want 0.0 for empty input", report.OverallScore)
-	}
-}
-
-func TestGenerateValidationReport_SingleValid(t *testing.T) {
-	results := []ValidationResult{
-		{
-			Population:      "YRI",
-			Region:          "Africa",
-			IsValid:         true,
-			ValidationScore: 0.9,
-			GCContent:       0.42,
-			Complexity:      0.75,
-			Issues:          []string{},
-		},
-	}
-	report := generateValidationReport(results)
-	if report.TotalSequences != 1 {
-		t.Errorf("TotalSequences = %d, want 1", report.TotalSequences)
-	}
-	if report.ValidSequences != 1 {
-		t.Errorf("ValidSequences = %d, want 1", report.ValidSequences)
-	}
-	if report.OverallScore < 0.89 || report.OverallScore > 0.91 {
-		t.Errorf("OverallScore = %f, want ~0.9", report.OverallScore)
-	}
-	if len(report.PopulationSummary) != 1 {
-		t.Errorf("PopulationSummary len = %d, want 1", len(report.PopulationSummary))
-	}
-	if _, exists := report.RegionalAnalysis["Africa"]; !exists {
-		t.Error("RegionalAnalysis missing 'Africa' key")
-	}
-}
-
-func TestGenerateValidationReport_MixedValidity(t *testing.T) {
-	results := []ValidationResult{
-		{Population: "YRI", Region: "Africa", IsValid: true, ValidationScore: 0.9, Issues: []string{}},
-		{Population: "CEU", Region: "Europe", IsValid: false, ValidationScore: 0.4, Issues: []string{"low GC"}},
-		{Population: "YRI", Region: "Africa", IsValid: true, ValidationScore: 0.8, Issues: []string{}},
-	}
-	report := generateValidationReport(results)
-	if report.TotalSequences != 3 {
-		t.Errorf("TotalSequences = %d, want 3", report.TotalSequences)
-	}
-	if report.ValidSequences != 2 {
-		t.Errorf("ValidSequences = %d, want 2", report.ValidSequences)
-	}
-	// Should have summaries for YRI and CEU
-	if len(report.PopulationSummary) != 2 {
-		t.Errorf("PopulationSummary len = %d, want 2", len(report.PopulationSummary))
-	}
-}
-
-func TestGenerateValidationReport_SortedByScore(t *testing.T) {
-	results := []ValidationResult{
-		{Population: "LOW", Region: "Region1", IsValid: false, ValidationScore: 0.3, Issues: []string{}},
-		{Population: "HIGH", Region: "Region2", IsValid: true, ValidationScore: 0.9, Issues: []string{}},
-	}
-	report := generateValidationReport(results)
-	if len(report.PopulationSummary) < 2 {
-		t.Skip("not enough populations to test sort order")
-	}
-	// First summary should have higher avg score than second
-	if report.PopulationSummary[0].AvgScore < report.PopulationSummary[1].AvgScore {
-		t.Errorf("PopulationSummary not sorted descending: [0]=%f < [1]=%f",
-			report.PopulationSummary[0].AvgScore, report.PopulationSummary[1].AvgScore)
-	}
-}
-
-func TestValidateAllSequences_EmptyDir(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "test-validate-empty-*")
-	if err != nil {
-		t.Fatalf("MkdirTemp: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	results, err := validateAllSequences(tmpDir)
-	if err != nil {
-		t.Fatalf("unexpected error for empty dir: %v", err)
-	}
-	if len(results) != 0 {
-		t.Errorf("expected 0 results for empty dir, got %d", len(results))
-	}
-}
-
-func TestValidateAllSequences_WithFASTAFiles(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "test-validate-fasta-*")
-	if err != nil {
-		t.Fatalf("MkdirTemp: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	// Write a valid FASTA file with the expected name format
-	fastaContent := ">YRI_L50_S01 population=YRI region=Africa model_target_gc=0.42\n" +
-		"ATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATC\n"
-	fastaPath := tmpDir + "/YRI_L50_S01.fasta"
-	if err := os.WriteFile(fastaPath, []byte(fastaContent), 0600); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
-
-	results, err := validateAllSequences(tmpDir)
-	if err != nil {
-		t.Fatalf("validateAllSequences: %v", err)
-	}
-	if len(results) != 1 {
-		t.Fatalf("expected 1 result, got %d", len(results))
-	}
-	if results[0].Population != "YRI" {
-		t.Errorf("Population = %q, want YRI", results[0].Population)
-	}
-	if results[0].Region != "Africa" {
-		t.Errorf("Region = %q, want Africa", results[0].Region)
-	}
-}
-
-func TestValidateAllSequences_SkipsNonFASTA(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "test-validate-skip-*")
-	if err != nil {
-		t.Fatalf("MkdirTemp: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	// Write a non-FASTA file (should be skipped)
-	if err := os.WriteFile(tmpDir+"/YRI_L50_S01.txt", []byte("not a fasta"), 0600); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
-	// Write a FASTA file with bad filename (should be skipped with warning)
-	if err := os.WriteFile(tmpDir+"/bad_name.fasta", []byte(">header\nATCG\n"), 0600); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
-
-	results, err := validateAllSequences(tmpDir)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	// bad_name.fasta fails parseFilename (3-part check) so is skipped
-	if len(results) != 0 {
-		t.Errorf("expected 0 results (non-FASTA and unparseable skipped), got %d", len(results))
-	}
-}
-
-func TestValidateAllSequences_InvalidFASTAContent(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "test-validate-invalid-*")
-	if err != nil {
-		t.Fatalf("MkdirTemp: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	// FASTA with valid name but empty content → validateSequenceFile returns error → skip with warning
-	if err := os.WriteFile(tmpDir+"/YRI_L50_S01.fasta", []byte(""), 0600); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
-
-	results, err := validateAllSequences(tmpDir)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	// Empty file fails validateSequenceFile so is skipped
-	if len(results) != 0 {
-		t.Errorf("expected 0 results for invalid FASTA content, got %d", len(results))
-	}
-}
-
-func TestValidateAllSequences_RoundTrip(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "test-validate-roundtrip-*")
-	if err != nil {
-		t.Fatalf("MkdirTemp: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	// Write two FASTA files for two different populations
-	files := []struct {
-		name    string
-		content string
-	}{
-		{
-			"CEU_L100_S01.fasta",
-			">CEU_L100_S01 population=CEU region=Europe model_target_gc=0.41\n" +
-				"GCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCAT\n",
-		},
-		{
-			"YRI_L100_S02.fasta",
-			">YRI_L100_S02 population=YRI region=Africa model_target_gc=0.43\n" +
-				"ATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCG\n",
-		},
-	}
-	for _, f := range files {
-		if err := os.WriteFile(tmpDir+"/"+f.name, []byte(f.content), 0600); err != nil {
-			t.Fatalf("WriteFile %s: %v", f.name, err)
-		}
-	}
-
-	results, err := validateAllSequences(tmpDir)
-	if err != nil {
-		t.Fatalf("validateAllSequences: %v", err)
-	}
-	if len(results) != 2 {
-		t.Fatalf("expected 2 results, got %d", len(results))
-	}
-
-	// Now generate a report and save it
-	report := generateValidationReport(results)
-	outFile := tmpDir + "/out.json"
-	if err := saveValidationReport(report, outFile); err != nil {
-		t.Fatalf("saveValidationReport: %v", err)
-	}
-
-	data, err := os.ReadFile(outFile)
-	if err != nil {
-		t.Fatalf("ReadFile: %v", err)
-	}
-	var loaded ValidationReport
-	if err := json.Unmarshal(data, &loaded); err != nil {
-		t.Fatalf("json.Unmarshal: %v", err)
-	}
-	if loaded.TotalSequences != 2 {
-		t.Errorf("loaded TotalSequences = %d, want 2", loaded.TotalSequences)
-	}
-}
-
-// ---------- calculateValidationScore clamp-to-zero branch ----------
-
-func TestCalculateValidationScore_ClampedToZero(t *testing.T) {
-	// Many issues + low complexity + large GC deviation + invalid bases → score < 0 → clamped to 0
-	result := &ValidationResult{
-		Complexity:   0.1,  // < 0.3 → -0.3
-		GCDeviation:  0.5,  // gcPenalty = 1.0
-		InvalidBases: 1,    // -0.5
-		Issues:       []string{"i1", "i2", "i3", "i4", "i5", "i6", "i7", "i8"}, // 8 × -0.1 = -0.8
-	}
-	score := calculateValidationScore(result)
-	if score != 0.0 {
-		t.Errorf("expected score clamped to 0.0, got %f", score)
-	}
-}
-
-// ---------- displayValidationResults ----------
-
-func TestDisplayValidationResults_EmptyReport(t *testing.T) {
-	report := &ValidationReport{
-		TotalSequences: 10,
-		ValidSequences: 8,
-		OverallScore:   0.8,
-		PopulationSummary: []PopulationSummary{},
-		RegionalAnalysis:  map[string]float64{},
-	}
-	// Should not panic
-	displayValidationResults(report)
-}
-
-func TestDisplayValidationResults_WithIssuesAndRegions(t *testing.T) {
-	report := &ValidationReport{
-		TotalSequences: 20,
-		ValidSequences: 18,
-		OverallScore:   0.9,
-		PopulationSummary: []PopulationSummary{
-			{
-				Population:     "YRI",
-				Region:         "Africa",
-				TotalSequences: 10,
-				ValidSequences: 9,
-				AvgGCContent:   0.42,
-				AvgComplexity:  0.75,
-				AvgScore:       0.88,
-				Issues:         map[string]int{},
-			},
-			{
-				Population:     "CEU",
-				Region:         "Europe",
-				TotalSequences: 10,
-				ValidSequences: 9,
-				AvgGCContent:   0.41,
-				AvgComplexity:  0.72,
-				AvgScore:       0.85,
-				// More than 2 issues covers the issueCount >= 2 break
-				Issues: map[string]int{"low_complexity": 1, "high_gc": 2, "extra_issue": 3},
-			},
-		},
-		RegionalAnalysis: map[string]float64{
-			"Africa": 0.88,
-			"Europe": 0.85,
-		},
-	}
-	// Should not panic; covers PopulationSummary loop, Issues display, regional analysis
-	displayValidationResults(report)
 }

@@ -1,249 +1,111 @@
-# Makefile for Reference Genome Lazy Loading and Caching
-# Handles lazy loading, caching, and performance optimization for reference genomes
+# Developer benchmarks for reference.ReferenceManager (lazy region loading,
+# region and k-mer-profile caching). Drives cmd/experiments/benchmark_reference,
+# which is not part of the CLI.
+#
+# Usage: make -f Makefile.reference <target> [REFERENCE=genome.fa]
+# Without REFERENCE the benchmark generates a temporary random FASTA
+# (5 x 10 MiB) and deletes it afterwards.
 
-# Variables
-REFERENCE_SRC_DIR = internal/genomics/reference
+REFERENCE_PKG       = ./internal/genomics/reference
 BENCHMARK_REFERENCE = ./cmd/experiments/benchmark_reference
-TEST_DATA_DIR = testdata/reference
+BIN                 = bin/benchmark_reference
+REFERENCE          ?=
+REF_FLAG            = $(if $(REFERENCE),-reference $(REFERENCE))
+RUN                 = ./$(BIN) $(REF_FLAG)
 
-.PHONY: reference-benchmark reference-test reference-profile reference-clean help-reference
+.PHONY: reference reference-benchmark reference-bench-basic \
+	reference-bench-comprehensive reference-cache-scaling reference-prefetch-test \
+	reference-kmer-scaling reference-region-scaling reference-test \
+	reference-test-race reference-stress-test reference-concurrent-test \
+	reference-perf-all reference-stress-all reference-test-complete reference-dev \
+	reference-clean help-reference reference-examples
 
-# Default target
 reference: reference-benchmark
 
-# Build reference genome benchmark tool
 reference-benchmark:
-	@echo "🔨 Building reference genome benchmark tool..."
-	@go build -o bin/benchmark_reference $(BENCHMARK_REFERENCE)
-	@echo "✅ Reference benchmark tool built: bin/benchmark_reference"
+	@mkdir -p bin
+	go build -o $(BIN) $(BENCHMARK_REFERENCE)
 
-# Create test reference data
-reference-test-data:
-	@echo "📊 Creating test reference genome data..."
-	@mkdir -p $(TEST_DATA_DIR)
-	@echo ">chr1" > $(TEST_DATA_DIR)/test_reference.fasta
-	@for i in $$(seq 1 100000); do \
-		echo "ATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGC" >> $(TEST_DATA_DIR)/test_reference.fasta; \
-	done
-	@echo ">chr2" >> $(TEST_DATA_DIR)/test_reference.fasta
-	@for i in $$(seq 1 75000); do \
-		echo "GCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCTA" >> $(TEST_DATA_DIR)/test_reference.fasta; \
-	done
-	@echo ">chr3" >> $(TEST_DATA_DIR)/test_reference.fasta
-	@for i in $$(seq 1 50000); do \
-		echo "TACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACG" >> $(TEST_DATA_DIR)/test_reference.fasta; \
-	done
-	@echo "✅ Test reference data created: $(TEST_DATA_DIR)/test_reference.fasta"
+reference-bench-basic: reference-benchmark
+	$(RUN) -benchmark cache -regions 500 -verbose
+	$(RUN) -benchmark kmer -k 8 -regions 200 -verbose
 
-# Run basic reference benchmarks
-reference-bench-basic: reference-benchmark reference-test-data
-	@echo "🧬 Running basic reference genome benchmarks..."
-	@echo ""
-	@echo "Cache performance test:"
-	@./bin/benchmark_reference -reference $(TEST_DATA_DIR)/test_reference.fasta -benchmark cache -regions 500 -verbose
-	@echo ""
-	@echo "K-mer profile test:"
-	@./bin/benchmark_reference -reference $(TEST_DATA_DIR)/test_reference.fasta -benchmark kmer -k 8 -regions 200 -verbose
-	@echo ""
+reference-bench-comprehensive: reference-benchmark
+	$(RUN) -benchmark all -regions 1000 -k 8 -verbose
 
-# Run comprehensive reference benchmarks
-reference-bench-comprehensive: reference-benchmark reference-test-data
-	@echo "🎯 Running comprehensive reference genome benchmarks..."
-	@./bin/benchmark_reference -reference $(TEST_DATA_DIR)/test_reference.fasta -benchmark all -regions 1000 -k 8 -verbose
-
-# Test cache performance with different sizes
-reference-cache-scaling: reference-benchmark reference-test-data
-	@echo "📈 Testing cache performance scaling..."
-	@echo ""
-	@for cache_mb in 64 128 256 512 1024; do \
-		cache_bytes=$$((cache_mb * 1024 * 1024)); \
-		echo "Cache size: $${cache_mb}MB"; \
-		./bin/benchmark_reference -reference $(TEST_DATA_DIR)/test_reference.fasta -benchmark cache -cache $$cache_bytes -regions 500; \
-		echo ""; \
+# 1000 regions of 10 kb need about 10 MiB of cache; below that the warm pass
+# misses.
+reference-cache-scaling: reference-benchmark
+	@for mb in 1 4 8 16 64; do \
+		echo "cache=$${mb}MiB"; \
+		$(RUN) -benchmark cache -cache $$((mb * 1024 * 1024)) -regions 1000 || exit 1; \
 	done
 
-# Test prefetch performance
-reference-prefetch-test: reference-benchmark reference-test-data
-	@echo "🚀 Testing prefetch performance..."
-	@echo ""
-	@echo "With prefetching:"
-	@./bin/benchmark_reference -reference $(TEST_DATA_DIR)/test_reference.fasta -benchmark prefetch -prefetch -regions 300 -verbose
-	@echo ""
-	@echo "Without prefetching:"
-	@./bin/benchmark_reference -reference $(TEST_DATA_DIR)/test_reference.fasta -benchmark prefetch -prefetch=false -regions 300 -verbose
+reference-prefetch-test: reference-benchmark
+	$(RUN) -benchmark prefetch -regions 300 -verbose
+	$(RUN) -benchmark prefetch -prefetch -regions 300 -verbose
 
-# Test different k-mer sizes
-reference-kmer-scaling: reference-benchmark reference-test-data
-	@echo "🧬 Testing k-mer size scaling..."
-	@echo ""
-	@for k in 4 6 8 10 12 14 16; do \
-		echo "K-mer size: $$k"; \
-		./bin/benchmark_reference -reference $(TEST_DATA_DIR)/test_reference.fasta -benchmark kmer -k $$k -regions 200; \
-		echo ""; \
+reference-kmer-scaling: reference-benchmark
+	@for k in 4 6 8 10 12; do \
+		echo "k=$$k"; \
+		$(RUN) -benchmark kmer -k $$k -regions 200 || exit 1; \
 	done
 
-# Test lazy loading functionality
+reference-region-scaling: reference-benchmark
+	@for kb in 1 5 10 50 100; do \
+		echo "region=$${kb}KiB"; \
+		$(RUN) -benchmark cache -region-size $$((kb * 1024)) -regions 200 || exit 1; \
+	done
+
 reference-test:
-	@echo "🧪 Testing reference genome lazy loading..."
-	@go test -v $(REFERENCE_SRC_DIR) -run TestLazy
-	@echo "✅ Lazy loading tests completed"
+	go test -v $(REFERENCE_PKG) -run 'TestLazy'
+	go test -v $(BENCHMARK_REFERENCE)
 
-# Test with race detection
 reference-test-race:
-	@echo "🧪 Testing reference genome with race detection..."
-	@go test -race -v $(REFERENCE_SRC_DIR) -run TestLazy
-	@echo "✅ Race condition tests completed"
+	go test -race -v $(REFERENCE_PKG) -run 'TestLazy'
+	go test -race $(BENCHMARK_REFERENCE)
 
-# Profile reference loading performance
-reference-profile: reference-benchmark reference-test-data
-	@echo "📊 Profiling reference genome performance..."
-	@echo "CPU profiling:"
-	@./bin/benchmark_reference -reference $(TEST_DATA_DIR)/test_reference.fasta -benchmark all -regions 500 > /dev/null
-	@echo ""
-	@echo "Memory profiling:"
-	@go build -o bin/benchmark_reference_profile $(BENCHMARK_REFERENCE)
-	@echo "Run: ./bin/benchmark_reference_profile -reference $(TEST_DATA_DIR)/test_reference.fasta -cpuprofile /tmp/ref_cpu.prof -memprofile /tmp/ref_mem.prof"
-	@echo "Analyze with: go tool pprof /tmp/ref_cpu.prof"
-
-# Stress test with large datasets
+# A generated 5 x 50 MiB reference with a 4 GiB cache.
 reference-stress-test: reference-benchmark
-	@echo "🔥 Running reference genome stress test..."
-	@echo "Generating large test reference..."
-	@mkdir -p $(TEST_DATA_DIR)
-	@echo ">chr1" > $(TEST_DATA_DIR)/large_reference.fasta
-	@for i in $$(seq 1 500000); do \
-		echo "ATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGC" >> $(TEST_DATA_DIR)/large_reference.fasta; \
-	done
-	@echo "Running stress test..."
-	@./bin/benchmark_reference -reference $(TEST_DATA_DIR)/large_reference.fasta -benchmark all -regions 2000 -cache 4294967296 -verbose
-	@rm -f $(TEST_DATA_DIR)/large_reference.fasta
+	./$(BIN) -gen-length 52428800 -benchmark all -regions 2000 -cache 4294967296 -verbose
 
-# Memory efficiency comparison
-reference-memory-comparison: reference-benchmark reference-test-data
-	@echo "💾 Memory efficiency comparison..."
-	@echo ""
-	@echo "Standard caching:"
-	@./bin/benchmark_reference -reference $(TEST_DATA_DIR)/test_reference.fasta -benchmark cache -regions 1000 -compression 0
-	@echo ""
-	@echo "Compressed caching:"
-	@./bin/benchmark_reference -reference $(TEST_DATA_DIR)/test_reference.fasta -benchmark cache -regions 1000 -compression 9
-	@echo ""
+# Three benchmark processes reading the same reference at once.
+reference-concurrent-test: reference-benchmark
+	$(RUN) -benchmark cache -regions 200 & p1=$$!; \
+	$(RUN) -benchmark kmer -k 8 -regions 200 & p2=$$!; \
+	$(RUN) -benchmark prefetch -regions 200 & p3=$$!; \
+	wait $$p1 && wait $$p2 && wait $$p3
 
-# Test different region sizes
-reference-region-scaling: reference-benchmark reference-test-data
-	@echo "📏 Testing different region sizes..."
-	@echo ""
-	@for region_kb in 1 5 10 50 100; do \
-		region_bytes=$$((region_kb * 1024)); \
-		echo "Region size: $${region_kb}KB"; \
-		./bin/benchmark_reference -reference $(TEST_DATA_DIR)/test_reference.fasta -benchmark cache -region-size $$region_bytes -regions 200; \
-		echo ""; \
-	done
+reference-perf-all: reference-cache-scaling reference-prefetch-test reference-kmer-scaling reference-region-scaling
 
-# Test concurrent access patterns
-reference-concurrent-test: reference-benchmark reference-test-data
-	@echo "🔄 Testing concurrent access patterns..."
-	@echo "Starting multiple benchmark processes..."
-	@./bin/benchmark_reference -reference $(TEST_DATA_DIR)/test_reference.fasta -benchmark cache -regions 200 -verbose &
-	@./bin/benchmark_reference -reference $(TEST_DATA_DIR)/test_reference.fasta -benchmark kmer -k 8 -regions 200 -verbose &
-	@./bin/benchmark_reference -reference $(TEST_DATA_DIR)/test_reference.fasta -benchmark prefetch -regions 200 -verbose &
-	@wait
-	@echo "✅ Concurrent access test completed"
-
-# Integration test with existing genomics pipeline
-reference-integration-test:
-	@echo "🔗 Testing reference integration with genomics pipeline..."
-	@go test -v ./internal/genomics/authenticity/... -run TestReferenceIntegration
-	@go test -v ./internal/genomics/vcf/... -run TestReferenceIntegration
-	@echo "✅ Integration tests completed"
-
-# Performance comparison with different configurations
-reference-config-comparison: reference-benchmark reference-test-data
-	@echo "⚖️ Configuration performance comparison..."
-	@echo ""
-	@echo "Minimal config (64MB cache, no prefetch):"
-	@./bin/benchmark_reference -reference $(TEST_DATA_DIR)/test_reference.fasta -cache 67108864 -prefetch=false -compression 0 -regions 300
-	@echo ""
-	@echo "Balanced config (512MB cache, prefetch, medium compression):"
-	@./bin/benchmark_reference -reference $(TEST_DATA_DIR)/test_reference.fasta -cache 536870912 -prefetch -compression 6 -regions 300
-	@echo ""
-	@echo "Performance config (2GB cache, prefetch, high compression):"
-	@./bin/benchmark_reference -reference $(TEST_DATA_DIR)/test_reference.fasta -cache 2147483648 -prefetch -compression 9 -regions 300
-	@echo ""
-
-# Clean reference benchmark artifacts
-reference-clean:
-	@echo "🧹 Cleaning reference benchmark artifacts..."
-	@rm -f bin/benchmark_reference bin/benchmark_reference_profile
-	@rm -rf $(TEST_DATA_DIR)
-	@rm -f /tmp/ref_*.prof
-	@echo "✅ Reference artifacts cleaned"
-
-# All reference performance tests
-reference-perf-all: reference-cache-scaling reference-prefetch-test reference-kmer-scaling reference-region-scaling reference-memory-comparison
-
-# All reference stress tests
 reference-stress-all: reference-stress-test reference-concurrent-test
 
-# Complete reference test suite
-reference-test-complete: reference-test reference-test-race reference-integration-test reference-bench-comprehensive
-	@echo "🎉 Complete reference genome test suite passed!"
+reference-test-complete: reference-test reference-test-race reference-bench-comprehensive
 
-# Help for reference targets
+reference-dev: reference-test reference-bench-basic
+
+reference-clean:
+	rm -f $(BIN)
+
 help-reference:
-	@echo "🗄️ Reference Genome Lazy Loading Targets:"
-	@echo ""
-	@echo "  reference-benchmark        - Build reference benchmark tool"
-	@echo "  reference-bench-basic       - Run basic reference benchmarks"
-	@echo "  reference-bench-comprehensive - Run comprehensive benchmarks"
-	@echo "  reference-test              - Test lazy loading functionality"
-	@echo "  reference-profile           - Profile reference performance"
-	@echo ""
-	@echo "  reference-cache-scaling     - Test cache size scaling"
-	@echo "  reference-prefetch-test     - Test prefetch performance"
-	@echo "  reference-kmer-scaling      - Test k-mer size scaling"
-	@echo "  reference-region-scaling    - Test region size scaling"
-	@echo "  reference-memory-comparison - Memory efficiency comparison"
-	@echo ""
-	@echo "  reference-stress-test       - Large dataset stress test"
-	@echo "  reference-concurrent-test   - Concurrent access test"
-	@echo "  reference-integration-test  - Pipeline integration test"
-	@echo "  reference-config-comparison - Configuration comparison"
-	@echo ""
-	@echo "  reference-test-complete     - Complete test suite"
-	@echo "  reference-perf-all          - All performance tests"
-	@echo "  reference-stress-all        - All stress tests"
-	@echo ""
-	@echo "Reference genome lazy loading provides:"
-	@echo "  - On-demand loading with intelligent caching"
-	@echo "  - Memory-efficient compressed storage"
-	@echo "  - Prefetching for sequential access patterns"
-	@echo "  - K-mer profile caching with packed arrays"
-	@echo "  - LRU eviction and cache optimization"
+	@echo "Reference manager benchmarks (make -f Makefile.reference <target> [REFERENCE=genome.fa]):"
+	@echo "  reference-benchmark           build $(BIN)"
+	@echo "  reference-bench-basic         cache and k-mer benchmarks"
+	@echo "  reference-bench-comprehensive all benchmarks"
+	@echo "  reference-cache-scaling       cache sizes 1-64 MiB"
+	@echo "  reference-prefetch-test       PrefetchRegions without and with read-ahead"
+	@echo "  reference-kmer-scaling        k=4..12"
+	@echo "  reference-region-scaling      regions of 1-100 KiB"
+	@echo "  reference-test, reference-test-race  lazy-loader and benchmark tests"
+	@echo "  reference-stress-test         5 x 50 MiB generated reference"
+	@echo "  reference-concurrent-test     three benchmark processes at once"
+	@echo "  reference-perf-all, reference-stress-all, reference-test-complete, reference-dev"
+	@echo "  reference-clean               remove $(BIN)"
+	@echo "  reference-examples            example command lines"
 
-# Example usage scenarios
 reference-examples:
-	@echo "💡 Reference Genome Usage Examples:"
-	@echo ""
-	@echo "# Basic cache performance test:"
-	@echo "./bin/benchmark_reference -reference genome.fasta -benchmark cache -regions 500"
-	@echo ""
-	@echo "# K-mer profile generation:"
-	@echo "./bin/benchmark_reference -reference genome.fasta -benchmark kmer -k 8 -regions 200"
-	@echo ""
-	@echo "# Comprehensive benchmarking:"
-	@echo "./bin/benchmark_reference -reference genome.fasta -benchmark all -regions 1000 -verbose"
-	@echo ""
-	@echo "# Cache size optimization:"
-	@echo "./bin/benchmark_reference -reference genome.fasta -cache 1073741824 -compression 9"
-	@echo ""
-	@echo "# Prefetch performance testing:"
-	@echo "./bin/benchmark_reference -reference genome.fasta -benchmark prefetch -prefetch -regions 300"
-
-# Development workflow
-reference-dev: reference-benchmark reference-test reference-bench-basic
-	@echo "🚀 Reference genome development cycle complete"
-
-# Production validation
-reference-production-validate: reference-test-complete reference-perf-all reference-stress-all
-	@echo "✅ Reference genome production validation complete"
+	@echo "./$(BIN) -benchmark cache -regions 500"
+	@echo "./$(BIN) -reference genome.fa -benchmark kmer -k 8 -regions 200"
+	@echo "./$(BIN) -benchmark all -regions 1000 -verbose"
+	@echo "./$(BIN) -benchmark prefetch -prefetch -prefetch-window 5000"
+	@echo "./$(BIN) -gen-chroms 2 -gen-length 1000000 -seed 3 -benchmark cache"

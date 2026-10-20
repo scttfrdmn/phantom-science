@@ -1,385 +1,304 @@
-// Command benchmark_memory compares the hash-map (kmer.FrequencyTable) and
-// packed-array (kmer.PackedFrequencyTable) k-mer counters on generated
-// sequences: duration, throughput, memory, and whether the two give the same
-// counts. Memory is the change in runtime.MemStats.Alloc around each run, so
-// it is approximate and affected by garbage collection.
+// Command benchmark_memory is a developer benchmark, not part of the
+// phantom-science CLI. It counts k-mers in seeded random sequences with the
+// hash-map counter (kmer.FrequencyExtractor) and the packed-array counter
+// (kmer.PackedFrequencyExtractor) and reports, for each, the wall time,
+// throughput, heap retained by the result and bytes allocated while
+// counting, then checks that the two give identical counts.
 //
-// It is a one-off experiment, not part of the supported phantom-science CLI.
+// Retained heap is the change in runtime.MemStats.HeapAlloc between a GC
+// before the run and a GC after it, with the result still live; allocated
+// bytes is the change in TotalAlloc. Both are process-wide, so other
+// goroutines' allocations are included.
+//
+// The packed counter allocates a dense 4^k table per input sequence, so k is
+// limited to 1-12 (a 64 MiB table per sequence at k=12).
+//
+// Usage:
+//
+//	go run ./cmd/experiments/benchmark_memory -k 8 -sequences 5000 -length 1000
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
-	"log"
+	"io"
+	"math/rand/v2"
+	"os"
 	"runtime"
 	"time"
 
 	"github.com/scttfrdmn/phantom-science/internal/genomics/authenticity/kmer"
 )
 
+// maxK bounds k: the packed counter allocates 4^k 32-bit counters per
+// sequence before merging.
+const maxK = 12
+
+// memoryScanKs are the k values the -memory table covers.
+var memoryScanKs = []int{4, 6, 8, 10}
+
+type config struct {
+	k          int
+	sequences  int
+	length     int
+	seed       uint64
+	verbose    bool
+	packedOnly bool
+	mapOnly    bool
+	memory     bool
+	accuracy   bool
+}
+
 func main() {
-	var (
-		k               = flag.Int("k", 8, "K-mer size (1-16)")
-		numSequences    = flag.Int("sequences", 1000, "Number of test sequences")
-		sequenceLength  = flag.Int("length", 1000, "Length of each test sequence")
-		verbose         = flag.Bool("verbose", false, "Enable verbose output")
-		packedOnly      = flag.Bool("packed-only", false, "Test packed arrays only")
-		mapOnly         = flag.Bool("map-only", false, "Test hash maps only")
-		benchmarkMemory = flag.Bool("memory", false, "Run memory usage benchmarks")
-		compareAccuracy = flag.Bool("accuracy", false, "Compare accuracy between methods")
-	)
+	var cfg config
+	flag.IntVar(&cfg.k, "k", 8, fmt.Sprintf("k-mer size (1-%d)", maxK))
+	flag.IntVar(&cfg.sequences, "sequences", 1000, "number of generated sequences")
+	flag.IntVar(&cfg.length, "length", 1000, "length of each generated sequence")
+	flag.Uint64Var(&cfg.seed, "seed", 1, "seed for the generated sequences")
+	flag.BoolVar(&cfg.verbose, "verbose", false, "print table statistics")
+	flag.BoolVar(&cfg.packedOnly, "packed-only", false, "run the packed-array counter only")
+	flag.BoolVar(&cfg.mapOnly, "map-only", false, "run the hash-map counter only")
+	flag.BoolVar(&cfg.memory, "memory", false, fmt.Sprintf("also print retained heap for k in %v", memoryScanKs))
+	flag.BoolVar(&cfg.accuracy, "accuracy", false, "print the five most frequent k-mers from both counters")
 	flag.Parse()
 
-	fmt.Printf("🧬 Phantom Science Memory Optimization Benchmark\n")
-	fmt.Printf("================================================\n\n")
-
-	// Validate parameters
-	if *k < 1 || *k > 16 {
-		log.Fatalf("Error: k must be between 1 and 16, got %d", *k)
-	}
-
-	if *numSequences < 1 || *sequenceLength < *k {
-		log.Fatalf("Error: invalid sequence parameters (sequences=%d, length=%d, k=%d)",
-			*numSequences, *sequenceLength, *k)
-	}
-
-	// Generate test data
-	fmt.Printf("🔧 Generating test data...\n")
-	fmt.Printf("   Sequences: %d\n", *numSequences)
-	fmt.Printf("   Length: %d bp each\n", *sequenceLength)
-	fmt.Printf("   K-mer size: %d\n", *k)
-	fmt.Printf("   Total data: %.2f MB\n\n", float64(*numSequences**sequenceLength)/(1024*1024))
-
-	testSequences := generateTestSequences(*numSequences, *sequenceLength)
-	if *verbose {
-		fmt.Printf("✅ Test data generated: %d sequences\n\n", len(testSequences))
-	}
-
-	// Run benchmarks based on flags
-	if !*packedOnly {
-		fmt.Printf("📊 Hash Map-Based K-mer Processing\n")
-		fmt.Printf("==================================\n")
-		runMapBenchmark(testSequences, *k, *verbose)
-		fmt.Printf("\n")
-	}
-
-	if !*mapOnly {
-		fmt.Printf("🗜️  Packed Array K-mer Processing\n")
-		fmt.Printf("=================================\n")
-		runPackedBenchmark(testSequences, *k, *verbose)
-		fmt.Printf("\n")
-	}
-
-	if !*packedOnly && !*mapOnly {
-		fmt.Printf("⚖️  Performance Comparison\n")
-		fmt.Printf("==========================\n")
-		runPerformanceComparison(testSequences, *k, *verbose)
-		fmt.Printf("\n")
-	}
-
-	if *benchmarkMemory {
-		fmt.Printf("🧠 Memory Usage Analysis\n")
-		fmt.Printf("========================\n")
-		runMemoryBenchmark(testSequences, *k, *verbose)
-		fmt.Printf("\n")
-	}
-
-	if *compareAccuracy {
-		fmt.Printf("🎯 Accuracy Verification\n")
-		fmt.Printf("========================\n")
-		runAccuracyComparison(testSequences, *k, *verbose)
-		fmt.Printf("\n")
-	}
-
-	// Memory usage analysis
-	if *verbose {
-		fmt.Printf("💾 Runtime Memory Statistics\n")
-		fmt.Printf("============================\n")
-		var m runtime.MemStats
-		runtime.GC()
-		runtime.ReadMemStats(&m)
-		fmt.Printf("Alloc: %.2f MB\n", float64(m.Alloc)/(1024*1024))
-		fmt.Printf("TotalAlloc: %.2f MB\n", float64(m.TotalAlloc)/(1024*1024))
-		fmt.Printf("Sys: %.2f MB\n", float64(m.Sys)/(1024*1024))
-		fmt.Printf("NumGC: %d\n", m.NumGC)
+	if err := run(cfg, os.Stdout); err != nil {
+		fmt.Fprintf(os.Stderr, "benchmark_memory: %v\n", err)
+		os.Exit(1)
 	}
 }
 
-func generateTestSequences(count, length int) [][]byte {
-	sequences := make([][]byte, count)
-	bases := []byte{'A', 'T', 'G', 'C'}
+func (c config) validate() error {
+	switch {
+	case c.k < 1 || c.k > maxK:
+		return fmt.Errorf("-k must be between 1 and %d, got %d", maxK, c.k)
+	case c.sequences < 1:
+		return fmt.Errorf("-sequences must be at least 1, got %d", c.sequences)
+	case c.length < c.k:
+		return fmt.Errorf("-length (%d) must be at least -k (%d)", c.length, c.k)
+	case c.packedOnly && c.mapOnly:
+		return errors.New("-packed-only and -map-only are mutually exclusive")
+	case c.accuracy && (c.packedOnly || c.mapOnly):
+		return errors.New("-accuracy needs both counters; drop -packed-only/-map-only")
+	}
+	return nil
+}
 
-	for i := 0; i < count; i++ {
-		seq := make([]byte, length)
-		for j := 0; j < length; j++ {
-			// Create varied but deterministic sequences
-			baseIndex := (i*length + j) % 4
-			if j%10 == 0 {
-				baseIndex = (baseIndex + 1) % 4 // Add some variation
-			}
-			seq[j] = bases[baseIndex]
+func run(cfg config, w io.Writer) error {
+	if err := cfg.validate(); err != nil {
+		return err
+	}
+
+	fmt.Fprintf(w, "k-mer counter memory benchmark\n")
+	fmt.Fprintf(w, "sequences=%d length=%d k=%d seed=%d (%.2f MiB of sequence)\n\n",
+		cfg.sequences, cfg.length, cfg.k, cfg.seed,
+		float64(cfg.sequences*cfg.length)/(1024*1024))
+
+	seqs := generateTestSequences(cfg.sequences, cfg.length, cfg.seed)
+	totalBases := cfg.sequences * cfg.length
+
+	var (
+		mapTable    *kmer.FrequencyTable
+		packedTable *kmer.PackedFrequencyTable
+		mapMeas     measurement
+		packedMeas  measurement
+	)
+
+	if !cfg.packedOnly {
+		var err error
+		mapTable, mapMeas, err = countMap(seqs, cfg.k)
+		if err != nil {
+			return fmt.Errorf("hash-map counter: %w", err)
 		}
-		sequences[i] = seq
+		fmt.Fprintf(w, "Hash map\n")
+		printMeasurement(w, mapMeas, totalBases, mapTable.TotalCount, len(mapTable.Frequencies))
+		if cfg.verbose {
+			s := mapTable.GetKmerStats()
+			fmt.Fprintf(w, "  complexity=%.4f shannon=%.4f gc=%.4f mean=%.2f max=%d\n",
+				s.Complexity, s.ShannonEntropy, s.GCContent, s.MeanCount, s.MaxCount)
+		}
+		fmt.Fprintln(w)
 	}
 
-	return sequences
+	if !cfg.mapOnly {
+		var err error
+		packedTable, packedMeas, err = countPacked(seqs, cfg.k)
+		if err != nil {
+			return fmt.Errorf("packed-array counter: %w", err)
+		}
+		fmt.Fprintf(w, "Packed array\n")
+		printMeasurement(w, packedMeas, totalBases, packedTable.TotalCount, packedTable.NonZeroCount)
+		if cfg.verbose {
+			s := packedTable.GetStatistics()
+			fmt.Fprintf(w, "  table=%.2f MiB bits/item=%d words=%d max=%d sparsity=%.4f\n",
+				float64(s.MemoryUsage)/(1024*1024), s.BitsPerItem, s.PackedArraySize,
+				s.MaxFrequency, s.Sparsity)
+		}
+		fmt.Fprintln(w)
+	}
+
+	if mapTable != nil && packedTable != nil {
+		fmt.Fprintf(w, "Comparison\n")
+		fmt.Fprintf(w, "  time map/packed:     %s\n", ratio(float64(mapMeas.Duration), float64(packedMeas.Duration)))
+		fmt.Fprintf(w, "  retained map/packed: %s\n", ratio(float64(mapMeas.RetainedBytes), float64(packedMeas.RetainedBytes)))
+		verr := verifyResults(mapTable, packedTable, cfg.k)
+		fmt.Fprintf(w, "  results match: %t\n", verr == nil)
+		if verr != nil {
+			fmt.Fprintf(w, "  mismatch: %v\n", verr)
+		}
+		fmt.Fprintln(w)
+
+		if cfg.accuracy {
+			fmt.Fprintf(w, "Top 5 k-mers (map count / packed count)\n")
+			for i, kf := range mapTable.GetTopKmers(5) {
+				pc, _ := packedTable.GetFrequency(kf.Kmer)
+				fmt.Fprintf(w, "  %d. %s %d / %d\n", i+1, kf.Kmer, kf.Count, pc)
+			}
+			fmt.Fprintln(w)
+		}
+		if verr != nil {
+			return fmt.Errorf("counters disagree: %w", verr)
+		}
+	}
+
+	if cfg.memory {
+		if err := runMemoryScan(w, seqs); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
-func runMapBenchmark(sequences [][]byte, k int, verbose bool) {
-	extractor := kmer.NewFrequencyExtractor(k)
+// generateTestSequences returns count sequences of length uniformly random
+// bases from a PCG generator seeded with seed, so runs are reproducible.
+func generateTestSequences(count, length int, seed uint64) [][]byte {
+	const bases = "ACGT"
+	rng := rand.New(rand.NewPCG(seed, 0x9e3779b97f4a7c15)) // #nosec G404 -- benchmark input, not security-sensitive
+	seqs := make([][]byte, count)
+	for i := range seqs {
+		s := make([]byte, length)
+		for j := range s {
+			s[j] = bases[rng.IntN(4)]
+		}
+		seqs[i] = s
+	}
+	return seqs
+}
 
-	// Measure memory before
-	var m1 runtime.MemStats
+// measurement is one counter run.
+type measurement struct {
+	Duration       time.Duration
+	RetainedBytes  int64  // HeapAlloc after GC, minus before; may be negative
+	AllocatedBytes uint64 // TotalAlloc delta
+}
+
+// measure runs fn between two forced GCs and reports its wall time, the
+// heap still held once it returns (with its result kept live), and the
+// bytes it allocated.
+func measure[T any](fn func() (T, error)) (T, measurement, error) {
+	var before, after runtime.MemStats
 	runtime.GC()
-	runtime.ReadMemStats(&m1)
+	runtime.ReadMemStats(&before)
 
 	start := time.Now()
-	result, err := extractor.ExtractFromMultipleSequences(sequences)
-	duration := time.Since(start)
+	v, err := fn()
+	elapsed := time.Since(start)
 
-	// Measure memory after
-	var m2 runtime.MemStats
-	runtime.ReadMemStats(&m2)
-
-	if err != nil {
-		fmt.Printf("❌ Hash map benchmark failed: %v\n", err)
-		return
-	}
-
-	// Calculate throughput
-	totalBases := 0
-	for _, seq := range sequences {
-		totalBases += len(seq)
-	}
-
-	throughputMBps := float64(totalBases) / (1024 * 1024) / duration.Seconds()
-	kmersPerSecond := float64(result.TotalCount) / duration.Seconds()
-	memoryUsed := int64(m2.Alloc - m1.Alloc) // #nosec G115
-
-	fmt.Printf("⏱️  Duration: %v\n", duration)
-	fmt.Printf("📈 Throughput: %.2f MB/s\n", throughputMBps)
-	fmt.Printf("🧬 K-mers/sec: %.0f\n", kmersPerSecond)
-	fmt.Printf("📊 Total k-mers: %d\n", result.TotalCount)
-	fmt.Printf("🎯 Unique k-mers: %d\n", len(result.Frequencies))
-	fmt.Printf("💾 Memory used: %.2f MB\n", float64(memoryUsed)/(1024*1024))
-
-	if verbose {
-		stats := result.GetKmerStats()
-		fmt.Printf("   Complexity: %.4f\n", stats.Complexity)
-		fmt.Printf("   Shannon entropy: %.4f\n", stats.ShannonEntropy)
-		fmt.Printf("   GC content: %.4f\n", stats.GCContent)
-		fmt.Printf("   Mean count: %.2f\n", stats.MeanCount)
-		fmt.Printf("   Max count: %d\n", stats.MaxCount)
-	}
-}
-
-func runPackedBenchmark(sequences [][]byte, k int, verbose bool) {
-	extractor := kmer.NewPackedFrequencyExtractor(k)
-
-	// Measure memory before
-	var m1 runtime.MemStats
 	runtime.GC()
-	runtime.ReadMemStats(&m1)
+	runtime.ReadMemStats(&after)
+	runtime.KeepAlive(v)
 
-	start := time.Now()
-	result, err := extractor.ExtractFromMultipleSequences(sequences)
-	duration := time.Since(start)
-
-	// Measure memory after
-	var m2 runtime.MemStats
-	runtime.ReadMemStats(&m2)
-
-	if err != nil {
-		fmt.Printf("❌ Packed array benchmark failed: %v\n", err)
-		return
-	}
-
-	// Calculate throughput
-	totalBases := 0
-	for _, seq := range sequences {
-		totalBases += len(seq)
-	}
-
-	throughputMBps := float64(totalBases) / (1024 * 1024) / duration.Seconds()
-	kmersPerSecond := float64(result.TotalCount) / duration.Seconds()
-	memoryUsed := int64(m2.Alloc - m1.Alloc) // #nosec G115
-
-	fmt.Printf("⏱️  Duration: %v\n", duration)
-	fmt.Printf("📈 Throughput: %.2f MB/s\n", throughputMBps)
-	fmt.Printf("🧬 K-mers/sec: %.0f\n", kmersPerSecond)
-	fmt.Printf("📊 Total k-mers: %d\n", result.TotalCount)
-	fmt.Printf("🎯 Unique k-mers: %d\n", result.NonZeroCount)
-	fmt.Printf("💾 Memory used: %.2f MB\n", float64(memoryUsed)/(1024*1024))
-	fmt.Printf("🗜️  Compression ratio: %.2fx\n", result.GetCompressionRatio())
-
-	if verbose {
-		stats := result.GetStatistics()
-		fmt.Printf("   Packed memory: %.2f MB\n", float64(stats.MemoryUsage)/(1024*1024))
-		fmt.Printf("   Bits per item: %d\n", stats.BitsPerItem)
-		fmt.Printf("   Array size: %d uint32s\n", stats.PackedArraySize)
-		fmt.Printf("   Max frequency: %d\n", stats.MaxFrequency)
-		fmt.Printf("   Sparsity: %.4f\n", stats.Sparsity)
-	}
+	return v, measurement{
+		Duration:       elapsed,
+		RetainedBytes:  int64(after.HeapAlloc) - int64(before.HeapAlloc), // #nosec G115 -- heap sizes fit in int64
+		AllocatedBytes: after.TotalAlloc - before.TotalAlloc,
+	}, err
 }
 
-func runPerformanceComparison(sequences [][]byte, k int, verbose bool) {
-	// Run both benchmarks for comparison
-	fmt.Printf("🏁 Running comparison benchmarks...\n")
-
-	// Hash map benchmark
-	mapExtractor := kmer.NewFrequencyExtractor(k)
-	mapStart := time.Now()
-	mapResult, mapErr := mapExtractor.ExtractFromMultipleSequences(sequences)
-	mapDuration := time.Since(mapStart)
-
-	// Packed array benchmark
-	packedExtractor := kmer.NewPackedFrequencyExtractor(k)
-	packedStart := time.Now()
-	packedResult, packedErr := packedExtractor.ExtractFromMultipleSequences(sequences)
-	packedDuration := time.Since(packedStart)
-
-	if mapErr != nil || packedErr != nil {
-		fmt.Printf("❌ Comparison failed: map error=%v, packed error=%v\n", mapErr, packedErr)
-		return
-	}
-
-	// Calculate performance metrics
-	speedRatio := float64(mapDuration.Nanoseconds()) / float64(packedDuration.Nanoseconds())
-	memoryRatio := packedResult.GetCompressionRatio()
-
-	// Verify correctness
-	correctness := verifyResults(mapResult, packedResult, k)
-
-	fmt.Printf("🏆 Results Summary:\n")
-	fmt.Printf("   Hash Map Duration: %v\n", mapDuration)
-	fmt.Printf("   Packed Array Duration: %v\n", packedDuration)
-	if speedRatio > 1.0 {
-		fmt.Printf("   🚀 Packed arrays %.2fx FASTER\n", speedRatio)
-	} else {
-		fmt.Printf("   ⚠️  Hash maps %.2fx faster\n", 1.0/speedRatio)
-	}
-	fmt.Printf("   💾 Memory compression: %.2fx\n", memoryRatio)
-	fmt.Printf("   ✅ Results correct: %t\n", correctness)
-
-	if verbose && correctness {
-		fmt.Printf("\n📋 Detailed Comparison:\n")
-		fmt.Printf("   Hash map k-mers: %d\n", mapResult.TotalCount)
-		fmt.Printf("   Packed array k-mers: %d\n", packedResult.TotalCount)
-		fmt.Printf("   Hash map unique: %d\n", len(mapResult.Frequencies))
-		fmt.Printf("   Packed array unique: %d\n", packedResult.NonZeroCount)
-		fmt.Printf("   Memory efficiency: %.1fx improvement\n", memoryRatio)
-	}
+func countMap(seqs [][]byte, k int) (*kmer.FrequencyTable, measurement, error) {
+	return measure(func() (*kmer.FrequencyTable, error) {
+		return kmer.NewFrequencyExtractor(k).ExtractFromMultipleSequences(seqs)
+	})
 }
 
-func runMemoryBenchmark(sequences [][]byte, k int, verbose bool) {
-	// Test different k-mer sizes to show memory scaling
-	kSizes := []int{4, 6, 8, 10, 12}
+func countPacked(seqs [][]byte, k int) (*kmer.PackedFrequencyTable, measurement, error) {
+	return measure(func() (*kmer.PackedFrequencyTable, error) {
+		return kmer.NewPackedFrequencyExtractor(k).ExtractFromMultipleSequences(seqs)
+	})
+}
 
-	fmt.Printf("K-mer Size | Hash Map Memory | Packed Memory | Compression Ratio\n")
-	fmt.Printf("-----------|-----------------|---------------|------------------\n")
+func printMeasurement(w io.Writer, m measurement, totalBases, totalKmers, uniqueKmers int) {
+	secs := m.Duration.Seconds()
+	fmt.Fprintf(w, "  duration:     %v\n", m.Duration)
+	if secs > 0 {
+		fmt.Fprintf(w, "  throughput:   %.2f MiB/s, %.0f k-mers/s\n",
+			float64(totalBases)/(1024*1024)/secs, float64(totalKmers)/secs)
+	}
+	fmt.Fprintf(w, "  k-mers:       %d total, %d distinct\n", totalKmers, uniqueKmers)
+	fmt.Fprintf(w, "  retained:     %.2f MiB\n", float64(m.RetainedBytes)/(1024*1024))
+	fmt.Fprintf(w, "  allocated:    %.2f MiB\n", float64(m.AllocatedBytes)/(1024*1024))
+}
 
-	for _, testK := range kSizes {
-		if testK > 16 {
+// ratio formats a/b, or "n/a" when b is not positive (a retained-heap delta
+// can be zero or negative when GC reclaims more than the run kept).
+func ratio(a, b float64) string {
+	if b <= 0 || a < 0 {
+		return "n/a"
+	}
+	return fmt.Sprintf("%.2fx", a/b)
+}
+
+func runMemoryScan(w io.Writer, seqs [][]byte) error {
+	fmt.Fprintf(w, "Retained heap by k\n")
+	fmt.Fprintf(w, "%-4s %14s %14s %10s\n", "k", "map MiB", "packed MiB", "map/packed")
+	for _, k := range memoryScanKs {
+		if len(seqs) > 0 && len(seqs[0]) < k {
 			continue
 		}
-
-		// Hash map memory usage
-		mapExtractor := kmer.NewFrequencyExtractor(testK)
-		var m1, m2 runtime.MemStats
-		runtime.GC()
-		runtime.ReadMemStats(&m1)
-		_, mapErr := mapExtractor.ExtractFromMultipleSequences(sequences)
-		runtime.ReadMemStats(&m2)
-		mapMemory := int64(m2.Alloc - m1.Alloc) // #nosec G115
-
-		// Packed array memory usage
-		packedExtractor := kmer.NewPackedFrequencyExtractor(testK)
-		runtime.GC()
-		runtime.ReadMemStats(&m1)
-		_, packedErr := packedExtractor.ExtractFromMultipleSequences(sequences)
-		runtime.ReadMemStats(&m2)
-		packedMemory := int64(m2.Alloc - m1.Alloc) // #nosec G115
-
-		if mapErr != nil || packedErr != nil {
-			continue
+		_, mm, err := countMap(seqs, k)
+		if err != nil {
+			return fmt.Errorf("hash-map counter, k=%d: %w", k, err)
 		}
-
-		compression := float64(mapMemory) / float64(packedMemory)
-
-		fmt.Printf("%-10d | %-15.2f | %-13.2f | %.2fx\n",
-			testK,
-			float64(mapMemory)/(1024*1024),
-			float64(packedMemory)/(1024*1024),
-			compression)
+		_, pm, err := countPacked(seqs, k)
+		if err != nil {
+			return fmt.Errorf("packed-array counter, k=%d: %w", k, err)
+		}
+		fmt.Fprintf(w, "%-4d %14.2f %14.2f %10s\n", k,
+			float64(mm.RetainedBytes)/(1024*1024), float64(pm.RetainedBytes)/(1024*1024),
+			ratio(float64(mm.RetainedBytes), float64(pm.RetainedBytes)))
 	}
+	fmt.Fprintln(w)
+	return nil
 }
 
-func runAccuracyComparison(sequences [][]byte, k int, verbose bool) {
-	// Extract with both methods
-	mapExtractor := kmer.NewFrequencyExtractor(k)
-	mapResult, mapErr := mapExtractor.ExtractFromMultipleSequences(sequences)
-
-	packedExtractor := kmer.NewPackedFrequencyExtractor(k)
-	packedResult, packedErr := packedExtractor.ExtractFromMultipleSequences(sequences)
-
-	if mapErr != nil || packedErr != nil {
-		fmt.Printf("❌ Accuracy test failed: map error=%v, packed error=%v\n", mapErr, packedErr)
-		return
-	}
-
-	// Detailed accuracy verification
-	correctness := verifyResults(mapResult, packedResult, k)
-
-	if correctness {
-		fmt.Printf("✅ Perfect accuracy: All k-mer frequencies match exactly\n")
-		fmt.Printf("   Total k-mers: %d (both methods)\n", mapResult.TotalCount)
-		fmt.Printf("   Unique k-mers: %d (both methods)\n", len(mapResult.Frequencies))
-
-		if verbose {
-			// Show some example k-mers
-			topKmers := mapResult.GetTopKmers(5)
-			fmt.Printf("\n🔍 Top 5 k-mers (verification):\n")
-			for i, kmerFreq := range topKmers {
-				packedFreq, _ := packedResult.GetFrequency(kmerFreq.Kmer)
-				fmt.Printf("   %d. %s: %d (hash map) = %d (packed)\n",
-					i+1, kmerFreq.Kmer, kmerFreq.Count, packedFreq)
-			}
-		}
-	} else {
-		fmt.Printf("❌ Accuracy mismatch detected\n")
-		// Could add detailed mismatch analysis here
-	}
-}
-
-func verifyResults(mapResult *kmer.FrequencyTable, packedResult *kmer.PackedFrequencyTable, k int) bool {
-	// Check basic statistics
+// verifyResults reports the first difference between the two tables, or nil
+// when they hold the same total and the same count for every k-mer.
+func verifyResults(mapResult *kmer.FrequencyTable, packedResult *kmer.PackedFrequencyTable, k int) error {
 	if mapResult.TotalCount != packedResult.TotalCount {
-		return false
+		return fmt.Errorf("total count: map %d, packed %d", mapResult.TotalCount, packedResult.TotalCount)
 	}
-
 	if len(mapResult.Frequencies) != packedResult.NonZeroCount {
-		return false
+		return fmt.Errorf("distinct k-mers: map %d, packed %d", len(mapResult.Frequencies), packedResult.NonZeroCount)
 	}
-
-	// Check all frequencies match
-	for kmerStr, mapFreq := range mapResult.Frequencies {
-		packedFreq, err := packedResult.GetFrequency(kmerStr)
-		if err != nil || mapFreq != packedFreq {
-			return false
+	for s, mc := range mapResult.Frequencies {
+		pc, err := packedResult.GetFrequency(s)
+		if err != nil {
+			return fmt.Errorf("k-mer %s: packed lookup: %w", s, err)
+		}
+		if pc != mc {
+			return fmt.Errorf("k-mer %s: map %d, packed %d", s, mc, pc)
 		}
 	}
-
-	// Check all packed frequencies exist in map
 	for i := 0; i < packedResult.MaxKmers; i++ {
-		packedFreq := packedResult.PackedFrequencies.Get(i)
-		if packedFreq > 0 {
-			kmerStr := kmer.IndexToKmerString(i, k)
-			mapFreq, exists := mapResult.Frequencies[kmerStr]
-			if !exists || mapFreq != int(packedFreq) {
-				return false
-			}
+		pc := packedResult.PackedFrequencies.Get(i)
+		if pc == 0 {
+			continue
+		}
+		s := kmer.IndexToKmerString(i, k)
+		if mc, ok := mapResult.Frequencies[s]; !ok || mc != int(pc) {
+			return fmt.Errorf("k-mer %s: map %d, packed %d", s, mc, pc)
 		}
 	}
-
-	return true
+	return nil
 }
