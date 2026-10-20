@@ -1,2 +1,18 @@
 phantom-science
 Copyright 2025-2026 Scott Friedman
+
+This product includes software from the Go project (https://go.dev),
+Copyright 2009 The Go Authors, distributed under a BSD-style license
+(BSD-3-Clause) reproduced in internal/detmath/LICENSE-GO. The following files
+in internal/detmath are ported from Go 1.27.2 with every floating-point
+product explicitly rounded:
+
+  bits.go, erf.go, exp.go, expm1.go, lgamma.go, log.go, log10.go, log1p.go,
+  pow.go, sin.go, trig_reduce.go   from src/math
+  normal.go                        from src/math/rand/v2/normal.go
+  expfloat.go                      from src/math/rand/v2/exp.go
+
+Some of those Go files carry further notices from FreeBSD's msun library
+(Copyright (C) 1993, 2004 by Sun Microsystems, Inc.) and from the Cephes
+Math Library (Copyright 1984, 1987, 1989, 1992, 2000 by Stephen L. Moshier),
+which are kept in the files.
