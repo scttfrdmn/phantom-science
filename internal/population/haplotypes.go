@@ -128,7 +128,7 @@ func SimulateHaplotypes(pop Population, chromosome string, regionStart, sequence
 			SegregatingSites:   len(jp.Sites),
 			NumHaplotypes:      numHaplotypes,
 			DiversityPi:        summary.Pi,
-			GeneticMapLengthCM: 100 * coalescent.PresetRecombinationRate * float64(sequenceLength),
+			GeneticMapLengthCM: float64(100 * coalescent.PresetRecombinationRate * float64(sequenceLength)),
 		},
 	}
 	for h := range res.HaplotypeMatrix {

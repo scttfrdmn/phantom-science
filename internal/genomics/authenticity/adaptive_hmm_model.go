@@ -352,18 +352,18 @@ func (m *AdaptiveHMMModel) generateAdaptiveBase(state int, sequence []byte, pos 
 			// If complexity is too low, favor new k-mers
 			if complexity < m.targetComplexity {
 				if m.wouldIncreaseComplexity(potentialKmer) {
-					transitionProbs[i] *= 1.5
+					transitionProbs[i] = float64(transitionProbs[i] * 1.5)
 				} else {
-					transitionProbs[i] *= 0.7
+					transitionProbs[i] = float64(transitionProbs[i] * 0.7)
 				}
 			}
 
 			// If complexity is too high, favor repeated k-mers
 			if complexity > m.targetComplexity+0.1 {
 				if m.wouldIncreaseComplexity(potentialKmer) {
-					transitionProbs[i] *= 0.7
+					transitionProbs[i] = float64(transitionProbs[i] * 0.7)
 				} else {
-					transitionProbs[i] *= 1.3
+					transitionProbs[i] = float64(transitionProbs[i] * 1.3)
 				}
 			}
 		}
@@ -377,7 +377,7 @@ func (m *AdaptiveHMMModel) generateAdaptiveBase(state int, sequence []byte, pos 
 					runLength++
 				}
 				if runLength >= 5 {
-					transitionProbs[i] *= 0.2
+					transitionProbs[i] = float64(transitionProbs[i] * 0.2)
 				}
 			}
 		}
@@ -401,7 +401,7 @@ func (m *AdaptiveHMMModel) updateGenerationStats(sequence []byte) {
 
 	// Calculate complexity
 	complexity := m.calculateSequenceComplexity(sequence)
-	m.generationStats.AverageComplexity = (m.generationStats.AverageComplexity*float64(m.generationStats.TotalSequences-1) + complexity) / float64(m.generationStats.TotalSequences)
+	m.generationStats.AverageComplexity = (float64(m.generationStats.AverageComplexity*float64(m.generationStats.TotalSequences-1)) + complexity) / float64(m.generationStats.TotalSequences)
 
 	// Calculate GC content
 	gcCount := 0
@@ -411,7 +411,7 @@ func (m *AdaptiveHMMModel) updateGenerationStats(sequence []byte) {
 		}
 	}
 	gcContent := float64(gcCount) / float64(len(sequence))
-	m.generationStats.AverageGCContent = (m.generationStats.AverageGCContent*float64(m.generationStats.TotalSequences-1) + gcContent) / float64(m.generationStats.TotalSequences)
+	m.generationStats.AverageGCContent = (float64(m.generationStats.AverageGCContent*float64(m.generationStats.TotalSequences-1)) + gcContent) / float64(m.generationStats.TotalSequences)
 
 	// Calculate max homopolymer
 	maxHomopolymer := m.findMaxHomopolymerRun(sequence)

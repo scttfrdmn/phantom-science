@@ -243,7 +243,7 @@ func ReadPoreModel(r io.Reader, opts ...LoadOption) (*PoreModel, error) {
 			}
 		}
 		seen[idx] = true
-		m.Mean[idx] = float32(mean*cfg.scale + cfg.shift)
+		m.Mean[idx] = float32(float64(mean*cfg.scale) + cfg.shift)
 		m.Stdv[idx] = float32(sd * cfg.scale)
 		n++
 	}

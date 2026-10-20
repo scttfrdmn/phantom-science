@@ -141,7 +141,7 @@ func NewParams(p Params) (*Model, error) {
 	// In i.i.d. uniform sequence a base lies in a run of length L with
 	// probability L·(3/4)²·(1/4)^(L−1).
 	for L := 2; L <= 64; L++ {
-		m.meanHP += float64(L) * 9 / 16 * math.Pow(0.25, float64(L-1)) * m.HomopolymerExcess(L)
+		m.meanHP += float64(float64(L) * 9 / 16 * math.Pow(0.25, float64(L-1)) * m.HomopolymerExcess(L))
 	}
 	return m, nil
 }
@@ -176,7 +176,7 @@ func (m *Model) HomopolymerExcess(runLen int) float64 {
 	if runLen <= 1 || m.p.HPCap == 0 {
 		return 0
 	}
-	return m.p.HPCap * -math.Expm1(-float64(runLen-1)/m.p.HPScale)
+	return float64(m.p.HPCap * -math.Expm1(-float64(runLen-1)/m.p.HPScale))
 }
 
 // DeletionRate is the deletion probability of a base in a run of length
@@ -265,12 +265,12 @@ func MeanQ(qual []byte) float64 {
 	for _, q := range qual {
 		s += math.Pow(10, -float64(q)/10)
 	}
-	return -10 * math.Log10(s/float64(len(qual)))
+	return float64(-10 * math.Log10(s/float64(len(qual))))
 }
 
 // ReadQuality draws one read's target quality (ONT mean) around the mode.
 func (m *Model) ReadQuality(r *rand.Rand) float64 {
-	q := m.p.ModalQ + m.p.ReadSD*r.NormFloat64()
+	q := m.p.ModalQ + float64(m.p.ReadSD*r.NormFloat64())
 	return math.Min(MaxPhred, math.Max(MinPhred, q))
 }
 
@@ -282,7 +282,7 @@ func (m *Model) Qualities(r *rand.Rand, n int) []byte {
 	q := make([]byte, n)
 	centre := m.centre(m.ReadQuality(r))
 	for i := range q {
-		q[i] = clampQ(centre + m.p.BaseSD*r.NormFloat64())
+		q[i] = clampQ(centre + float64(m.p.BaseSD*r.NormFloat64()))
 	}
 	return q
 }
@@ -306,9 +306,9 @@ func (m *Model) centre(q float64) float64 {
 	emitted := 1 - del + p.Ins
 	target := math.Exp(-a * q)
 	mean := func(c float64) float64 {
-		b := math.Exp(-a*c + v)
-		e := math.Exp(-a*p.ErrFactor*c + v*p.ErrFactor*p.ErrFactor)
-		return (match*b + nb*b*math.Exp(a*p.NeighbourDrop) + errEmit*e) / emitted
+		b := math.Exp(float64(-a*c) + v)
+		e := math.Exp(float64(-a*p.ErrFactor*c) + float64(v*p.ErrFactor*p.ErrFactor))
+		return (float64(match*b) + float64(nb*b*math.Exp(a*p.NeighbourDrop)) + float64(errEmit*e)) / emitted
 	}
 	lo, hi := q-10, q+40 // mean is decreasing in c
 	for range 50 {
@@ -363,7 +363,7 @@ func (m *Model) apply(r *rand.Rand, truth, base []byte, ops *[]Op, st *Stats) ([
 	n := len(truth)
 	seq := make([]byte, 0, n+n/16+1)
 	qual := make([]byte, 0, n+n/16+1)
-	errQ := func(b byte) byte { return clampQ(p.ErrFactor * float64(b)) }
+	errQ := func(b byte) byte { return clampQ(float64(p.ErrFactor * float64(b))) }
 	// Each emitted base is penalised at most once: error bases get errQ,
 	// bases bordering an error lose NeighbourDrop. marked is the index of
 	// the last emitted base already penalised.

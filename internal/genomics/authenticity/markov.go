@@ -97,7 +97,7 @@ func estimateChain(counts [][]float64, trans [][]float64, start []float64) {
 		}
 		start[s] = n // normalised below
 	}
-	den := total + float64(len(counts))*PseudoCount
+	den := total + float64(float64(len(counts))*PseudoCount)
 	for s := range start {
 		start[s] = (start[s] + PseudoCount) / den
 	}

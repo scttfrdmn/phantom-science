@@ -53,7 +53,7 @@ type PopSpec struct {
 // presentSize returns the present-day size implied by Ne and recent growth.
 func (p PopSpec) presentSize() float64 {
 	if p.GrowthRate != 0 && p.GrowthStart > 0 {
-		return p.Ne * math.Exp(p.GrowthRate*float64(p.GrowthStart))
+		return float64(p.Ne * math.Exp(p.GrowthRate*float64(p.GrowthStart)))
 	}
 	return p.Ne
 }
@@ -308,13 +308,13 @@ func TajimasD(pi float64, s, n int) float64 {
 		a2 += 1 / float64(i*i)
 	}
 	b1 := (nf + 1) / (3 * (nf - 1))
-	b2 := 2 * (nf*nf + nf + 3) / (9 * nf * (nf - 1))
+	b2 := 2 * (float64(nf*nf) + nf + 3) / (9 * nf * (nf - 1))
 	c1 := b1 - 1/a1
 	c2 := b2 - (nf+2)/(a1*nf) + a2/(a1*a1)
 	e1 := c1 / a1
-	e2 := c2 / (a1*a1 + a2)
+	e2 := c2 / (float64(a1*a1) + a2)
 	sf := float64(s)
-	v := e1*sf + e2*sf*(sf-1)
+	v := float64(e1*sf) + float64(e2*sf*(sf-1))
 	if v <= 0 {
 		return math.NaN()
 	}
@@ -563,7 +563,7 @@ func (s *jointLocusSim) addMutations(jp *JointPanel, locus int, mu float64, locu
 	if mu <= 0 || treeLen <= 0 {
 		return
 	}
-	nMut := poissonExact(s.rng, mu*float64(locusLen)*treeLen)
+	nMut := poissonExact(s.rng, float64(mu*float64(locusLen)*treeLen))
 	if nMut == 0 {
 		return
 	}
@@ -602,7 +602,7 @@ func (s *jointLocusSim) addMutations(jp *JointPanel, locus int, mu float64, locu
 			Position:     locus*locusLen + pos,
 			Ancestral:    bases[anc],
 			Derived:      bases[der],
-			Age:          lo + s.rng.Float64()*(hi-lo),
+			Age:          lo + float64(s.rng.Float64()*(hi-lo)),
 			DerivedCount: make([]int, s.nSampled),
 			Genotypes:    make([][]int, s.nSampled),
 			Carriers:     make([][]byte, s.nSampled),

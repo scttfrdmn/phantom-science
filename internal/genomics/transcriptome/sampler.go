@@ -251,12 +251,12 @@ func NewSimulator(table *Table, tpm []float64, cfg Config) (*Simulator, error) {
 	}
 	sum := 0.0
 	for i, tx := range table.Transcripts {
-		w := tpm[i] / total * 1e6
+		w := float64(tpm[i] / total * 1e6)
 		sp := &Species{ID: tx.ID, Parent: tx, Seq: tx.Seq, Exons: tx.Exons, TPM: w}
 		s.species = append(s.species, sp)
 		if novel != nil && novel[i] != nil {
 			n := novel[i]
-			n.TPM = w * cfg.NovelRate
+			n.TPM = float64(w * cfg.NovelRate)
 			sp.TPM = w - n.TPM
 			s.species = append(s.species, n)
 		}

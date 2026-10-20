@@ -31,11 +31,14 @@ func rawHash(rd *Read) string {
 // TestLevelTauZeroIsStepFunction pins the output of both presets, with
 // every feature on (adapter, poly tail, drift, stalls, skips, read jitter,
 // white noise), to the hashes of the step-function synthesiser from before
-// level_tau existed: level_tau = 0 must stay byte-identical.
+// level_tau existed: level_tau = 0 must stay byte-identical. The pins are
+// the unfused (no multiply-add) values, the same on every architecture; the
+// RNA004 pin was first taken on arm64 with fused arithmetic and re-pinned to
+// the amd64 value when fusion was removed (internal/fmacheck).
 func TestLevelTauZeroIsStepFunction(t *testing.T) {
 	want := map[string]string{
 		PresetDNAR10: "ba6bccdcf7cbfe9406908b422ba5debcd4fd2bb488799c99d40fccc6d0ba56b4",
-		PresetRNA004: "a4c507fee19d8798d66772a2eb677f7b96c5d6668b7f974f5dc996d5220e36bc",
+		PresetRNA004: "5b2e9da2ab68b441b7a3e1e847cf5d0fff38b186404565e3f709039d3db0dc94",
 	}
 	for _, name := range PresetNames() {
 		p, _ := Preset(name)

@@ -246,17 +246,17 @@ func Synthesize(r *rand.Rand, seq []byte, p Profile, model *PoreModel, opts ...O
 	s := synth{r: r, p: p, model: model, events: cfg.events}
 	s.seq = sanitize(r, seq)
 
-	offset := p.OffsetMean + p.OffsetStd*r.NormFloat64()
-	medianBefore := p.MedianBeforeMean + p.MedianBeforeStd*r.NormFloat64()
-	s.scale = 1 + p.ReadScaleSD*r.NormFloat64()
+	offset := p.OffsetMean + float64(p.OffsetStd*r.NormFloat64())
+	medianBefore := p.MedianBeforeMean + float64(p.MedianBeforeStd*r.NormFloat64())
+	s.scale = 1 + float64(p.ReadScaleSD*r.NormFloat64())
 	if s.scale < 0.5 {
 		s.scale = 0.5
 	}
-	s.shift = p.ReadShiftSD * r.NormFloat64()
+	s.shift = float64(p.ReadShiftSD * r.NormFloat64())
 	if p.DriftPA > 0 {
 		s.driftA = math.Exp(-1 / (p.DriftTau * p.SamplingRate))
-		s.driftB = p.DriftPA * math.Sqrt(1-s.driftA*s.driftA)
-		s.drift = p.DriftPA * r.NormFloat64()
+		s.driftB = float64(p.DriftPA * math.Sqrt(1-float64(s.driftA*s.driftA)))
+		s.drift = float64(p.DriftPA * r.NormFloat64())
 	}
 	if p.LevelTau > 0 {
 		s.levelA = math.Exp(-1 / p.LevelTau)
@@ -288,7 +288,7 @@ func Synthesize(r *rand.Rand, seq []byte, p Profile, model *PoreModel, opts ...O
 			used += d
 		}
 		if lead := target - used; lead > 0 {
-			s.plateau(EventLeader, lead, p.AdapterLevelPA*s.scale+s.shift, p.AdapterNoisePA)
+			s.plateau(EventLeader, lead, float64(p.AdapterLevelPA*s.scale)+s.shift, p.AdapterNoisePA)
 		}
 		for i, d := range dw {
 			s.kmer(EventAdapter, ad, i, d, false, false)
@@ -303,7 +303,7 @@ func Synthesize(r *rand.Rand, seq []byte, p Profile, model *PoreModel, opts ...O
 		for i := range hp {
 			hp[i] = polyBase
 		}
-		polyLevel = float64(model.Mean[KmerIndex(hp)])*s.scale + s.shift
+		polyLevel = float64(float64(model.Mean[KmerIndex(hp)])*s.scale) + s.shift
 	}
 	out.PolyStart, out.PolyEnd = len(s.raw), len(s.raw)
 	if polyLen > 0 && !cfg.poly.AtEnd {
@@ -402,7 +402,7 @@ func (s *synth) dwells(n int, withEvents bool) []int {
 				d = 0
 				s.skip[i] = true
 			case u < s.p.SkipProb+s.p.StallProb:
-				d *= s.p.StallMin + (s.p.StallMax-s.p.StallMin)*s.r.Float64()
+				d = float64(d * (s.p.StallMin + float64((s.p.StallMax-s.p.StallMin)*s.r.Float64())))
 				s.stall[i] = true
 			}
 		}
@@ -414,9 +414,9 @@ func (s *synth) dwells(n int, withEvents bool) []int {
 }
 
 func (s *synth) emit(level, sd float64) {
-	v := level + sd*s.r.NormFloat64()
+	v := level + float64(sd*s.r.NormFloat64())
 	if s.driftB > 0 {
-		s.drift = s.driftA*s.drift + s.driftB*s.r.NormFloat64()
+		s.drift = float64(s.driftA*s.drift) + float64(s.driftB*s.r.NormFloat64())
 		v += s.drift
 	}
 	raw, clipped := s.dig.Raw(v)
@@ -440,7 +440,7 @@ func (s *synth) segment(n int, target, sd float64) {
 		s.level, s.levelSet = target, true
 	}
 	for i := 0; i < n; i++ {
-		s.level = target + (s.level-target)*s.levelA
+		s.level = target + float64((s.level-target)*s.levelA)
 		s.emit(s.level, sd)
 	}
 }
@@ -455,9 +455,9 @@ func (s *synth) plateau(kind EventKind, n int, level, sd float64) {
 
 func (s *synth) kmer(kind EventKind, seq []byte, pos, n int, stall, skip bool) {
 	idx := KmerIndex(seq[pos : pos+s.model.K])
-	level := float64(s.model.Mean[idx])*s.scale + s.shift
+	level := float64(float64(s.model.Mean[idx])*s.scale) + s.shift
 	lsd := float64(s.model.Stdv[idx]) * s.p.LevelNoiseScale * s.scale
-	sd := math.Sqrt(lsd*lsd + s.p.WhiteNoisePA*s.p.WhiteNoisePA)
+	sd := math.Sqrt(float64(lsd*lsd) + float64(s.p.WhiteNoisePA*s.p.WhiteNoisePA))
 	start := len(s.raw)
 	s.segment(n, level, sd)
 	if s.events {
@@ -481,20 +481,20 @@ func gammaMeanCV(r *rand.Rand, mean, cv float64) float64 {
 func gammaSample(r *rand.Rand, shape float64) float64 {
 	if shape < 1 {
 		u := r.Float64()
-		return gammaSample(r, shape+1) * math.Pow(u, 1/shape)
+		return float64(gammaSample(r, shape+1) * math.Pow(u, 1/shape))
 	}
 	d := shape - 1.0/3
 	c := 1 / math.Sqrt(9*d)
 	for {
 		x := r.NormFloat64()
-		v := 1 + c*x
+		v := 1 + float64(c*x)
 		if v <= 0 {
 			continue
 		}
-		v = v * v * v
+		v = float64(v * v * v)
 		u := r.Float64()
-		if u < 1-0.0331*x*x*x*x || math.Log(u) < 0.5*x*x+d*(1-v+math.Log(v)) {
-			return d * v
+		if u < 1-float64(0.0331*x*x*x*x) || math.Log(u) < float64(0.5*x*x)+float64(d*(1-v+math.Log(v))) {
+			return float64(d * v)
 		}
 	}
 }

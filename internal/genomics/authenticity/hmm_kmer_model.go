@@ -290,7 +290,7 @@ func (m *HMMKmerModel) simulateQuality(kmer string) byte {
 
 	// GC bias effect
 	gcContent := m.calculateGCContent(kmer)
-	gcBias := math.Abs(gcContent-0.5) * 10.0
+	gcBias := float64(math.Abs(gcContent-0.5) * 10.0)
 
 	// Homopolymer effect
 	homopolymerPenalty := m.calculateHomopolymerPenalty(kmer)
@@ -341,7 +341,7 @@ func (m *HMMKmerModel) calculateHomopolymerPenalty(kmer string) float64 {
 
 	// Penalty increases with run length
 	if maxRun >= 3 {
-		return float64(maxRun-2) * 2.0
+		return float64(float64(maxRun-2) * 2.0)
 	}
 
 	return 0.0
@@ -366,7 +366,7 @@ func (m *HMMKmerModel) GetModelStats() map[string]interface{} {
 			for j := 0; j < 4; j++ {
 				prob := m.transitionMatrix[i][j]
 				if prob > 0 {
-					transitionEntropy -= prob * math.Log2(prob)
+					transitionEntropy -= float64(prob * math.Log2(prob))
 				}
 			}
 		}
