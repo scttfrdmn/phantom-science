@@ -1,7 +1,6 @@
 package genomics
 
 import (
-	"bytes"
 	"io"
 	"os"
 	"path/filepath"
@@ -470,8 +469,8 @@ func modelTestConfig(dir string) types.SequencerConfig {
 // A configured HMM model that cannot be loaded (missing or corrupt
 // hmm_model_path, or a corrupt model_dir/<population>.hmm.json) fails
 // generation, on every output path, before any file is written; the error
-// names the model and the load error. Only a population without a model file
-// in model_dir falls back to uniform bases, with a warning.
+// names the model and the load error. A model_dir with no file for the
+// population is an error too.
 func TestEngine_HMMModel_ConfiguredLoadFailureIsError(t *testing.T) {
 	dir := t.TempDir()
 	corrupt := filepath.Join(dir, "corrupt.hmm.json")
@@ -514,15 +513,14 @@ func TestEngine_HMMModel_ConfiguredLoadFailureIsError(t *testing.T) {
 	}
 
 	c := modelTestConfig(t.TempDir())
-	c.ModelDir, c.Population = t.TempDir(), "CEU" // no CEU.hmm.json: not configured
-	var log bytes.Buffer
-	e := NewEngineLog(c, &log)
+	c.ModelDir, c.Population = t.TempDir(), "CEU" // no CEU.hmm.json
+	e := NewEngineLog(c, io.Discard)
 	defer e.Close()
-	if err := e.Generate(); err != nil {
-		t.Fatalf("population without a model file: %v", err)
+	if err := e.Generate(); err == nil || !strings.Contains(err.Error(), "no HMM model for population CEU") {
+		t.Errorf("population without a model file: err = %v, want a missing-model error", err)
 	}
-	if !strings.Contains(log.String(), "no HMM model") {
-		t.Errorf("no warning for the missing population model: %q", log.String())
+	if entries, _ := os.ReadDir(c.OutputDir); len(entries) != 0 {
+		t.Errorf("failed run wrote %d entries", len(entries))
 	}
 }
 
@@ -653,11 +651,11 @@ func TestEngine_PopulationModel_HMMModelPathTakesPriority(t *testing.T) {
 	}
 }
 
-// TestEngine_PopulationModel_FallsBackWhenDirMissing verifies that a non-existent
-// ModelDir causes a silent fallback: hmmModel is nil and Generate() succeeds.
-func TestEngine_PopulationModel_FallsBackWhenDirMissing(t *testing.T) {
+// TestEngine_PopulationModel_MissingDirIsError: a ModelDir that does not
+// exist is a configured model that cannot be found, so Generate fails.
+func TestEngine_PopulationModel_MissingDirIsError(t *testing.T) {
 	config := types.SequencerConfig{
-		SampleName:    "FallbackPop_Sample",
+		SampleName:    "MissingPop_Sample",
 		Lane:          1,
 		OutputDir:     t.TempDir(),
 		ReadLength:    50,
@@ -673,7 +671,7 @@ func TestEngine_PopulationModel_FallsBackWhenDirMissing(t *testing.T) {
 	if engine.hmmModel != nil {
 		t.Error("expected hmmModel to be nil when ModelDir does not exist")
 	}
-	if err := engine.Generate(); err != nil {
-		t.Errorf("Generate() should succeed after fallback, got: %v", err)
+	if err := engine.Generate(); err == nil {
+		t.Error("Generate() should fail when ModelDir has no model for the population")
 	}
 }

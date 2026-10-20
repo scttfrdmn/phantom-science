@@ -39,7 +39,10 @@ func runScenario(t *testing.T, zygosity string, seed uint64) ([]byte, [][2]strin
 			GroundTruth:  filepath.Join(dir, "truth.json"),
 		},
 	}
-	cfg := &types.SequencerConfig{SampleName: "hom", Lane: 1, ReadLength: 150, BaseQuality: 30, Seed: seed}
+	// Sequencing errors off: the test checks variant injection, and a
+	// quality-matched substitution at the locus would change the VAF.
+	cfg := &types.SequencerConfig{SampleName: "hom", Lane: 1, ReadLength: 150, BaseQuality: 30, Seed: seed,
+		Illumina: types.IlluminaSpec{Errors: "none"}}
 	m, err := clinical.NewScenarioGenerator(cfg).Run(context.Background(), sc)
 	require.NoError(t, err)
 	require.Len(t, m.PlantedVariants, 1)

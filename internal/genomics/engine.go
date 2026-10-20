@@ -211,9 +211,8 @@ func NewEngineLog(config types.SequencerConfig, logw io.Writer) *Engine {
 		m, err := authenticity.LoadModel(modelPath)
 		switch {
 		case err != nil && config.HMMModelPath == "" && errors.Is(err, fs.ErrNotExist):
-			// model_dir has no model for this population: not configured.
-			fmt.Fprintf(e.logw, "   [warn] no HMM model %s for population %s — using uniform random bases\n",
-				modelPath, config.Population)
+			e.modelErr = fmt.Errorf("no HMM model for population %s in model_dir %s (expected %s)",
+				config.Population, config.ModelDir, modelPath)
 		case err != nil:
 			e.modelErr = fmt.Errorf("HMM model %s could not be loaded: %w", modelPath, err)
 		default:
@@ -227,9 +226,9 @@ func NewEngineLog(config types.SequencerConfig, logw io.Writer) *Engine {
 }
 
 // resolveModelPath returns the effective HMM model file path for config. A
-// configured model that cannot be loaded is a generation error (an explicit
-// HMMModelPath, or a ModelDir/<Population>.hmm.json file that exists); only
-// a population with no model file in ModelDir falls back to uniform bases.
+// configured model that cannot be loaded, or a ModelDir with no
+// <Population>.hmm.json, is a generation error; with neither HMMModelPath nor
+// ModelDir+Population set, generation uses uniform random bases.
 // Resolution order:
 //  1. Explicit HMMModelPath — highest priority.
 //  2. ModelDir/<Population>.hmm.json — when both Population and ModelDir are set.
