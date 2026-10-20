@@ -14,8 +14,12 @@ fields affect generation.
 The instrument name changes the output only through these values: all of
 them produce the same Illumina-style FASTQ (headers
 `@<sample>:<lane>:HXXXXXX:...`, files `<sample>_S1_L<lane>_R<mate>_<n>.fastq`).
-Base qualities follow `base_quality` and `quality_decay`; there is no
-per-instrument error or quality model. Fields such as `run_time_hours`,
+Base qualities and errors come from the `illumina:` section (binned RTA3
+qualities with quality-matched substitutions by default; `quality_model:
+linear` uses `base_quality` and `quality_decay` instead), and paired reads are
+the two ends of one fragment with `insert_size` (normal 350 ± 50 unless set).
+There is no per-instrument model: MiSeq does not bin its qualities, so binned
+output resembles NovaSeq and NextSeq. Fields such as `run_time_hours`,
 `q30_percentage`, `cluster_density_k_per_mm2`, `loading_concentration_pm`,
 `phix_spike_in_percent` and the chemistry flags describe the instrument and
 are not read by the generator, and their values have not been checked against

@@ -18,13 +18,19 @@ on `main` but not in a tagged release yet.
 
 - **Reads are synthetic sequence, not samples of a reference genome.** Bases
   are uniform random, or drawn from an HMM trained with `train`. Reads do not
-  align to GRCh38. Paired-end mates share a length and start position but are
-  generated independently (there is no fragment or insert-size model).
-- **Illumina-style output** has Illumina headers and file names. Qualities are
-  a fixed per-position ramp (`base_quality` minus `quality_decay` per base),
-  the same for every read, and no sequencing errors are added. The
-  `sequencer_model`, `flow_cell_type` and `q30_percentage` config fields do not
-  change the output.
+  align to GRCh38. Paired-end mates are the two ends of one fragment, with
+  insert sizes drawn from `illumina.insert_size` (normal 350 ± 50 by default).
+- **Illumina-style output** (since 0.10.0) has Illumina headers and file
+  names, qualities in the four RTA3 bins (Q2, Q12, Q23, Q37) from a per-cycle
+  model that degrades along the read (read 2 lower than read 1), and
+  substitutions at the rate the quality implies (10^(−Q/10); Q2 bases are
+  `N`). Measured on 2×150 output: substitution rates of 0.0633, 0.0051 and
+  0.0002 at Q12, Q23 and Q37, against 0.0631, 0.0050 and 0.0002 expected
+  (`engine_illumina_test.go`). The degradation curve is a model that has not
+  yet been compared with real NovaSeq data. `illumina.quality_model: linear`
+  restores the old ramp (`base_quality` minus `quality_decay` per base, no
+  errors). The `sequencer_model`, `flow_cell_type` and `q30_percentage` config
+  fields do not change the output.
 - **ONT output** (since 0.8.0) has read-length distributions, a per-tier
   basecaller error and quality model, MinKNOW-style headers and a
   `sequencing_summary.txt`.
@@ -155,8 +161,9 @@ works; prefer the subcommands.
   sanitized config, and the size and sha256 of every output. It never contains
   key material.
 - **HMM model:** `--hmm-model-path model.hmm.json`, or
-  `--population CEU --model-dir models/` to load `models/CEU.hmm.json`. If the model cannot be
-  loaded, `generate` warns and uses uniform random bases.
+  `--population CEU --model-dir models/` to load `models/CEU.hmm.json`. If a
+  configured model is missing or cannot be loaded, `generate` fails before
+  writing anything. Model files from before 0.10.0 must be retrained.
 - **Variants:** `--stdout --variants calls.vcf[.gz]` injects VCF variants
   with their allele frequency. `--region chr:start-end` places reads in a
   region, so positioned variants land at their coordinates. `--sample-id`
@@ -287,9 +294,10 @@ The rules:
   `validate` read `.fastq.gz`.
 - **Streaming:** `generate --stdout` cannot carry a fingerprint and refuses to
   run with the `quality_scores` layer.
-- **Read-ID tags:** `customer_fingerprint` and `dataset_fingerprint` append
-  plain-text `:cust:<id>` and `:ds:<id>` tags to every read header. They are
-  separate from the encrypted fingerprint. Turn them off if the IDs must not
+- **Read-ID tags:** `customer_fingerprint` and `dataset_fingerprint` add
+  plain-text SAM-style comment fields `XC:Z:<customer>` and `XD:Z:<dataset>`
+  (tab-separated, after the Illumina comment) to every read header. Read
+  names are unchanged. They are separate from the encrypted fingerprint. Turn them off if the IDs must not
   be visible.
 - **verify:** reports customer, dataset, creation time, stegano version and
   whether the fingerprint was encrypted. `--customer` and `--dataset` require

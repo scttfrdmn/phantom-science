@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Contigs are picked in proportion to their non-N length; windows containing N are skipped.
   - Draw order is fixed and documented (contig, position, strand), and the sampler is safe for concurrent use.
 - `JointSite.Carriers`, the derived-allele carriers of each simulated haplotype (#27).
+- `illumina:` config section and `generate --quality-model`, `--illumina-errors`, `--insert-size-mean` and `--insert-size-sd` (#27).
+- `NewEngineLog(config, w)` sends engine diagnostics to a writer; nil discards them (#27).
+- `fingerprinting.ReadTags` and `ParseReadTags` (#27).
 
 ### Changed
 - **BREAKING:** `sequence_validator` takes input paths as arguments (it read only `sequences/validation`) and exits 2 when any sequence fails (#27).
@@ -44,6 +47,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **BREAKING (catalogue):** the HPO catalogue terms changed (#24). GLUT1 deficiency is HP:0001250 + HP:0011972, PKU is HP:0004923 and cystic fibrosis is HP:0012236.
 - **BREAKING (API):** `clinical.ResolveHPO` returns `(*PlantedVariantSpec, *CatalogEntry, error)`, and `clinical.NewScenarioGenerator` no longer takes a project root (#24, #27).
 - `PopulationPanel` holds `Ne`, `MutationRate` and a `SetSeed` method instead of a `Simulator` (#25).
+- **BREAKING:** Illumina reads default to binned RTA3 qualities (Q2, Q12, Q23, Q37), with read 2 lower than read 1 (#27).
+  - Substitutions occur at 10^(−Q/10), and Q2 bases are written as `N`.
+  - `illumina.quality_model: linear` keeps the old ramp without errors.
+- **BREAKING:** paired-end mates are the two ends of one fragment, with insert size 350 ± 50 by default (`illumina.insert_size`) (#27).
+  - Variants are applied once per fragment, so both mates carry the same allele.
+  - On Illumina the binned quality model replaces HMM qualities.
+- **BREAKING:** read-ID fingerprint tags are SAM-style comment fields (`XC:Z:<customer>`, `XD:Z:<dataset>`), no longer `:cust:`/`:ds:` suffixes that corrupted the Illumina comment and `RG:Z:` (#27).
+- **BREAKING:** `error_model.tier` (`--basecaller-tier`) applies only to platform ont. On Illumina it is a configuration error (#27).
+- **BREAKING:** an HMM model that is configured but missing or unloadable fails generation before anything is written, instead of falling back to uniform bases (#25, #27). This covers `hmm_model_path`, and `model_dir` + `population` with no file for that population.
+- `EmbedCustomerID` and `EmbedDatasetFingerprint` are deprecated in favour of `ReadTags` (#27).
 
 ### Removed
 - **Subsystems that reported fabricated constants**, none of which any supported command used (#22, #26):
@@ -110,6 +123,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Crossovers were drawn outside the variant span.
   - A 0 cM genetic map became 100 cM.
 - The `.gitignore` pattern `GRCh38*` also ignored source files such as `grch38_test.go` on case-insensitive filesystems.
+- The TUI's run timer printed a summary into the terminal (#27).
+- Paired-end mates could carry different alleles at a planted variant (#27).
 
 ## [0.9.0] - 2026-10-19
 
