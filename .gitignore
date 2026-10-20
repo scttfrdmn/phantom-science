@@ -150,34 +150,13 @@ models/
 *.dict
 
 # Large genomic reference files
-GRCh38*
+GRCh38*.fa
+GRCh38*.fa.gz
+GRCh38*.fasta
+GRCh38*.2bit
 chr*.fasta
 reference_genome/
 genomics_training/
-# Binaries built at the repo root by `go build ./cmd/<name>`
-/complete_11_population_training
-/contextual_vcf_training
-/create_parallel_expert_package
-/full_1000genomes_training
-/high_performance_training
-/k6_enhanced_training
-/k6_vcf_training
-/k8_advanced_training
-/main
-/population_gc_adjustment
-/population_gc_demo
-/population_model_training
-/population_specific_training
-/population_training
-/population_weighted_training
-/real_vcf_training
-/reference_based_training
-/simple_training
-/streaming_training
-/test_2025_research_integration
-/test_enhanced_model
-/train_hmm
-/validate_models
 /examples/examples
 
 # Python virtualenvs and third-party tool installs

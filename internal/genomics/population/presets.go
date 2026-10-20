@@ -10,9 +10,10 @@ import (
 //
 // Per-population parameters (Ne, growth rate, bottleneck start and size,
 // mutation rate) are copied from the static table in
-// internal/population/bridge.go (GetPopulationParameters). That package is not
-// imported here because it pulls in a large dependency tree. Note that
-// internal/population/demographics.py uses different values for MXL
+// internal/population/bridge.go (GetPopulationParameters). bridge.go,
+// demographics.py and fst_analysis.py, cited below as the sources of these
+// values, were removed after v0.9.0; see them in the v0.9.0 tag. Note that
+// internal/population/demographics.py used different values for MXL
 // (Ne 7000, growth 0.008, bottleneck 500 gen / 800) and lists its YRI growth
 // from the present back to the bottleneck, which as an msprime model would
 // shrink YRI to ~0 by 2000 generations; the values below follow bridge.go.

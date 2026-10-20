@@ -58,7 +58,7 @@ func TestPresets_DiversityOrdering(t *testing.T) {
 }
 
 // Weir–Cockerham F_ST between preset populations must fall in the literature
-// ranges recorded in internal/population/fst_analysis.py, and continental
+// ranges recorded in internal/population/fst_analysis.py (removed after v0.9.0), and continental
 // (African vs non-African) differentiation must exceed CEU–CHB.
 func TestPresets_FSTLiteratureRanges(t *testing.T) {
 	nLoci := presetLoci(t)
