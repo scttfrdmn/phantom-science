@@ -53,11 +53,15 @@ novaseq -reads 200000 -real-fastq` on the first 200,000 R1 reads of NovaSeq
 6000 run DRR276626; 200,000 reads held out, band ±0.0045; real versus real
 100,000 held out, ±0.0063):
 
-| Features | Null | Real vs real | Uniform bases | `-reference` hg38 chr1–22, X, Y |
-|---|---|---|---|---|
-| sequence (4-mer NB) | 0.500 | 0.498 | 0.946 | 0.518 |
-| quality (LR) | 0.502 | 0.498 | 0.580 | 0.586 |
-| combined | 0.502 | 0.499 | 0.951 | 0.586 |
+| Features | Null | Real vs real | Uniform bases | `-reference` hg38, 0.11.0 | `-reference` hg38, base-dependent qualities (#35) |
+|---|---|---|---|---|---|
+| sequence (4-mer NB) | 0.500 | 0.498 | 0.946 | 0.518 | 0.519 |
+| quality (LR) | 0.502 | 0.498 | 0.580 | 0.586 | **0.524** |
+| combined | 0.502 | 0.499 | 0.951 | 0.586 | **0.527** |
+
+Read 2 (paired `generate --reference` output against real `DRR276626_2`,
+measured with the same classifiers outside `run_e2e_tests`, which generates
+single-end reads): quality 0.607 → 0.543, combined 0.594 → 0.539.
 
 In the same runs the GC control scored 0.973–0.994 and the quality control
 1.000.
@@ -67,10 +71,19 @@ In the same runs the GC control scored 0.973–0.994 and the quality control
 - **Reads sampled from hg38** are close to real by 4-mer content (0.518).
   What remains: satellite-type 4-mers (GGAA, ATTC, TGGA) and CpG 4-mers are
   more frequent in real reads, and real GC is 0.414 against 0.408.
-- **The quality model is the larger difference (0.586):** real NovaSeq
-  qualities depend on the called base (mean Q of T 36.06, of C 36.36), and
-  the model's do not. Read 2 also shows poly-G 4-mers and longer low-quality
-  runs in real data.
+- **Qualities now depend on the read's bases (#35)**, which brought the
+  quality classifier from 0.586 to 0.524. Real NovaSeq qualities depend on
+  the base's context more than on the base itself (R1 P(Q25) 0.047 after TT,
+  0.019 after CA; quality drops after GG), and the effect differs between
+  good and poor reads, so the model multiplies each read class's Q11/Q25
+  probabilities by factors of the 4-base context (two bases before, the
+  base, one after), fitted to DRR276626.
+- **What still separates qualities:** how often quality changes between
+  cycles, low-quality run lengths (Q11 runs of 10 or more are about 4 times
+  rarer in the model), and read-level effects (GC-rich, homopolymer and
+  poly-G reads are poorer in real data). Modelling run lengths alone fixed
+  the runs but did not lower the classifier's accuracy, so it is not used.
+  Read 2 also shows poly-G 4-mers in real data.
 - A single region biases composition (chr22: sequence 0.618), so the
   whole-genome reference is the meaningful comparison.
 

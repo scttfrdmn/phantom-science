@@ -31,6 +31,9 @@ on `main` but not in a tagged release yet.
     from per-read quality classes and per-cycle fractions; generated reads
     match the real per-cycle fractions within 0.002 on average, and the mean
     quality (R1 36.23 and R2 36.08 against 36.22 and 36.08);
+  - qualities that depend on the read's bases (since 0.12.0): each read
+    class's low-bin probabilities follow the 4-base context, as in the real
+    run (for example, Q25 is 2.5 times as likely after TT as after CA);
   - substitutions at the measured, cycle-dependent rates of each bin (Q37
     3.2e-4; Q25 0.07–0.25%; Q11 2.9–8.3%) with the measured substitution
     spectrum (C→A and G→T dominate); Q2 bases are `N`.
@@ -460,7 +463,7 @@ TUI: `generate` writes as fast as it can, and `batch_interval` has no effect.
   well each feature set separates real reads from generated ones, with a
   real-versus-real null and the most separating features; `-reference
   FASTA [-region]` generates the compared reads from a genome. On NovaSeq
-  6000 run DRR276626 against hg38: sequence 0.518, quality 0.586 (chance
+  6000 run DRR276626 against hg38: sequence 0.519, quality 0.524 (chance
   0.5; see [docs/SCIENTIFIC_VALIDATION.md](docs/SCIENTIFIC_VALIDATION.md)).
   `-report` writes `e2e_results.json` and `e2e_summary.csv`.
 - `CGO_ENABLED=0 go run ./cmd/run_workflow_tests` runs a minimal

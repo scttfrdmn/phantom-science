@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `illumina.QualityParams.QualitiesFor(r, seq)` and context factors; the calibration script also measures qualities by sequence context and read class (#35).
+
+### Changed
+- **BREAKING (Illumina output):** binned Illumina qualities depend on the read's bases (#35).
+  - Each read class's Q11/Q25 probabilities are multiplied by factors of the 4-base context (two bases before, the base, one after), fitted to DRR276626 by `scripts/acceptance/illumina_calibrate.sh`.
+  - Against real NovaSeq 6000 reads with `--reference` hg38, the quality classifier falls from 0.585 to 0.524 (R1) and from 0.607 to 0.543 (R2); the null is 0.5 ± 0.0045.
+  - Binned Illumina output differs from 0.11.0 for the same seed.
+
 ## [0.11.0] - 2026-10-20
 
 ### Added
