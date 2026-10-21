@@ -7,6 +7,13 @@ Run with `python3 -I` (no third-party packages). Subcommands:
       counts P(q[c+1] | q[c]), run lengths, low-quality bases per read and
       N calls, for each mate.
 
+  context OUTDIR R1.fastq R2.fastq FIT.tsv
+      Quality frequencies by called-base sequence context (the two bases
+      before, the base and the base after) and 10-cycle block, and the
+      Q11 and Q25 calls by context within each read quality class of
+      FIT.tsv (written by fit_illumina.py), against their expected numbers
+      without a context effect (#35).
+
   sam OUTDIR < name-grouped SAM (minimap2 output, with --MD)
       Substitution rate per quality and per cycle (primary alignments with
       MAPQ >= 30; mismatches from MD, indels and soft-clipped bases
@@ -159,6 +166,154 @@ def fastq_stats(outdir, paths):
     )
     write_tsv(os.path.join(outdir, "n_calls.tsv"), ["mate", "cycle", "char", "phred", "count"], rows_n)
     write_tsv(os.path.join(outdir, "fastq_summary.tsv"), ["mate", "key", "value"], summary)
+
+
+# Cycle blocks of the sequence-context table: 10 cycles each (1-10, 11-20,
+# ..., 141-150, 151).
+CONTEXT_BLOCK = 10
+
+
+def read_classes(fit_path):
+    """Per mate, the read quality classes of fit.tsv: weights, Q11 and Q25
+    multipliers and the expected Q11 and Q25 bases per read."""
+    with open(fit_path, encoding="ascii") as f:
+        head = f.readline().rstrip("\n").split("\t")
+        rows = [dict(zip(head, l.rstrip("\n").split("\t"))) for l in f]
+    out = {}
+    for mate in ("1", "2"):
+        get = lambda p: {int(r["index"]): float(r["value"]) for r in rows if r["param"] == p and r["mate"] == mate}
+        w, m11, m25 = get("class_weight"), get("class_mult_q11"), get("class_mult_q25")
+        lam = (get("class_lambda_q11")[0], get("class_lambda_q25")[0])
+        out[int(mate)] = [(w[k], m11[k], m25[k]) for k in sorted(w)], lam
+    return out
+
+
+def class_posterior(classes, lam, n11, n25):
+    """The posterior probabilities of the read classes for a read with n11
+    Q11 and n25 Q25 bases under the Poisson mixture of fit_illumina.py, and
+    the most probable class."""
+    lp = []
+    for w, m11, m25 in classes:
+        a, b = m11 * lam[0], m25 * lam[1]
+        lp.append(math.log(w) + n11 * math.log(a) - a + n25 * math.log(b) - b)
+    mx = max(lp)
+    e = [math.exp(v - mx) for v in lp]
+    z = sum(e)
+    return [v / z for v in e], lp.index(mx)
+
+
+# Read GC bins of the class-by-read table: floor(20 * GC), GC the fraction
+# of G and C among the read's A, C, G and T bases; longest homopolymer
+# (run of one of A, C, G, T) capped at HP_CAP.
+GC_BINS = 20
+HP_CAP = 20
+HP_RE = re.compile(r"A+|C+|G+|T+")
+
+
+def longest_homopolymer(s):
+    return max((m.end() - m.start() for m in HP_RE.finditer(s)), default=0)
+
+
+def context_stats(outdir, paths, fit_path):
+    """Quality bins by called-base context (#35).
+
+    context_quals.tsv: one row per mate, cycle block and context (the called
+    bases two before, one before, at and one after the cycle; '-' past the
+    read's ends), with the count of each quality value. Every marginal
+    (called base, preceding base, GG motifs, by block) is a sum of rows.
+
+    context_classes.tsv: one row per mate, read class and context: the
+    bases, the Q11 and Q25 calls, and their expected numbers if the read's
+    calls fell on its cycles in proportion to the mate's per-cycle Q11 and
+    Q25 fractions whatever the context (exp = sum over the read's cycles in
+    that context of n_b f_b(c) / sum_c f_b(c), n_b the read's calls in bin
+    b). A read's class is its most probable class (class_posterior) given
+    its Q11 and Q25 counts. obs/exp is the context's factor within reads of a
+    class; conditioning on the read's own counts removes the class's level.
+
+    class_reads.tsv: per mate, read GC bin (floor(20 GC)) and longest
+    homopolymer (capped at HP_CAP), the reads and the sum of their class
+    posterior probabilities: P(class | GC, homopolymer).
+    """
+    fits = read_classes(fit_path)
+    marg = {}  # (mate, block, ctx4, qual char) -> count
+    cls = {}  # (mate, class, ctx4) -> [bases, n11, n25, exp11, exp25]
+    gcs = {}  # (mate, GC bin, homopolymer) -> [reads, posterior sum of each class]
+    chars = set()
+    maxlen = 0
+    for mate, path in enumerate(paths, start=1):
+        classes, lam = fits[mate]
+        frac = []  # per cycle: [Q11, Q25] calls
+        for s, q in fastq_records(path):
+            while len(frac) < len(q):
+                frac.append([0, 0])
+            for c, ch in enumerate(q):
+                if ch == ",":
+                    frac[c][0] += 1
+                elif ch == ":":
+                    frac[c][1] += 1
+        cache = {}
+        for s, q in fastq_records(path):
+            L = len(q)
+            maxlen = max(maxlen, L)
+            n11, n25 = q.count(","), q.count(":")
+            key = (n11, n25)
+            if key not in cache:
+                cache[key] = class_posterior(classes, lam, n11, n25)
+            post, k = cache[key]
+            acgt = sum(s.count(b) for b in "ACGT")
+            if acgt:
+                gk = (mate, (s.count("G") + s.count("C")) * GC_BINS // acgt, min(longest_homopolymer(s), HP_CAP))
+                g = gcs.get(gk)
+                if g is None:
+                    g = gcs[gk] = [0] + [0.0] * len(classes)
+                g[0] += 1
+                for i, v in enumerate(post):
+                    g[1 + i] += v
+            t11 = sum(f[0] for f in frac[:L]) or 1
+            t25 = sum(f[1] for f in frac[:L]) or 1
+            u11, u25 = n11 / t11, n25 / t25
+            p = "--" + s + "-"
+            for c, ch in enumerate(q):
+                ctx = p[c : c + 4]
+                mk = (mate, c // CONTEXT_BLOCK, ctx, ch)
+                marg[mk] = marg.get(mk, 0) + 1
+                ck = (mate, k, ctx)
+                v = cls.get(ck)
+                if v is None:
+                    v = cls[ck] = [0, 0, 0, 0.0, 0.0]
+                v[0] += 1
+                if ch == ",":
+                    v[1] += 1
+                elif ch == ":":
+                    v[2] += 1
+                v[3] += u11 * frac[c][0]
+                v[4] += u25 * frac[c][1]
+        chars.update(mk[3] for mk in marg)
+    chars = sorted(chars)
+    cells = {}
+    for (mate, block, ctx, ch), n in marg.items():
+        cells.setdefault((mate, block, ctx), {})[ch] = n
+    write_tsv(
+        os.path.join(outdir, "context_quals.tsv"),
+        ["mate", "first_cycle", "last_cycle", "prev2", "prev", "base", "next"] + [f"Q{ord(ch) - 33}" for ch in chars],
+        [
+            [mate, block * CONTEXT_BLOCK + 1, min((block + 1) * CONTEXT_BLOCK, maxlen), ctx[0], ctx[1], ctx[2], ctx[3]]
+            + [d.get(ch, 0) for ch in chars]
+            for (mate, block, ctx), d in sorted(cells.items())
+        ],
+    )
+    write_tsv(
+        os.path.join(outdir, "context_classes.tsv"),
+        ["mate", "class", "prev2", "prev", "base", "next", "bases", "n_Q11", "n_Q25", "exp_Q11", "exp_Q25"],
+        [[m, k, x[0], x[1], x[2], x[3], v[0], v[1], v[2], fmt(v[3]), fmt(v[4])] for (m, k, x), v in sorted(cls.items())],
+    )
+    nk = max(len(v) for v in gcs.values()) - 1
+    write_tsv(
+        os.path.join(outdir, "class_reads.tsv"),
+        ["mate", "gc_bin", "gc_from", "homopolymer", "reads"] + [f"class{k}" for k in range(nk)],
+        [[m, b, fmt(b / GC_BINS), h, v[0]] + [fmt(x) for x in v[1:]] for (m, b, h), v in sorted(gcs.items())],
+    )
 
 
 # ---------------------------------------------------------------- sam
@@ -500,6 +655,8 @@ def main(argv):
     os.makedirs(outdir, exist_ok=True)
     if cmd == "fastq" and len(argv) == 5:
         fastq_stats(outdir, argv[3:5])
+    elif cmd == "context" and len(argv) == 6:
+        context_stats(outdir, argv[3:5], argv[5])
     elif cmd == "sam" and len(argv) == 3:
         sam_stats(outdir, sys.stdin)
     else:

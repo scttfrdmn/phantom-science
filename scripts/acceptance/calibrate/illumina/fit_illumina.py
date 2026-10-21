@@ -19,6 +19,14 @@ Model (see the package documentation of internal/genomics/illumina):
   Given its class, a read's bins are drawn independently per cycle (the
   measured autocorrelation of low-quality calls is flat in the lag, so it
   comes from the read, not from neighbouring cycles).
+* Sequence context (#35): within the reads of class k, P(Q11) and P(Q25) at
+  a cycle are multiplied by F_kb(x), x the 4-base context (called bases two
+  before, one before, at and one after the cycle). F is the context's calls
+  over their number expected from the read's own counts and the per-cycle
+  fractions (context_classes.tsv), shrunk towards the 3-base and 1-base
+  contexts (CONTEXT_PRIOR) and normalised to average 1 over the sample's
+  context frequencies. Without RESULTS_DIR/context_classes.tsv only the
+  classes are fitted (the first pass of illumina_calibrate.sh).
 * Substitution rate per bin and cycle: the mismatch rate against hg38 minus
   the rate of sample variants. The variant rate is the Q37 mismatch rate
   minus the Q37 error rate measured where mates overlap (a mismatch in one
@@ -194,6 +202,109 @@ def fit_error(rows_by_cycle):
     return best[1:]
 
 
+# Sequence context (#35): the called bases two before, one before, at and one
+# after a cycle, A, C, G, T only; index = 64 b(-2) + 16 b(-1) + 4 b(0) + b(+1).
+BASES = "ACGT"
+CONTEXTS = [a + b + c + e for a in BASES for b in BASES for c in BASES for e in BASES]
+# Shrinkage of a context factor towards that of the shorter context
+# (prev, base, next), and of that towards the base's: a pseudo-count of
+# CONTEXT_PRIOR expected calls.
+CONTEXT_PRIOR = 20.0
+
+
+def fit_context(d, out):
+    """Per mate, read class and low bin, the factor of each 4-base context.
+
+    From context_classes.tsv (illumina_stats.py context): within the reads
+    of a class, the calls of a bin in context x over their expected number
+    without a context effect, shrunk towards the factor of the 3-base context
+    and of the base, then normalised so that the factors average to 1 over
+    the mate's context frequencies (so the per-cycle fractions and class
+    levels are unchanged for reads of the sample's composition).
+    """
+    rows = read_tsv(os.path.join(d, "context_classes.tsv"))
+    freq = {}  # (mate, ctx) -> bases
+    cell = {}  # (mate, class, ctx) -> [n11, n25, e11, e25]
+    for r in rows:
+        x = r["prev2"] + r["prev"] + r["base"] + r["next"]
+        if any(b not in BASES for b in x):
+            continue
+        m, k = r["mate"], int(r["class"])
+        freq[(m, x)] = freq.get((m, x), 0) + int(r["bases"])
+        v = cell.setdefault((m, k, x), [0, 0, 0.0, 0.0])
+        v[0] += int(r["n_Q11"])
+        v[1] += int(r["n_Q25"])
+        v[2] += float(r["exp_Q11"])
+        v[3] += float(r["exp_Q25"])
+    factors = {}
+    for mate in ("1", "2"):
+        tot = sum(freq.get((mate, x), 0) for x in CONTEXTS)
+        pi = {x: freq.get((mate, x), 0) / tot for x in CONTEXTS}
+        for k in range(CLASSES):
+            for i, q in enumerate(LOW):
+                o = {x: cell.get((mate, k, x), [0, 0, 0, 0])[i] for x in CONTEXTS}
+                e = {x: cell.get((mate, k, x), [0, 0, 0, 0])[2 + i] for x in CONTEXTS}
+                def pooled(key):
+                    po, pe = {}, {}
+                    for x in CONTEXTS:
+                        po[key(x)] = po.get(key(x), 0) + o[x]
+                        pe[key(x)] = pe.get(key(x), 0) + e[x]
+                    return po, pe
+                o1, e1 = pooled(lambda x: x[2])
+                f1 = {b: o1[b] / e1[b] if e1[b] else 1.0 for b in o1}
+                o3, e3 = pooled(lambda x: x[1:])
+                f3 = {y: (o3[y] + CONTEXT_PRIOR * f1[y[1]]) / (e3[y] + CONTEXT_PRIOR) for y in o3}
+                f4 = {x: (o[x] + CONTEXT_PRIOR * f3[x[1:]]) / (e[x] + CONTEXT_PRIOR) for x in CONTEXTS}
+                z = sum(pi[x] * f4[x] for x in CONTEXTS)
+                for x in CONTEXTS:
+                    factors[(mate, k, q, x)] = f4[x] / z
+                    out.append((f"context_q{q}", mate, f"{k}:{x}", f4[x] / z))
+    tot = sum(freq.values())
+    for x in CONTEXTS:
+        out.append(("context_freq", "both", x, sum(freq.get((m, x), 0) for m in ("1", "2")) / tot))
+    return factors
+
+
+def context_summary(d):
+    """Measured quality by called base, by preceding and called base, and
+    after GG (context_quals.tsv), per mate and pooled over cycles: bases,
+    mean Phred, P(Q11) and P(Q25) with binomial standard errors. Written to
+    context_summary.tsv."""
+    rows = read_tsv(os.path.join(d, "context_quals.tsv"))
+    qcols = [c for c in rows[0] if c.startswith("Q")]
+    groups = [
+        ("base", lambda r: r["base"]),
+        ("prev+base", lambda r: r["prev"] + r["base"]),
+        ("base+next", lambda r: r["base"] + r["next"]),
+        ("prev2+prev+base", lambda r: r["prev2"] + r["prev"] + r["base"]),
+    ]
+    table = []
+    for mate in ("1", "2"):
+        mrows = [r for r in rows if r["mate"] == mate]
+        for name, key in groups:
+            agg = {}
+            for r in mrows:
+                x = key(r)
+                if any(b not in BASES for b in x):
+                    continue
+                a = agg.setdefault(x, {c: 0 for c in qcols})
+                for c in qcols:
+                    a[c] += int(r[c])
+            for x in sorted(agg):
+                if name == "prev2+prev+base" and x[:2] != "GG":
+                    continue
+                a = agg[x]
+                n = sum(a.values())
+                mq = sum(int(c[1:]) * v for c, v in a.items()) / n
+                p11, p25 = a["Q11"] / n, a["Q25"] / n
+                table.append([mate, name, x, n, f"{mq:.4f}", f"{p11:.6f}", f"{math.sqrt(p11 * (1 - p11) / n):.2g}",
+                              f"{p25:.6f}", f"{math.sqrt(p25 * (1 - p25) / n):.2g}"])
+    with open(os.path.join(d, "context_summary.tsv"), "w", encoding="ascii") as f:
+        f.write("mate\tcontext\tbases_called\tbases\tmean_q\tp_q11\tse_q11\tp_q25\tse_q25\n")
+        for r in table:
+            f.write("\t".join(str(v) for v in r) + "\n")
+
+
 def main(d, go_path=None):
     cyc = read_tsv(os.path.join(d, "cycle_quals.tsv"))
     comp = read_tsv(os.path.join(d, "read_composition.tsv"))
@@ -233,6 +344,8 @@ def main(d, go_path=None):
         npar = CLASSES * 3 - 1
         nreads = sum(crow.values())
         print(f"mate {mate}: {CLASSES} classes, log-likelihood {ll:.1f}, BIC {npar * math.log(nreads) - 2 * ll:.1f}", file=sys.stderr)
+        out.append(("class_lambda_q11", mate, 0, lam[0]))
+        out.append(("class_lambda_q25", mate, 0, lam[1]))
         for k in range(CLASSES):
             out.append(("class_weight", mate, k, w[k]))
             out.append(("class_mult_q11", mate, k, m[k][0]))
@@ -306,6 +419,13 @@ def main(d, go_path=None):
     for x in "ACGT":
         out.append(("base_factor", x, 0, rate[x] / mean))
 
+    have_context = os.path.exists(os.path.join(d, "context_classes.tsv"))
+    if have_context:
+        fit_context(d, out)
+        context_summary(d)
+    elif go_path:
+        raise SystemExit("context_classes.tsv missing: run illumina_stats.py context first")
+
     with open(os.path.join(d, "fit.tsv"), "w", encoding="ascii") as f:
         f.write("param\tmate\tindex\tvalue\n")
         for p, mate, i, v in out:
@@ -348,7 +468,7 @@ def go_source(out):
         lines.append(f"	FinalLow: {g('final_factor_q11', mate, 151)}, FinalMid: {g('final_factor_q25', mate, 151)},")
         lines.append("	Classes: []ReadClass{")
         for k in range(CLASSES):
-            lines.append(f"		{{Weight: {g('class_weight', mate, k)}, Low: {g('class_mult_q11', mate, k)}, Mid: {g('class_mult_q25', mate, k)}}},")
+            lines.append(f"		{{Weight: {g('class_weight', mate, k)}, Low: {g('class_mult_q11', mate, k)}, Mid: {g('class_mult_q25', mate, k)}, Context: read{mate}Context[{k}]}},")
         lines.append("	},")
         lines.append(f"	StickLow: {g('stick_q11', mate)}, StickMid: {g('stick_q25', mate)},")
         lines.append(f"	NoCall: {g('nocall_rate')},")
@@ -367,7 +487,41 @@ def go_source(out):
     for x in "ACGT":
         lines.append("		{" + ", ".join("0" if x == y else g("sub_matrix", x, y) for y in "ACGT") + f"}}, // {x}")
     lines += ["	},", "}", ""]
+    lines += context_source(out)
     return "\n".join(lines)
+
+
+def context_source(out):
+    """The context frequencies and factors (fit_context) as Go source."""
+    C = {}
+    for p, mate, i, v in out:
+        if p.startswith("context_"):
+            C[(p, str(mate), str(i))] = v
+
+    def row(vals):
+        # 8 values per line
+        return ["		" + ", ".join(f"{v:.4g}" for v in vals[j : j + 8]) + "," for j in range(0, len(vals), 8)]
+
+    lines = [
+        "// contextFreq is the frequency of each 4-base context (index 64 b(-2) +",
+        "// 16 b(-1) + 4 b(0) + b(+1), A, C, G, T = 0-3) in the measured reads, both",
+        "// mates; the factors average to 1 over it.",
+        "var contextFreq = [256]float64{",
+    ]
+    lines += row([C[("context_freq", "both", x)] for x in CONTEXTS])
+    lines += ["}", ""]
+    for mate in ("1", "2"):
+        lines.append(f"// read{mate}Context[k] are the context factors of read {mate}'s class k: P(Q11) and")
+        lines.append("// P(Q25) at a cycle are multiplied by Low and Mid of the cycle's context.")
+        lines.append(f"var read{mate}Context = [...]*ContextFactors{{")
+        for k in range(CLASSES):
+            lines.append("	NewContextFactors(")
+            for q in LOW:
+                lines.append("		[256]float64{")
+                lines += ["	" + l for l in row([C[(f"context_q{q}", mate, f"{k}:{x}")] for x in CONTEXTS])]
+                lines.append("		}," if q == LOW[0] else "		}),")
+        lines += ["}", ""]
+    return lines
 
 
 if __name__ == "__main__":
