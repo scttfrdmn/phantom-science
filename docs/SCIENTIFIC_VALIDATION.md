@@ -25,38 +25,57 @@ distributions P (real) and Q (synthetic) are indistinguishable when
 where TV is the total variation distance. The best classifier then has an
 accuracy of exactly 50%.
 
-The repository has a classifier for this, a Multinomial Naive Bayes on 4-mer
-frequency vectors (Section 4.5). **It has not been run against real reads.**
-No real data is bundled, so no indistinguishability result exists, and none is
-claimed. `cmd/run_e2e_tests` calibrates the measurement instead:
+`cmd/run_e2e_tests` measures this with classifiers on three feature sets:
 
-- **Null comparison:** two independent draws from the engine (2000 reads per
-  class, half used for training and half held out). It passes if the
-  accuracy is within 0.5 ± 4σ.
-- **Positive control:** one class GC-skewed to GC 0.70 (`testing.GCSkewed`).
-  It passes if the accuracy is above 0.9.
-- **Real reads:** with `-real-fastq FILE` (or `PHANTOM_REAL_FASTQ`) the
-  classifier is trained on real against generated reads and its accuracy is
-  reported, not graded.
+- **sequence:** 4-mer counts, Multinomial Naive Bayes (Section 4.5);
+- **quality:** a per-read quality profile (quality histogram, mean quality
+  of 10 cycle blocks, low-quality runs, quality changes between cycles, N
+  fraction, mean quality per called base), L2 logistic regression;
+- **combined:** a stacked classifier on the cross-fitted sequence log-odds
+  and the quality features.
 
-```bash
-CGO_ENABLED=0 go run ./cmd/run_e2e_tests -quick -platforms novaseq \
-    -benchmark=false -report=false
-```
+Each comparison trains on half of each read set and reports accuracy on the
+other half. Every feature set is calibrated in the same run:
 
-One run on 2026-10-19 (full mode, 2000 held-out reads, band ±0.045) gave null
-accuracies of 0.489–0.502 and control accuracies of 0.993–1.000 across
-NovaSeq, NextSeq, MiSeq and ONT.
+- **Null:** two independent draws from the engine; must lie within 0.5 ± 4σ.
+- **GC control:** one draw GC-skewed to 0.70 (`testing.GCSkewed`); the
+  sequence-aware sets must exceed 0.9.
+- **Quality control:** the same seed with the other quality model (binned or
+  linear); the quality-aware sets must exceed 0.9.
+- **Real versus real:** with `-real-fastq FILE`, alternate halves of the real
+  file; must lie within the null band.
 
-Against real reads (2026-10-20, `-quick -real-fastq` with 2000 reads of
-NovaSeq 6000 run DRR276626, 2000 held out), the classifier separated real
-from generated reads with accuracy 0.94–0.95 for every platform. The
-harness generates uniform random bases, not `--reference` reads, so this
-measures composition: uniform-random sequence is easy to tell from human
-DNA by its 4-mer frequencies. Comparing against `--reference` output is not
-yet supported by the harness. These show that the classifier detects a known difference
-and reports chance on no difference. They say nothing about how close the
-output is to real sequencing data.
+With `-reference FASTA [-region]` the generated reads are sampled from that
+genome, as `generate --reference` does.
+
+**Measured against real reads** (2026-10-20, `run_e2e_tests -platforms
+novaseq -reads 200000 -real-fastq` on the first 200,000 R1 reads of NovaSeq
+6000 run DRR276626; 200,000 reads held out, band ±0.0045; real versus real
+100,000 held out, ±0.0063):
+
+| Features | Null | Real vs real | Uniform bases | `-reference` hg38 chr1–22, X, Y |
+|---|---|---|---|---|
+| sequence (4-mer NB) | 0.500 | 0.498 | 0.946 | 0.518 |
+| quality (LR) | 0.502 | 0.498 | 0.580 | 0.586 |
+| combined | 0.502 | 0.499 | 0.951 | 0.586 |
+
+In the same runs the GC control scored 0.973–0.994 and the quality control
+1.000.
+
+- **Uniform bases** are separated by composition: CpG 4-mers are about ten
+  times more frequent than in human DNA.
+- **Reads sampled from hg38** are close to real by 4-mer content (0.518).
+  What remains: satellite-type 4-mers (GGAA, ATTC, TGGA) and CpG 4-mers are
+  more frequent in real reads, and real GC is 0.414 against 0.408.
+- **The quality model is the larger difference (0.586):** real NovaSeq
+  qualities depend on the called base (mean Q of T 36.06, of C 36.36), and
+  the model's do not. Read 2 also shows poly-G 4-mers and longer low-quality
+  runs in real data.
+- A single region biases composition (chr22: sequence 0.618), so the
+  whole-genome reference is the meaningful comparison.
+
+The data is not yet indistinguishable from real reads, and these numbers
+say by how much and why.
 
 ---
 

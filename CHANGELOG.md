@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `run_e2e_tests -reference FASTA [-region contig[:s-e]]` (env `PHANTOM_REFERENCE`/`PHANTOM_REGION`) generates the compared reads from a reference, and the base source is recorded in the JSON and CSV (#29).
+- `run_e2e_tests` compares read sets on three feature sets: sequence (4-mer naive Bayes), quality (per-read quality profile, logistic regression) and combined (stacked). Each has a null, a GC-skew control and a quality-model control (#29).
+  - Real reads also get a real-versus-real null and a list of the most separating features.
+  - `-reads N` sets the number of reads per set.
+  - Against NovaSeq 6000 run DRR276626 with hg38: sequence 0.518, quality 0.586, combined 0.586 (chance 0.5; 0.946 with uniform bases).
+
+### Changed
+- `e2e_results.json` and `e2e_summary.csv` report calibration and realism per feature set; field and column names changed (#29).
+
+### Fixed
+- The harness's holdout split dropped qualities and headers (#29).
+
 ## [0.10.2] - 2026-10-20
 
 ### Added

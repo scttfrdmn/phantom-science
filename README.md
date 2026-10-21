@@ -453,13 +453,16 @@ TUI: `generate` writes as fast as it can, and `batch_interval` has no effect.
 - `CGO_ENABLED=0 go run ./cmd/run_e2e_tests -quick` generates reads with the
   engine for each modeled platform (Illumina NovaSeq, NextSeq, MiSeq and
   ONT; others are reported as not modeled) and prints measured read
-  statistics and benchmarks. Its ML calibration trains a Multinomial Naive
-  Bayes classifier on two independent draws from one generator (it passes if
-  accuracy is within 0.5 ± 4σ) and on a GC-skewed positive control (it passes
-  above 0.9). This tests the measurement, not realism. With `-real-fastq FILE`
-  (or `PHANTOM_REAL_FASTQ`) it also reports how well the classifier separates
-  real reads from generated ones. `-report` writes `e2e_results.json` and
-  `e2e_summary.csv`.
+  statistics and benchmarks. It calibrates classifiers on three feature sets
+  (sequence 4-mers, per-read quality profile, combined) with a null (two
+  generated draws, within 0.5 ± 4σ), a GC-skew control and a quality-model
+  control. With `-real-fastq FILE` (or `PHANTOM_REAL_FASTQ`) it reports how
+  well each feature set separates real reads from generated ones, with a
+  real-versus-real null and the most separating features; `-reference
+  FASTA [-region]` generates the compared reads from a genome. On NovaSeq
+  6000 run DRR276626 against hg38: sequence 0.518, quality 0.586 (chance
+  0.5; see [docs/SCIENTIFIC_VALIDATION.md](docs/SCIENTIFIC_VALIDATION.md)).
+  `-report` writes `e2e_results.json` and `e2e_summary.csv`.
 - `CGO_ENABLED=0 go run ./cmd/run_workflow_tests` runs a minimal
   read-counting pipeline in Cromwell, Nextflow and Snakemake when they are
   installed and checks the reported count against the reads written. Missing
