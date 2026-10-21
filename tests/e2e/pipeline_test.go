@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -86,10 +87,12 @@ func TestPlatforms(t *testing.T) {
 	}
 }
 
-// TestPositiveControl is the classifier power check on each modeled
-// platform: two independent seeded draws must be indistinguishable (holdout
-// accuracy within 0.5 ± 4σ), and skewing one draw's GC content to 0.7 must
-// be detected (accuracy above 0.9).
+// TestPositiveControl is the classifier calibration on each modeled
+// platform, for every feature set: two independent seeded draws must be
+// indistinguishable (holdout accuracy within 0.5 ± 4σ); skewing one draw's
+// GC content to 0.7 must be detected (accuracy above 0.9) by the sets with
+// sequence features, and the other quality model by the sets with quality
+// features.
 func TestPositiveControl(t *testing.T) {
 	f := pt.NewE2EFramework()
 	for _, platform := range pt.AllPlatforms {
@@ -99,25 +102,46 @@ func TestPositiveControl(t *testing.T) {
 			ca.Reads, cb.Reads = 1000, 1000
 			a := generateOrSkip(t, f, ca)
 			b := generateOrSkip(t, f, cb)
+			alt := generateOrSkip(t, f, cb.AlternativeQualityModel())
+			gc := pt.GCSkewed(b, 0.7, 3)
 
-			null, n, err := pt.HoldoutAccuracy(a, b)
-			require.NoError(t, err)
-			band := pt.ChanceBand(n, 4)
-			assert.InDelta(t, 0.5, null, band, "null accuracy on %d held-out reads", n)
+			for _, set := range pt.AllFeatureSets {
+				null, err := pt.HoldoutAccuracyFor(set, a, b, 0)
+				require.NoError(t, err)
+				band := pt.ChanceBand(null.Holdout, 4)
+				assert.InDelta(t, 0.5, null.Accuracy, band, "%s null accuracy on %d held-out reads", set, null.Holdout)
 
-			control, _, err := pt.HoldoutAccuracy(a, pt.GCSkewed(b, 0.7, 3))
-			require.NoError(t, err)
-			assert.Greater(t, control, 0.9, "GC-skewed control accuracy")
-			t.Logf("%s: null %.4f (band ±%.4f, %d held out), control %.4f", platform, null, band, n, control)
+				gcAcc, err := pt.HoldoutAccuracyFor(set, a, gc, 0)
+				require.NoError(t, err)
+				qAcc, err := pt.HoldoutAccuracyFor(set, a, alt, 0)
+				require.NoError(t, err)
+				if set != pt.FeatureQuality {
+					assert.Greater(t, gcAcc.Accuracy, 0.9, "%s GC-skewed control accuracy", set)
+				}
+				if set != pt.FeatureSequence {
+					assert.Greater(t, qAcc.Accuracy, 0.9, "%s quality-model control accuracy", set)
+				}
+				t.Logf("%s %s: null %.4f (band ±%.4f, %d held out), GC control %.4f, quality control %.4f",
+					platform, set, null.Accuracy, band, null.Holdout, gcAcc.Accuracy, qAcc.Accuracy)
+			}
 		})
 	}
 }
 
 // TestRealReads compares real reads with generated ones when a FASTQ is
 // supplied in PHANTOM_REAL_FASTQ (platform from PHANTOM_REAL_PLATFORM,
-// default illumina_novaseq_6000). The accuracy is reported, not graded; the
-// test fails only if the classifier has no power on reads of this length
-// (a 0.2 GC shift of the real reads must be detected).
+// default illumina_novaseq_6000; PHANTOM_REAL_READS reads, default 2000).
+// Reads are generated from uniform random bases, or from the reference
+// FASTA in PHANTOM_REFERENCE (optionally only PHANTOM_REGION of it).
+//
+// For each feature set the real-versus-generated accuracy is reported, not
+// graded. The test fails if alternate halves of the real reads can be told
+// apart (the real-versus-real null, outside 0.5 ± 4σ), or if a feature set
+// has no power on the real reads: a 0.3 GC shift must be detected by the
+// sets with sequence features, a one-Phred quality shift by the sets with
+// quality features. (Real reads vary in GC far more from read to read than
+// uniform ones, so 0.2, the shift used on generated reads, is not enough:
+// on 1000 real NovaSeq reads it gives 0.896.)
 func TestRealReads(t *testing.T) {
 	path := os.Getenv("PHANTOM_REAL_FASTQ")
 	if path == "" {
@@ -127,34 +151,53 @@ func TestRealReads(t *testing.T) {
 	if platform == "" {
 		platform = pt.IlluminaNovaSeq6000
 	}
-	real, err := pt.LoadFASTQ(path, 2000)
+	n := 2000
+	if s := os.Getenv("PHANTOM_REAL_READS"); s != "" {
+		var err error
+		n, err = strconv.Atoi(s)
+		require.NoError(t, err, "PHANTOM_REAL_READS")
+	}
+	real, err := pt.LoadFASTQ(path, n)
 	require.NoError(t, err)
-	require.GreaterOrEqual(t, len(real.Sequences), 4, "need at least four real reads")
+	require.GreaterOrEqual(t, len(real.Sequences), 8, "need at least eight real reads")
 
 	f := pt.NewE2EFramework()
 	c := f.CreatePlatformConfig(platform, "CEU")
 	require.NotNil(t, c, "unknown PHANTOM_REAL_PLATFORM %q", platform)
 	c.Reads = len(real.Sequences)
+	c.ReferencePath, c.ReferenceRegion = os.Getenv("PHANTOM_REFERENCE"), os.Getenv("PHANTOM_REGION")
+	if real.Stats.MinReadLength == real.Stats.MaxReadLength && c.ReadLengthDistribution.Dist == "" {
+		c.ReadLength = real.Stats.MinReadLength
+	}
 	synth := generateOrSkip(t, f, c)
-
-	acc, n, err := pt.HoldoutAccuracy(real, synth)
-	require.NoError(t, err)
-	t.Logf("real (%s, %d reads) vs %s: accuracy %.4f on %d held-out reads (chance band 0.5 ± %.4f)",
-		path, len(real.Sequences), platform, acc, n, pt.ChanceBand(n, 4))
+	t.Logf("real (%s, %d reads) vs %s generated from %s %s %s", path, len(real.Sequences), platform, c.BaseSource(), c.ReferencePath, c.ReferenceRegion)
 	t.Logf("real stats %+v; generated stats %+v", real.Stats, synth.Stats)
 
-	even, odd := &pt.SyntheticData{}, &pt.SyntheticData{}
-	for i, s := range real.Sequences {
-		if i%2 == 0 {
-			even.Sequences = append(even.Sequences, s)
-		} else {
-			odd.Sequences = append(odd.Sequences, s)
+	even, odd := pt.SplitAlternate(real)
+	gcOdd := pt.GCSkewed(odd, odd.Stats.GCContent+0.3, 1)
+	qOdd := pt.QualityShifted(odd, 1)
+	for _, set := range pt.AllFeatureSets {
+		gen, err := pt.HoldoutAccuracyFor(set, real, synth, 5)
+		require.NoError(t, err)
+		t.Logf("%s (%s): real vs generated %.4f on %d held-out reads (chance band 0.5 ± %.4f); top features %+v",
+			set, gen.Classifier, gen.Accuracy, gen.Holdout, pt.ChanceBand(gen.Holdout, 4), gen.Top)
+
+		null, err := pt.HoldoutAccuracyFor(set, even, odd, 0)
+		require.NoError(t, err)
+		band := pt.ChanceBand(null.Holdout, 4)
+		assert.InDelta(t, 0.5, null.Accuracy, band, "%s: real vs real (alternate halves) on %d held-out reads", set, null.Holdout)
+
+		if set != pt.FeatureQuality {
+			power, err := pt.HoldoutAccuracyFor(set, even, gcOdd, 0)
+			require.NoError(t, err)
+			assert.Greater(t, power.Accuracy, 0.9, "%s: power on real reads (GC +0.3)", set)
+		}
+		if set != pt.FeatureSequence {
+			power, err := pt.HoldoutAccuracyFor(set, even, qOdd, 0)
+			require.NoError(t, err)
+			assert.Greater(t, power.Accuracy, 0.9, "%s: power on real reads (quality −1)", set)
 		}
 	}
-	odd.Stats = pt.ComputeReadStats(odd.Sequences, nil)
-	power, _, err := pt.HoldoutAccuracy(even, pt.GCSkewed(odd, odd.Stats.GCContent+0.2, 1))
-	require.NoError(t, err)
-	assert.Greater(t, power, 0.9, "classifier power on real reads (GC +0.2)")
 }
 
 // TestConcurrentGeneration generates every modeled platform concurrently

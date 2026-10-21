@@ -183,6 +183,20 @@ func (nb *MultinomialNB) PredictProba(feature []float64) [2]float64 {
 	}
 }
 
+// LogOdds returns log P(class=1|x) − log P(class=0|x); 0 when untrained.
+func (nb *MultinomialNB) LogOdds(feature []float64) float64 {
+	if !nb.trained {
+		return 0
+	}
+	lo := nb.logPrior[1] - nb.logPrior[0]
+	for k, v := range feature {
+		if v > 0 {
+			lo += v * (nb.logTheta[1][k] - nb.logTheta[0][k])
+		}
+	}
+	return lo
+}
+
 // CrossValidate performs k-fold stratified cross-validation and returns the
 // mean and standard deviation of per-fold accuracy.
 //
