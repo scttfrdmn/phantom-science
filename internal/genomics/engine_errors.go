@@ -6,7 +6,10 @@ package genomics
 //
 //   - qualityModel is called once per output stream and returns a function
 //     that produces n Phred scores (0..93, not ASCII) for one read of mate
-//     (1, or 2 for the second read of a pair). It must draw only from r.
+//     (1, or 2 for the second read of a pair). seq is the read's bases in
+//     sequencing orientation (len(seq) == n) before sequencing errors, or
+//     nil where qualities are drawn before the bases (the legacy flows of
+//     ONT and linear Illumina qualities). It must draw only from r.
 //   - errorModel is called once per output stream and returns a function
 //     applied to every read after variant injection and trimming, before the
 //     header is formatted. It receives the read's bases and Phred qualities
@@ -22,7 +25,9 @@ package genomics
 //     tier, ONT reads get the linear decay and no errors.
 //   - Illumina, quality_model "binned" (the default): qualities in the
 //     NovaSeq 6000 bins (Q2/Q11/Q25/Q37) from package illumina, fitted to
-//     run DRR276626, and with errors "quality" (the default for binned)
+//     run DRR276626 and drawn given the read's bases (each cycle's Q11 and
+//     Q25 probabilities depend on its 4-base context, #35), and with errors
+//     "quality" (the default for binned)
 //     substitutions at the measured rate of each bin and cycle, with the
 //     measured spectrum, and Q2 bases written as N. The binned model
 //     replaces HMM qualities.
@@ -88,25 +93,29 @@ func (e *Engine) binnedQualities() bool {
 
 // qualityModel returns the quality generator for reads without HMM
 // qualities (and, for binned Illumina qualities, for every read).
-func (e *Engine) qualityModel() (func(r *rand.Rand, n, mate int) []byte, error) {
+func (e *Engine) qualityModel() (func(r *rand.Rand, seq []byte, n, mate int) []byte, error) {
 	m, err := e.tierModel()
 	if err != nil {
 		return nil, err
 	}
 	if m != nil {
-		return func(r *rand.Rand, n, _ int) []byte { return m.Qualities(r, n) }, nil
+		return func(r *rand.Rand, _ []byte, n, _ int) []byte { return m.Qualities(r, n) }, nil
 	}
 	if e.binnedQualities() {
 		r1, r2 := illumina.ParamsFor(1), illumina.ParamsFor(2)
-		return func(r *rand.Rand, n, mate int) []byte {
+		return func(r *rand.Rand, seq []byte, n, mate int) []byte {
+			q := r1
 			if mate == 2 {
-				return r2.Qualities(r, n)
+				q = r2
 			}
-			return r1.Qualities(r, n)
+			if len(seq) != n {
+				return q.Qualities(r, n)
+			}
+			return q.QualitiesFor(r, seq)
 		}, nil
 	}
 	base, decay := e.config.BaseQuality, e.config.QualityDecay
-	return func(_ *rand.Rand, n, _ int) []byte {
+	return func(_ *rand.Rand, _ []byte, n, _ int) []byte {
 		q := make([]byte, n)
 		for i := range q {
 			v := base - int(float64(i)*decay)

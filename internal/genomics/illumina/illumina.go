@@ -46,6 +46,26 @@
 //     with probability StickLow, a Q25 cycle with StickMid, with the other
 //     draws adjusted so the cycle's distribution is unchanged) matches the
 //     measured P(Q11 | Q11) and P(Q25 | Q25) of adjacent cycles.
+//   - Qualities depend on the read's bases (QualitiesFor, #35). In
+//     DRR276626 read 1 the mean Q of T is 36.09, of A 36.21, of G 36.28 and
+//     of C 36.36, and the 4-base context (two bases before, the base, one
+//     after) matters more: P(Q25) is 0.047 at T followed by T and 0.019 at
+//     C followed by A; after GG, read 2 has P(Q11) 0.060 at G and 0.018 at
+//     C. The effect differs between read classes: in good reads low calls
+//     fall at A/T-rich contexts (TTT about twice the average), in the
+//     poorest at G/C-rich ones. So each class k multiplies its P(Q11) and
+//     P(Q25) at a cycle by factors F_k(x) of the cycle's context x
+//     (ReadClass.Context, 256 contexts), measured within the reads of each
+//     class against the calls expected from the read's own counts, and
+//     normalised to average 1 over the sample's context frequencies (the
+//     per-cycle fractions and class levels are unchanged for reads of that
+//     composition). Contexts past the read's ends or with N average over
+//     the bases they could be.
+//
+// The context factors were measured on called bases; the engine applies
+// them to the true bases of the fragment and then draws substitutions from
+// the qualities, which moves some low calls to the substituted base (by up
+// to 0.04 in a base's mean Q).
 //
 // Read 2 has its own parameters (it has more Q11 and Q25 than read 1, as on
 // every Illumina instrument).
@@ -74,11 +94,19 @@
 //
 // The reads come from one tile of one lane of one run and one library;
 // other runs, instruments (NovaSeq X uses other bins) and read lengths are
-// not measured. Beyond 151 cycles the curves are extrapolated. Qualities do
-// not depend on the sequence (in real reads low bins are commoner at T).
-// No-calls are placed independently at the measured rate (real no-calls
-// come in whole-cycle events: the 11 N of DRR276626's sample are all at
-// read 1 cycle 22).
+// not measured. Beyond 151 cycles the curves are extrapolated. The context
+// factors do not change with cycle (some do in the real reads: after GG on
+// read 2 the excess of Q11 is largest in the first 30 cycles). A read's
+// class does not depend on its sequence, but real reads that are GC-rich
+// (above about 0.65), GC-poor (below 0.2) or have a long homopolymer (12
+// or more) are poorer, as are artefacts such as read 2 poly-G
+// (results/class_reads.tsv); so P(Q11) by context follows the measured one
+// less closely than P(Q25). Making the class depend on GC and homopolymer
+// length was tried: it did not measurably reduce the real-versus-generated
+// accuracy (#35) and, with reads sampled from GRCh38, which lack the artefacts,
+// raised read 2's mean Q by 0.07. No-calls are placed independently at the
+// measured rate (real no-calls come in whole-cycle events: the 11 N of
+// DRR276626's sample are all at read 1 cycle 22).
 //
 // # Insert sizes
 //
@@ -115,6 +143,93 @@ const maxLow = 0.98
 type ReadClass struct {
 	Weight   float64
 	Low, Mid float64
+	// Context, when set, multiplies the class's Q11 and Q25 probabilities
+	// at a cycle by factors of the cycle's sequence context
+	// (QualitiesFor); nil means no context effect.
+	Context *ContextFactors
+}
+
+// ContextFactors are the factors by which a read class's P(Q11) and P(Q25)
+// at a cycle depend on the cycle's 4-base context: the bases two before,
+// one before, at and one after the cycle, in sequencing orientation.
+// Low[x] and Mid[x] are indexed by ContextIndex.
+type ContextFactors struct {
+	Low, Mid [256]float64
+	// ext[e] holds the Low and Mid factors of a context with unknown
+	// positions (past the read's ends, or not A/C/G/T), averaged over the
+	// contexts that match its known bases with weights contextFreq; e is
+	// 125·s(−2) + 25·s(−1) + 5·s(0) + s(+1) with s = 4 for unknown. For
+	// fully known contexts it holds Low and Mid.
+	ext [625][2]float64
+}
+
+// NewContextFactors returns the factors low and mid (indexed by
+// ContextIndex) with the averages for contexts with unknown bases
+// precomputed.
+func NewContextFactors(low, mid [256]float64) *ContextFactors {
+	f := &ContextFactors{Low: low, Mid: mid}
+	for e := range f.ext {
+		s := [4]int{e / 125, e / 25 % 5, e / 5 % 5, e % 5}
+		var l, m, w float64
+		for x := range 256 {
+			d := [4]int{x >> 6, x >> 4 & 3, x >> 2 & 3, x & 3}
+			if (s[0] != 4 && s[0] != d[0]) || (s[1] != 4 && s[1] != d[1]) ||
+				(s[2] != 4 && s[2] != d[2]) || (s[3] != 4 && s[3] != d[3]) {
+				continue
+			}
+			pi := contextFreq[x]
+			l += float64(pi * low[x])
+			m += float64(pi * mid[x])
+			w += pi
+		}
+		f.ext[e] = [2]float64{1, 1}
+		if w > 0 {
+			f.ext[e] = [2]float64{l / w, m / w}
+		}
+	}
+	return f
+}
+
+// ContextIndex returns the index 64·b(−2) + 16·b(−1) + 4·b(0) + b(+1) of
+// the context of A/C/G/T bases b (A, C, G, T = 0-3) in ContextFactors, or
+// -1 if a byte is not A, C, G or T.
+func ContextIndex(prev2, prev, base, next byte) int {
+	x := 0
+	for _, b := range [4]byte{prev2, prev, base, next} {
+		i := baseIndex[b]
+		if i < 0 {
+			return -1
+		}
+		x = x<<2 | int(i)
+	}
+	return x
+}
+
+// contextSymbol maps A, C, G, T (either case) to 0-3 and every other byte
+// to 4 (unknown).
+var contextSymbol = func() (t [256]uint8) {
+	for i := range t {
+		t[i] = 4
+	}
+	for i := range len(acgt) {
+		b := acgt[i]
+		t[b], t[b+'a'-'A'] = uint8(i), uint8(i) // #nosec G115 -- i < 4
+	}
+	return t
+}()
+
+// contextAt returns the extended context index (see ContextFactors.ext) of
+// 0-based cycle c of seq.
+func contextAt(seq []byte, c int) int {
+	e := 0
+	for i := c - 2; i <= c+1; i++ {
+		s := 4
+		if i >= 0 && i < len(seq) {
+			s = int(contextSymbol[seq[i]])
+		}
+		e = e*5 + s
+	}
+	return e
 }
 
 // QualityParams parameterises the binned quality model of one mate (see
@@ -172,7 +287,13 @@ func (p QualityParams) means(c, n int, j *int) (low, mid float64) {
 // classTarget returns class k's distribution over Bins given the mean
 // fractions.
 func (p QualityParams) classTarget(k ReadClass, low, mid float64) [4]float64 {
-	a, b := float64(k.Low*low), float64(k.Mid*mid)
+	return p.contextTarget(k, low, mid, [2]float64{1, 1})
+}
+
+// contextTarget returns class k's distribution over Bins given the mean
+// fractions and the context factors f of Q11 and Q25 (1, 1 for none).
+func (p QualityParams) contextTarget(k ReadClass, low, mid float64, f [2]float64) [4]float64 {
+	a, b := float64(float64(k.Low*low)*f[0]), float64(float64(k.Mid*mid)*f[1])
 	if s := a + b; s > maxLow {
 		a, b = a*maxLow/s, b*maxLow/s
 	}
@@ -224,9 +345,52 @@ func pick(w [4]float64, u float64) byte {
 	return QHigh
 }
 
-// Qualities returns n binned Phred scores (not ASCII) for one read, drawing
-// one value from r for the read's class and one per cycle.
+// TargetFor returns the distribution over Bins at 0-based cycle c of the
+// read seq (sequencing orientation), averaged over the read classes, with
+// each class's factors of the cycle's context in seq.
+func (p QualityParams) TargetFor(seq []byte, c int) [4]float64 {
+	j := 0
+	low, mid := p.means(c, len(seq), &j)
+	e := contextAt(seq, c)
+	var t [4]float64
+	w := 0.0
+	for _, k := range p.Classes {
+		f := [2]float64{1, 1}
+		if k.Context != nil {
+			f = k.Context.ext[e]
+		}
+		ct := p.contextTarget(k, low, mid, f)
+		for i := range t {
+			t[i] += float64(k.Weight * ct[i])
+		}
+		w += k.Weight
+	}
+	for i := range t {
+		t[i] /= w
+	}
+	return t
+}
+
+// Qualities returns n binned Phred scores (not ASCII) for one read without
+// a sequence (no context factors), drawing one value from r for the read's
+// class and one per cycle.
 func (p QualityParams) Qualities(r *rand.Rand, n int) []byte {
+	return p.qualities(r, nil, n)
+}
+
+// QualitiesFor returns binned Phred scores (not ASCII) for the bases seq of
+// one read in sequencing orientation (seq[i] is read at cycle i): the
+// probabilities of Q11 and Q25 at each cycle are those of the read's class
+// times the class's factors of the cycle's context (ReadClass.Context). It
+// draws from r as Qualities does: one value for the read's class and one
+// per cycle.
+func (p QualityParams) QualitiesFor(r *rand.Rand, seq []byte) []byte {
+	return p.qualities(r, seq, len(seq))
+}
+
+// qualities draws n qualities, with the context factors of seq unless seq
+// is nil.
+func (p QualityParams) qualities(r *rand.Rand, seq []byte, n int) []byte {
 	q := make([]byte, n)
 	if n == 0 {
 		return q
@@ -235,7 +399,11 @@ func (p QualityParams) Qualities(r *rand.Rand, n int) []byte {
 	j := 0
 	for c := range q {
 		low, mid := p.means(c, n, &j)
-		t := p.classTarget(k, low, mid)
+		f := [2]float64{1, 1}
+		if seq != nil && k.Context != nil {
+			f = k.Context.ext[contextAt(seq, c)]
+		}
+		t := p.contextTarget(k, low, mid, f)
 		// r.Float64 is inlined as an exact product by 2^-53; the conversion
 		// keeps it from being fused into u - rho below (internal/fmacheck).
 		u := float64(r.Float64())

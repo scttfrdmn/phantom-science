@@ -31,18 +31,21 @@ import (
 
 // goldenWant maps each case to the SHA-256 of its output. Pinned on
 // darwin/arm64 at the change that moved the output path to internal/detmath
-// (#33); the same values were produced there by v0.10.1.
+// (#33); the same values were produced there by v0.10.1. The Illumina
+// binned cases (and the scenario and HMM cases, which use binned
+// qualities) were re-pinned when qualities came to depend on the read's
+// bases (#35).
 var goldenWant = map[string]string{
-	"illumina binned paired":               "20d5ea5a8d5dbf6f8ac06e550d0e96542672d3b049b7ea9d3e23f5ad32251019",
-	"illumina reference paired":            "68ee5f9a8730e7bfab753839d5e0225af7dcab4860c5a8fc8193d53a3a7b6baf",
-	"illumina lognormal inserts and reads": "cf08b7f96f5bd71ad86be9db2f731e9436514a9bcb9572c0fead5e435a136150",
+	"illumina binned paired":               "5357ac1686587da94cb76d5090e83d0933f9ed64bc9920a0b1bf1685ea7bbd28",
+	"illumina reference paired":            "2e641560f5426c823495ea8c036cb19c0d88359d85c593d4dd13662ea79577c0",
+	"illumina lognormal inserts and reads": "6af43b9c170c5a6b402c2b08d8ff0b78489fe13c37b9b063591994db943b58af",
 	"ont hac lognormal":                    "be4106e6e7c7124f5bf7b9cb241f322e366c2c7b05f9c822828aa9713186e962",
 	"ont fast gamma":                       "d953196a6882cd0a44f4dcf8e6400204d178fe4857a0cedb85b1a228fda3aa31",
 	"signal dna":                           "682455f7f9c12b82beea715ea5c77482d68a82e319985039ba05410d0b7c26c0",
 	"signal rna":                           "975c142bf9974b7d2931885273c1b1e4a9000a3ab6d8521d38ae2826847c7002",
 	"transcriptome":                        "88585ae93756fa5a87a407761187024afc757fff36d0688f010d6e3af6bbe840",
-	"scenario trio":                        "e1fc2b5f3b7c53d4585e9a91f4c4f38f4d7c49ed5711e9c84428da08f686be17",
-	"hmm train and generate":               "324aee7b5f6caf72a035fd9a89b0a7bbf8398b91e343d0fc076f78ec5cfdd537",
+	"scenario trio":                        "9ffb2320a68602130d6c9faffd551e57a8d1ed5a17da070ee423b7fb2a63e7be",
+	"hmm train and generate":               "b1291a9c1e383039705d194d4313b68ebea6f696b380ac17cd8f74f851451a81",
 }
 
 func goldenBinary(t *testing.T) string {

@@ -5,6 +5,7 @@ package illumina
 import (
 	"bufio"
 	"math"
+	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -131,6 +132,7 @@ func loadReal(t *testing.T) [2]realMate {
 // than read 1, as measured.
 func TestCalibration_QualitiesMatchNovaSeq(t *testing.T) {
 	real := loadReal(t)
+	loadReadCells(t)
 	const reads = 100000
 	var genMean [2]float64
 	for i, p := range []QualityParams{Read1, Read2} {
@@ -139,7 +141,7 @@ func TestCalibration_QualitiesMatchNovaSeq(t *testing.T) {
 		if n != 151 {
 			t.Fatalf("read %d: %d measured cycles, want 151", i+1, n)
 		}
-		s := generate(p, uint64(10+i), reads, n)
+		s := generate(p, uint64(10+i), reads, n, func(r *rand.Rand, n int) []byte { return humanBasesMate(r, n, i) })
 		for b := 1; b < 4; b++ {
 			sum, worst, at := 0.0, 0.0, 0
 			for c := range n {

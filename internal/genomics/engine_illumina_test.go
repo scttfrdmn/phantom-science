@@ -167,6 +167,42 @@ func (s *recordingSampler) sample(r *rand.Rand, n int) (string, int64, bool, []b
 	return "chrT", int64(len(s.frags)) * 1000, false, bytes.Clone(f), nil
 }
 
+// Each mate's binned qualities are drawn for its own bases in sequencing
+// orientation (#35): R1 for the start of the fragment, R2 for the reverse
+// complement of its end, from the mate's stream, before errors. Errors off,
+// the pipeline's mate gives exactly illumina.ParamsFor(mate).QualitiesFor
+// on those bases with the same stream.
+func TestIllumina_QualitiesFollowMateBases(t *testing.T) {
+	c := binnedConfig(t.TempDir())
+	c.Illumina.Errors = types.IlluminaErrorsNone
+	e := NewEngine(c)
+	defer e.Close()
+	p, err := e.newPipeline(GenerateOpts{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := rand.New(rand.NewPCG(35, 1)) // #nosec G404 -- test data
+	const acgt = "ACGT"
+	for i := range 50 {
+		frag := make([]byte, 200+i)
+		for j := range frag {
+			frag[j] = acgt[src.IntN(4)]
+		}
+		for _, mate := range []int{1, 2} {
+			want := append([]byte(nil), frag[:c.ReadLength]...)
+			if mate == 2 {
+				want = seqread.ReverseComplement(frag[len(frag)-c.ReadLength:])
+			}
+			seed := uint64(100*i + mate)
+			seq, qual := p.mate(rand.New(rand.NewPCG(seed, 2)), frag, c.ReadLength, mate)        // #nosec G404 -- test stream
+			wantQ := illumina.ParamsFor(mate).QualitiesFor(rand.New(rand.NewPCG(seed, 2)), want) // #nosec G404 -- test stream
+			if string(seq) != string(want) || string(qual) != string(wantQ) {
+				t.Fatalf("fragment %d mate %d: qualities not drawn for the mate's bases in sequencing orientation", i, mate)
+			}
+		}
+	}
+}
+
 // With errors off, R1 is the start of the fragment and R2 the reverse
 // complement of its end; insert sizes follow the configured distribution.
 // The fragment hook (FragmentSampler) shows the truth.

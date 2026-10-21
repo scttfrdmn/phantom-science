@@ -132,7 +132,7 @@ type readPipeline struct {
 	e            *Engine
 	sampleLength func(r *rand.Rand) int
 	fixedLength  bool
-	qualities    func(r *rand.Rand, n, mate int) []byte
+	qualities    func(r *rand.Rand, seq []byte, n, mate int) []byte
 	applyErrors  func(r *rand.Rand, seq, qual []byte) ([]byte, []byte)
 	header       func(r *rand.Rand, rec *seqread.Record) (string, string)
 	observer     ReadObserver
@@ -409,7 +409,7 @@ func (p *readPipeline) mate(r *rand.Rand, frag []byte, length, mate int) ([]byte
 	} else {
 		seq = append([]byte(nil), frag[:length]...)
 	}
-	qual := p.qualities(r, length, mate)
+	qual := p.qualities(r, seq, length, mate)
 	if p.applyErrors != nil {
 		seq, qual = p.applyErrors(r, seq, qual)
 	}
@@ -492,9 +492,9 @@ func (p *readPipeline) read(r *rand.Rand, length int, readStart int64) ([]byte, 
 	var seq, qual []byte
 	var err error
 	if p.legacy {
-		seq, qual, err = p.bases(r, length, readStart, p.fixedLength, func(n int) []byte { return p.qualities(r, n, 1) })
+		seq, qual, err = p.bases(r, length, readStart, p.fixedLength, func(n int) []byte { return p.qualities(r, nil, n, 1) })
 	} else if seq, _, err = p.bases(r, length, readStart, p.fixedLength, nil); err == nil {
-		qual = p.qualities(r, len(seq), 1)
+		qual = p.qualities(r, seq, len(seq), 1)
 	}
 	if err != nil {
 		return nil, nil, err

@@ -78,11 +78,20 @@ type genStats struct {
 	sum       float64  // sum of Phred values
 }
 
-func generate(p QualityParams, seed uint64, reads, n int) genStats {
+// generate draws reads quality strings of n cycles: without a sequence
+// (Qualities) when bases is nil, else for reads drawn by bases
+// (QualitiesFor).
+func generate(p QualityParams, seed uint64, reads, n int, bases func(r *rand.Rand, n int) []byte) genStats {
 	r := newRand(seed)
+	sr := newRand(seed + 1000)
 	s := genStats{reads: reads, perCycle: make([][4]int, n), lowCounts: make([]int, n+1)}
 	for range reads {
-		q := p.Qualities(r, n)
+		var q []byte
+		if bases == nil {
+			q = p.Qualities(r, n)
+		} else {
+			q = p.QualitiesFor(r, bases(sr, n))
+		}
 		low := 0
 		for c, v := range q {
 			i := binIndex(v)
@@ -113,7 +122,7 @@ func TestQualities_FrequenciesMatchTarget(t *testing.T) {
 		p QualityParams
 		n int
 	}{{Read1, 151}, {Read2, 151}, {Read2, 251}} {
-		s := generate(tc.p, 2, reads, tc.n)
+		s := generate(tc.p, 2, reads, tc.n, nil)
 		bad := 0
 		for c := range tc.n {
 			want := tc.p.Target(c, tc.n)
