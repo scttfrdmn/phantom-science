@@ -20,6 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - The harness's holdout split dropped qualities and headers (#29).
 
+### Security
+- The Go toolchain is pinned to go1.26.10, which fixes GO-2026-6809 in `crypto/x509` (go1.26.9 was affected).
+
 ## [0.10.2] - 2026-10-20
 
 ### Added

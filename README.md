@@ -54,7 +54,7 @@ on `main` but not in a tagged release yet.
 
 ## Install
 
-Requires Go 1.24.4 or later. `go.mod` pins the go1.26.9 toolchain, which the
+Requires Go 1.24.4 or later. `go.mod` pins the go1.26.10 toolchain, which the
 `go` command downloads automatically. Reading quality-score fingerprints
 from files made by 0.9.0 and earlier also needs a C toolchain and Rust
 (`cargo`) to build the [stegano](https://github.com/scttfrdmn/stegano)

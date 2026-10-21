@@ -2,7 +2,7 @@ module github.com/scttfrdmn/phantom-science
 
 go 1.24.4
 
-toolchain go1.26.9
+toolchain go1.26.10
 
 require (
 	github.com/aws/aws-sdk-go v1.55.7

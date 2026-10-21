@@ -2,7 +2,7 @@
 
 ## Requirements
 
-- Go 1.24.4 or later. `go.mod` pins the go1.26.9 toolchain, which the `go`
+- Go 1.24.4 or later. `go.mod` pins the go1.26.10 toolchain, which the `go`
   command downloads automatically.
 - For fingerprinting (CGO builds): a C toolchain and Rust (`cargo`), to build
   the stegano library.
