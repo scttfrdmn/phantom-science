@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	Version   = "0.10.2"
+	Version   = "0.11.0"
 	BuildDate = "2026-10-20"
 )
 
