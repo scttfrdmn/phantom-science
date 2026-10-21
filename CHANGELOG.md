@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-10-21
+
 ### Added
 - `illumina.QualityParams.QualitiesFor(r, seq)` and context factors; the calibration script also measures qualities by sequence context and read class (#35).
 
@@ -581,7 +583,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Basic FASTQ file generation with a flag-based command-line interface and sequencer configuration files.
 
-[Unreleased]: https://github.com/scttfrdmn/phantom-science/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/scttfrdmn/phantom-science/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/scttfrdmn/phantom-science/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/scttfrdmn/phantom-science/compare/v0.10.2...v0.11.0
 [0.10.2]: https://github.com/scttfrdmn/phantom-science/compare/v0.10.1...v0.10.2
 [0.10.1]: https://github.com/scttfrdmn/phantom-science/compare/v0.10.0...v0.10.1
