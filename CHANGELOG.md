@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `generate --variants` works in file output, with the same rules as `--stdout` (#32).
+  - Allele draws happen once per read, or once per fragment for pairs, so both mates carry the same allele.
+  - With `--reference`, REF alleles are checked; `--strict-ref` fails before anything is written.
+  - Without a reference, `--region` places the reads.
+  - New config keys `variants_path` and `variants_region`.
+- File output with variants writes `<name>.variants.tsv` per batch (role `truth`): read name, read number, CHROM, POS, ID, REF, ALT, the allele drawn, and its offset (#32).
+- The manifest records the VCF as `variants` (name, bytes, sha256; no path), and `verify --variants calls.vcf` regenerates such runs. Without the VCF, verify refuses (#32).
+
+### Changed
+- `--variants` and `--region` (without `--reference`) no longer require `--stdout`. `GenerateOpts` with nil `Variants`/`RefRegion` uses the configured `variants_path` (#32).
+
 ## [0.13.0] - 2026-10-23
 
 ### Added

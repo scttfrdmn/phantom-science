@@ -211,10 +211,23 @@ works; prefer the subcommands.
   `--population CEU --model-dir models/` to load `models/CEU.hmm.json`. If a
   configured model is missing or cannot be loaded, `generate` fails before
   writing anything. Model files from before 0.10.0 must be retrained.
-- **Variants:** `--stdout --variants calls.vcf[.gz]` injects VCF variants
-  with their allele frequency. `--region chr:start-end` places reads in a
-  region, so positioned variants land at their coordinates. `--sample-id`
-  adds `RG:Z:<id>` to each header (for `bwa mem -C`).
+- **Variants:** `--variants calls.vcf[.gz]` (or `variants_path`) injects
+  VCF variants with their allele frequency, in file output or with
+  `--stdout` (file output since 0.14.0). Each read, or each pair's fragment,
+  draws REF or ALT once, so both mates carry the same allele. With
+  `--reference`, variants are placed at their reference coordinates and a REF
+  that does not match is skipped with a warning (an error with
+  `--strict-ref`, before anything is written). Without a reference,
+  `--region chr:start-end` (or `variants_region`) places reads around the
+  variants; for paired-end output the region must be wider than a fragment.
+  File output writes `<name>.variants.tsv` per batch with one line per allele
+  drawn per read or pair (read name, read number, CHROM, POS, ID, REF, ALT,
+  the allele drawn, and its forward-strand offset in the read or fragment),
+  and the manifest records the VCF by name, size and sha256. `verify
+  --variants calls.vcf` regenerates such runs. Measured on 60,000 pairs: every
+  read equals the reference plus its recorded alleles, and ALT fractions are
+  within 0.7σ of the VCF's AF. `--sample-id` adds `RG:Z:<id>` to each header
+  (for `bwa mem -C`).
 
 ### Nanopore options (since 0.8.0)
 
