@@ -8,11 +8,13 @@ package genomics
 
 import (
 	"bytes"
+	"maps"
 	"math"
 	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -38,7 +40,11 @@ const binChars = "#,:F"
 // mateFiles generates c to files and returns the R1 and R2 records.
 func mateFiles(t *testing.T, c types.SequencerConfig) (r1, r2 []fastqRec) {
 	t.Helper()
-	for name, data := range fileOutputs(t, c) {
+	files := fileOutputs(t, c)
+	// Read the files in name order so batch n of R1 lines up with batch n
+	// of R2 (map order is random).
+	for _, name := range slices.Sorted(maps.Keys(files)) {
+		data := files[name]
 		switch {
 		case strings.Contains(name, "_R1_"):
 			r1 = append(r1, parseFASTQ(t, string(data))...)
