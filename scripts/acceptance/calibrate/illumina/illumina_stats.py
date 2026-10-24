@@ -14,6 +14,13 @@ Run with `python3 -I` (no third-party packages). Subcommands:
       FIT.tsv (written by fit_illumina.py), against their expected numbers
       without a context effect (#35).
 
+  pairs OUTDIR R1.fastq R2.fastq FIT.tsv
+      How the two mates' read classes go together: the joint distribution
+      of read 1's and read 2's quality class (FIT.tsv's per-mate classes),
+      fitted by EM to the pairs' Q11 and Q25 counts with the per-mate class
+      levels fixed (pair_classes.tsv), and the measured coupling of the
+      mates' qualities (pair_summary.tsv, #35).
+
   sam OUTDIR < name-grouped SAM (minimap2 output, with --MD)
       Substitution rate per quality and per cycle (primary alignments with
       MAPQ >= 30; mismatches from MD, indels and soft-clipped bases
@@ -313,6 +320,87 @@ def context_stats(outdir, paths, fit_path):
         os.path.join(outdir, "class_reads.tsv"),
         ["mate", "gc_bin", "gc_from", "homopolymer", "reads"] + [f"class{k}" for k in range(nk)],
         [[m, b, fmt(b / GC_BINS), h, v[0]] + [fmt(x) for x in v[1:]] for (m, b, h), v in sorted(gcs.items())],
+    )
+
+
+# ---------------------------------------------------------------- pairs
+
+PAIR_EM_ITERS = 300
+
+
+def pair_stats(outdir, paths, fit_path):
+    """Joint read classes of the mates (#35).
+
+    The classes of each mate (fit_illumina.py, fitted to that mate's reads
+    alone) give every read a likelihood under each class: Poisson Q11 and
+    Q25 counts with means m_kb * lambda_b. The pair's classes (k1, k2) get
+    weights W[k1][k2], fitted by EM to the pairs' four counts with those
+    likelihoods fixed, starting from independent mates (w1[k1] w2[k2]).
+    pair_classes.tsv holds W (and the log-likelihoods of independent and
+    coupled mates); fit_illumina.py rakes it to the per-mate weights.
+    pair_summary.tsv holds the measured coupling: the correlation of the
+    mates' Q11 + Q25 + Q2 counts and of their Q11 + Q2 counts (Phred < 20).
+    """
+    fits = read_classes(fit_path)
+    pairs = {}
+    low30, low20 = ([], []), ([], [])
+    for (s1, q1), (s2, q2) in zip(fastq_records(paths[0]), fastq_records(paths[1])):
+        k = (q1.count(","), q1.count(":"), q2.count(","), q2.count(":"))
+        pairs[k] = pairs.get(k, 0) + 1
+        for i, q in enumerate((q1, q2)):
+            n2 = q.count("#")
+            low30[i].append(k[2 * i] + k[2 * i + 1] + n2)
+            low20[i].append(k[2 * i] + n2)
+    rows = []
+    for (a, b, c, d), n in sorted(pairs.items()):
+        ls = []
+        for mate, (x, y) in ((1, (a, b)), (2, (c, d))):
+            classes, lam = fits[mate]
+            l = []
+            for _, m11, m25 in classes:
+                u, v = m11 * lam[0], m25 * lam[1]
+                l.append(x * math.log(u) - u + y * math.log(v) - v - math.lgamma(x + 1) - math.lgamma(y + 1))
+            mx = max(l)
+            ls.append((mx, [math.exp(t - mx) for t in l]))
+        rows.append((ls, n))
+    w1 = [w for w, _, _ in fits[1][0]]
+    w2 = [w for w, _, _ in fits[2][0]]
+    K1, K2 = len(w1), len(w2)
+    W = [[w1[i] * w2[j] for j in range(K2)] for i in range(K1)]
+    tot = sum(n for _, n in rows)
+
+    def step(W):
+        S = [[0.0] * K2 for _ in range(K1)]
+        ll = 0.0
+        for ((m1, e1), (m2, e2)), n in rows:
+            p = [[W[i][j] * e1[i] * e2[j] for j in range(K2)] for i in range(K1)]
+            z = sum(map(sum, p))
+            ll += n * (m1 + m2 + math.log(z))
+            for i in range(K1):
+                for j in range(K2):
+                    S[i][j] += n * p[i][j] / z
+        return [[S[i][j] / tot for j in range(K2)] for i in range(K1)], ll
+
+    _, ll_indep = step(W)
+    for _ in range(PAIR_EM_ITERS):
+        W, ll = step(W)
+    write_tsv(
+        os.path.join(outdir, "pair_classes.tsv"),
+        ["class_r1", "class_r2", "weight"],
+        [[i, j, fmt(W[i][j], 8)] for i in range(K1) for j in range(K2)],
+    )
+    write_tsv(
+        os.path.join(outdir, "pair_summary.tsv"),
+        ["key", "value"],
+        [
+            ["pairs", tot],
+            ["distinct_count_tuples", len(rows)],
+            ["loglik_independent", fmt(ll_indep, 10)],
+            ["loglik_coupled", fmt(ll, 10)],
+            ["em_iterations", PAIR_EM_ITERS],
+            ["lowq30_count_correlation", fmt(statistics.correlation(*low30))],
+            ["lowq20_count_correlation", fmt(statistics.correlation(*low20))],
+        ],
     )
 
 
@@ -657,6 +745,8 @@ def main(argv):
         fastq_stats(outdir, argv[3:5])
     elif cmd == "context" and len(argv) == 6:
         context_stats(outdir, argv[3:5], argv[5])
+    elif cmd == "pairs" and len(argv) == 6:
+        pair_stats(outdir, argv[3:5], argv[5])
     elif cmd == "sam" and len(argv) == 3:
         sam_stats(outdir, sys.stdin)
     else:

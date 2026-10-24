@@ -170,8 +170,8 @@ func (s *recordingSampler) sample(r *rand.Rand, n int) (string, int64, bool, []b
 // Each mate's binned qualities are drawn for its own bases in sequencing
 // orientation (#35): R1 for the start of the fragment, R2 for the reverse
 // complement of its end, from the mate's stream, before errors. Errors off,
-// the pipeline's mate gives exactly illumina.ParamsFor(mate).QualitiesFor
-// on those bases with the same stream.
+// the pipeline's mate gives exactly illumina.ParamsFor(mate).QualitiesForClass
+// on those bases with the same stream and class.
 func TestIllumina_QualitiesFollowMateBases(t *testing.T) {
 	c := binnedConfig(t.TempDir())
 	c.Illumina.Errors = types.IlluminaErrorsNone
@@ -194,8 +194,9 @@ func TestIllumina_QualitiesFollowMateBases(t *testing.T) {
 				want = seqread.ReverseComplement(frag[len(frag)-c.ReadLength:])
 			}
 			seed := uint64(100*i + mate)
-			seq, qual := p.mate(rand.New(rand.NewPCG(seed, 2)), frag, c.ReadLength, mate)        // #nosec G404 -- test stream
-			wantQ := illumina.ParamsFor(mate).QualitiesFor(rand.New(rand.NewPCG(seed, 2)), want) // #nosec G404 -- test stream
+			class := i%7 - 1                                                                                 // -1: drawn from the mate's stream
+			seq, qual := p.mate(rand.New(rand.NewPCG(seed, 2)), frag, c.ReadLength, mate, class)             // #nosec G404 -- test stream
+			wantQ := illumina.ParamsFor(mate).QualitiesForClass(rand.New(rand.NewPCG(seed, 2)), want, class) // #nosec G404 -- test stream
 			if string(seq) != string(want) || string(qual) != string(wantQ) {
 				t.Fatalf("fragment %d mate %d: qualities not drawn for the mate's bases in sequencing orientation", i, mate)
 			}
@@ -298,7 +299,8 @@ func TestIllumina_MatesShareVariantAllele(t *testing.T) {
 	c.ReadLength, c.ReadsPerBatch, c.TotalBatches = 250, 2000, 1
 	c.Illumina.Errors = types.IlluminaErrorsNone
 	c.Illumina.InsertSize = types.InsertSizeSpec{Mean: 350, SD: 50} // fragments fit the test region
-	const ref, alt = "ACGTACGTAC", "TTTTTTTTTT"
+	// 16 bases, so that neither occurs by chance in the random bases.
+	const ref, alt = "ACGTACGTACGTACGT", "TTTTTTTTTTTTTTTT"
 	opts := GenerateOpts{
 		RefRegion: &GenomicRegion{Chromosome: "chr1", Start: 1000, End: 1800},
 		Variants:  []VariantRecord{{Chromosome: "chr1", Position: 1400, Ref: ref, Alt: alt, Freq: 0.5}},
@@ -412,4 +414,48 @@ func TestIllumina_ConfigChecks(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "too small") {
 		t.Errorf("region smaller than the insert: err = %v", err)
 	}
+}
+
+// The two reads of a pair draw their quality classes together (#35): in
+// file output (the classes come from the batch's pair stream, which the R1
+// and R2 files each regenerate) and in interleaved streams, the mates'
+// counts of bases below Q30 are correlated as in the fitted run (0.37;
+// independent mates: 0).
+func TestIllumina_MateQualitiesCoupled(t *testing.T) {
+	c := binnedConfig(t.TempDir())
+	c.ReadsPerBatch, c.TotalBatches = 3000, 2
+	low := func(q string) float64 {
+		n := 0.0
+		for i := range len(q) {
+			if q[i]-'!' < 30 {
+				n++
+			}
+		}
+		return n
+	}
+	check := func(t *testing.T, r1, r2 []fastqRec) {
+		var sx, sy, sxx, syy, sxy float64
+		for i := range r1 {
+			x, y := low(r1[i].qual), low(r2[i].qual)
+			sx, sy, sxx, syy, sxy = sx+x, sy+y, sxx+x*x, syy+y*y, sxy+x*y
+		}
+		n := float64(len(r1))
+		got := (sxy - sx*sy/n) / math.Sqrt((sxx-sx*sx/n)*(syy-sy*sy/n))
+		t.Logf("correlation of the mates' low-quality counts %.3f over %d pairs", got, len(r1))
+		if got < 0.25 || got > 0.5 {
+			t.Errorf("correlation of the mates' low-quality counts %.3f, want about 0.37", got)
+		}
+	}
+	t.Run("files", func(t *testing.T) {
+		r1, r2 := mateFiles(t, c)
+		check(t, r1, r2)
+	})
+	t.Run("stream", func(t *testing.T) {
+		recs := parseFASTQ(t, string(streamOutput(t, c, GenerateOpts{})))
+		var r1, r2 []fastqRec
+		for i := 0; i < len(recs); i += 2 {
+			r1, r2 = append(r1, recs[i]), append(r2, recs[i+1])
+		}
+		check(t, r1, r2)
+	})
 }

@@ -9,7 +9,13 @@ package genomics
 //     (1, or 2 for the second read of a pair). seq is the read's bases in
 //     sequencing orientation (len(seq) == n) before sequencing errors, or
 //     nil where qualities are drawn before the bases (the legacy flows of
-//     ONT and linear Illumina qualities). It must draw only from r.
+//     ONT and linear Illumina qualities). class is the read's quality class
+//     drawn for the pair (pairClasses), or -1 for the model to draw it. It
+//     must draw only from r.
+//   - pairClasses is called once per output stream and returns nil, or a
+//     function that draws both mates' quality classes of one pair from r
+//     (the pair's shared stream), so that the R1 and R2 files regenerate
+//     the same classes.
 //   - errorModel is called once per output stream and returns a function
 //     applied to every read after variant injection and trimming, before the
 //     header is formatted. It receives the read's bases and Phred qualities
@@ -26,7 +32,8 @@ package genomics
 //   - Illumina, quality_model "binned" (the default): qualities in the
 //     NovaSeq 6000 bins (Q2/Q11/Q25/Q37) from package illumina, fitted to
 //     run DRR276626 and drawn given the read's bases (each cycle's Q11 and
-//     Q25 probabilities depend on its 4-base context, #35), and with errors
+//     Q25 probabilities depend on its 4-base context, #35; the two reads of
+//     a pair draw their quality classes together, #35), and with errors
 //     "quality" (the default for binned)
 //     substitutions at the measured rate of each bin and cycle, with the
 //     measured spectrum, and Q2 bases written as N. The binned model
@@ -93,17 +100,17 @@ func (e *Engine) binnedQualities() bool {
 
 // qualityModel returns the quality generator for reads without HMM
 // qualities (and, for binned Illumina qualities, for every read).
-func (e *Engine) qualityModel() (func(r *rand.Rand, seq []byte, n, mate int) []byte, error) {
+func (e *Engine) qualityModel() (func(r *rand.Rand, seq []byte, n, mate, class int) []byte, error) {
 	m, err := e.tierModel()
 	if err != nil {
 		return nil, err
 	}
 	if m != nil {
-		return func(r *rand.Rand, _ []byte, n, _ int) []byte { return m.Qualities(r, n) }, nil
+		return func(r *rand.Rand, _ []byte, n, _, _ int) []byte { return m.Qualities(r, n) }, nil
 	}
 	if e.binnedQualities() {
 		r1, r2 := illumina.ParamsFor(1), illumina.ParamsFor(2)
-		return func(r *rand.Rand, seq []byte, n, mate int) []byte {
+		return func(r *rand.Rand, seq []byte, n, mate, class int) []byte {
 			q := r1
 			if mate == 2 {
 				q = r2
@@ -111,11 +118,11 @@ func (e *Engine) qualityModel() (func(r *rand.Rand, seq []byte, n, mate int) []b
 			if len(seq) != n {
 				return q.Qualities(r, n)
 			}
-			return q.QualitiesFor(r, seq)
+			return q.QualitiesForClass(r, seq, class)
 		}, nil
 	}
 	base, decay := e.config.BaseQuality, e.config.QualityDecay
-	return func(_ *rand.Rand, _ []byte, n, _ int) []byte {
+	return func(_ *rand.Rand, _ []byte, n, _, _ int) []byte {
 		q := make([]byte, n)
 		for i := range q {
 			v := base - int(float64(i)*decay)
@@ -129,6 +136,20 @@ func (e *Engine) qualityModel() (func(r *rand.Rand, seq []byte, n, mate int) []b
 		}
 		return q
 	}, nil
+}
+
+// pairClasses returns the draw of a pair's two quality classes, or nil when
+// the mates' qualities are drawn independently (single-end reads, models
+// other than binned Illumina qualities). It draws one value from r.
+func (e *Engine) pairClasses() func(r *rand.Rand) [2]int {
+	if !e.config.PairedEnd || !e.binnedQualities() || !illumina.NovaSeqPairs.Coupled() {
+		return nil
+	}
+	pp := illumina.NovaSeqPairs
+	return func(r *rand.Rand) [2]int {
+		k1, k2 := pp.Classes(r.Float64())
+		return [2]int{k1, k2}
+	}
 }
 
 // errorModel returns the sequencing-error model, or nil for none: the ONT

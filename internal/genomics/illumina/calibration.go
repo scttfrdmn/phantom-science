@@ -47,6 +47,21 @@ var Read2 = QualityParams{
 	NoCall: 1.82119e-07,
 }
 
+// NovaSeqPairs couples the read classes of a pair's two reads:
+// Joint[k1][k2] is the share of pairs whose read 1 is in class k1 of
+// Read1 and read 2 in class k2 of Read2 (its margins are the class
+// weights).
+var NovaSeqPairs = PairParams{
+	Joint: [][]float64{
+		{0.381925, 0.125761, 0.01431, 0.00646301, 0.00533744, 0.00286073},
+		{0.127171, 0.151276, 0.0227579, 0.00540342, 0.00312809, 0.00175312},
+		{0.0171538, 0.0353898, 0.0210349, 0.004886, 0.0013233, 0.000659345},
+		{0.00562351, 0.00875752, 0.014069, 0.00817426, 0.00199811, 0.000525914},
+		{0.00399402, 0.00310287, 0.00416306, 0.00698041, 0.00394153, 0.000416321},
+		{0.00277351, 0.00172462, 0.000925485, 0.00108644, 0.00236313, 0.00078683},
+	},
+}
+
 // NovaSeqErrors is the substitution model measured against GRCh38.
 var NovaSeqErrors = ErrorParams{
 	High:     0.000322634,

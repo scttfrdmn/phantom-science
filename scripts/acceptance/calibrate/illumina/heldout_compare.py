@@ -5,9 +5,11 @@ Run with `python3 -I` (no third-party packages). Subcommands:
   basequal OUTDIR R1.fastq R2.fastq
       Per mate and called base: bases, mean quality and the fraction of
       each quality value (base_quality.tsv); how the two mates' qualities
-      go together: the correlation of the mates' low-quality (Phred < 20)
-      base counts and the pairs with both mates poor against the number
-      expected if the mates were independent (pair_coupling.tsv).
+      go together: the correlation of the mates' low-quality (Phred < 20,
+      and Phred < 30) base counts, the pairs with both mates poor against
+      the number expected if the mates were independent, and the mean
+      correlation of the mates' 10 cycle-block mean qualities (the pair
+      classifier's feature) (pair_coupling.tsv).
 
   classifiers OUTDIR NAME=E2E_RESULTS.json ... -- A:B=E2E_RESULTS.json ...
       Reads run_e2e_tests reports: one per run (real vs real and real vs
@@ -37,6 +39,30 @@ import sys
 
 LOW_Q = 20
 POOR_PAIR = 5  # a mate is poor with at least this many bases below LOW_Q
+LOW_Q30 = 30
+BLOCKS = 10  # cycle blocks of the block-mean correlation (internal/testing.PairFeatures)
+
+
+def block_means(q):
+    n = len(q)
+    s, c = [0] * BLOCKS, [0] * BLOCKS
+    for i, ch in enumerate(q):
+        b = i * BLOCKS // n
+        s[b] += ord(ch) - 33
+        c[b] += 1
+    return [x / k if k else 0.0 for x, k in zip(s, c)]
+
+
+def pearson(x, y):
+    """As internal/testing.pearson: 0 when either is constant."""
+    n = len(x)
+    mx, my = sum(x) / n, sum(y) / n
+    sxy = sum((a - mx) * (b - my) for a, b in zip(x, y))
+    sxx = sum((a - mx) ** 2 for a in x)
+    syy = sum((b - my) ** 2 for b in y)
+    if sxx < 1e-12 or syy < 1e-12:
+        return 0.0
+    return sxy / math.sqrt(sxx * syy)
 
 
 def write_tsv(path, header, rows):
@@ -78,16 +104,22 @@ def fastq_records(path):
 def basequal(outdir, r1, r2):
     rows = []
     lows = [[], []]
+    lows30 = [[], []]
+    blocks = [[], []]
     for mate, path in enumerate((r1, r2), start=1):
         counts = {}  # base -> {qual char: n}
         for s, q in fastq_records(path):
-            low = 0
+            low = low30 = 0
             for b, ch in zip(s, q):
                 d = counts.setdefault(b, {})
                 d[ch] = d.get(ch, 0) + 1
                 if ord(ch) - 33 < LOW_Q:
                     low += 1
+                if ord(ch) - 33 < LOW_Q30:
+                    low30 += 1
             lows[mate - 1].append(low)
+            lows30[mate - 1].append(low30)
+            blocks[mate - 1].append(block_means(q))
         chars = sorted({ch for d in counts.values() for ch in d})
         for b in sorted(counts):
             d = counts[b]
@@ -101,6 +133,9 @@ def basequal(outdir, r1, r2):
         raise SystemExit(f"basequal: {r1} and {r2} hold {len(a)} and {len(b)} reads")
     n = len(a)
     corr = statistics.correlation(a, b) if statistics.pstdev(a) > 0 and statistics.pstdev(b) > 0 else 0.0
+    a30, b30 = lows30
+    corr30 = statistics.correlation(a30, b30) if statistics.pstdev(a30) > 0 and statistics.pstdev(b30) > 0 else 0.0
+    block_corr = sum(pearson(x, y) for x, y in zip(*blocks)) / n
     poor1 = sum(1 for x in a if x >= POOR_PAIR) / n
     poor2 = sum(1 for x in b if x >= POOR_PAIR) / n
     both = sum(1 for x, y in zip(a, b) if x >= POOR_PAIR and y >= POOR_PAIR) / n
@@ -117,6 +152,8 @@ def basequal(outdir, r1, r2):
             ["frac_both_poor", fmt(both)],
             ["frac_both_poor_if_independent", fmt(poor1 * poor2)],
             ["both_poor_ratio", fmt(both / (poor1 * poor2)) if poor1 * poor2 > 0 else ""],
+            ["lowq30_count_correlation", fmt(corr30)],
+            ["block_mean_correlation", fmt(block_corr)],
         ],
     )
 
@@ -253,7 +290,7 @@ def set_stats(d):
     below = s.pop(("insert_below_302", 0))
     s[("insert_frac_below_302", 0)] = below / num(sam.get("insert_pairs")) if below is not None and num(sam.get("insert_pairs")) else None
     pc = kv(os.path.join(d, "pair_coupling.tsv"))
-    for k in ("lowq_count_correlation", "frac_both_poor", "both_poor_ratio"):
+    for k in ("lowq_count_correlation", "lowq30_count_correlation", "frac_both_poor", "both_poor_ratio", "block_mean_correlation"):
         s[(k, 0)] = num(pc.get(k))
     return s
 

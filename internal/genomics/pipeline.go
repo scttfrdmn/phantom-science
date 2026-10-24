@@ -22,9 +22,10 @@ package genomics
 // Paired-end (Illumina): each pair is the two ends of one fragment.
 //
 //	shared: L → insert size F (≥ L) → (region) fragment start →
-//	        F+slack fragment bases → variants, applied once → trim to F
+//	        F+slack fragment bases → variants, applied once → trim to F →
+//	        (binned qualities) both mates' quality classes
 //	per mate, from r: R1 = frag[:L], R2 = revcomp(frag[F−L:]) →
-//	        qualities (of that mate) → errors → header
+//	        qualities (of that mate, in its class) → errors → header
 //
 // Each stream draws only from its own generator (see rng.go), so output is a
 // pure function of (seed, configuration, stream ID). The "shared" generator
@@ -39,7 +40,8 @@ package genomics
 // of every read (pair) come from it instead, drawn from the shared stream:
 // single-end, shared: L → sampled read of L bases (+ positioned variants),
 // then qualities and errors from r; paired-end, shared: L → F → sampled
-// fragment of F bases (+ variants), then the mates as above.
+// fragment of F bases (+ variants) → quality classes, then the mates as
+// above.
 //
 // Output-size targets, flow cells and parallel file generation (#16) are at
 // the end of this file (see generateRun).
@@ -132,11 +134,14 @@ type readPipeline struct {
 	e            *Engine
 	sampleLength func(r *rand.Rand) int
 	fixedLength  bool
-	qualities    func(r *rand.Rand, seq []byte, n, mate int) []byte
-	applyErrors  func(r *rand.Rand, seq, qual []byte) ([]byte, []byte)
-	header       func(r *rand.Rand, rec *seqread.Record) (string, string)
-	observer     ReadObserver
-	maxPhred     byte
+	qualities    func(r *rand.Rand, seq []byte, n, mate, class int) []byte
+	// pairClasses, when set, draws both mates' quality classes of a pair
+	// from its shared stream (binned Illumina qualities).
+	pairClasses func(r *rand.Rand) [2]int
+	applyErrors func(r *rand.Rand, seq, qual []byte) ([]byte, []byte)
+	header      func(r *rand.Rand, rec *seqread.Record) (string, string)
+	observer    ReadObserver
+	maxPhred    byte
 	// legacy selects the single-end flow that draws qualities before variant
 	// injection (ONT, linear Illumina qualities); binned Illumina qualities
 	// are drawn per read after it.
@@ -201,6 +206,7 @@ func (e *Engine) newPipeline(opts GenerateOpts, obs ReadObserver) (*readPipeline
 	if p.qualities, err = e.qualityModel(); err != nil {
 		return nil, err
 	}
+	p.pairClasses = e.pairClasses()
 	if p.applyErrors, err = e.errorModel(); err != nil {
 		return nil, err
 	}
@@ -289,6 +295,10 @@ func (p *readPipeline) writeBatch(bw *bufio.Writer, r *rand.Rand, s batchSpec, s
 		if err != nil {
 			return false, err
 		}
+		classes := [2]int{-1, -1}
+		if p.inserts != nil && p.pairClasses != nil {
+			classes = p.pairClasses(s.shared)
+		}
 		rec.RefStart = readStart
 		p.pending = p.pending[:0]
 		var bases int
@@ -299,7 +309,7 @@ func (p *readPipeline) writeBatch(bw *bufio.Writer, r *rand.Rand, s batchSpec, s
 				if p.inserts == nil {
 					n = len(frag) // single-end: the whole read, which an indel may resize
 				}
-				seq, qual = p.mate(r, frag, n, mate)
+				seq, qual = p.mate(r, frag, n, mate, classes[mate-1])
 			} else if seq, qual, err = p.read(r, length, readStart); err != nil {
 				return false, err
 			}
@@ -401,15 +411,16 @@ func (p *readPipeline) sampled(r *rand.Rand, n int, rec *seqread.Record, trim bo
 
 // mate returns the bases and qualities of one mate of frag: R1 reads the
 // first length bases, R2 the reverse complement of the last length bases.
-// Qualities and errors come from r, the mate's stream.
-func (p *readPipeline) mate(r *rand.Rand, frag []byte, length, mate int) ([]byte, []byte) {
+// Qualities (of quality class class, -1 to draw it) and errors come from r,
+// the mate's stream.
+func (p *readPipeline) mate(r *rand.Rand, frag []byte, length, mate, class int) ([]byte, []byte) {
 	var seq []byte
 	if mate == 2 {
 		seq = seqread.ReverseComplement(frag[len(frag)-length:])
 	} else {
 		seq = append([]byte(nil), frag[:length]...)
 	}
-	qual := p.qualities(r, seq, length, mate)
+	qual := p.qualities(r, seq, length, mate, class)
 	if p.applyErrors != nil {
 		seq, qual = p.applyErrors(r, seq, qual)
 	}
@@ -492,9 +503,9 @@ func (p *readPipeline) read(r *rand.Rand, length int, readStart int64) ([]byte, 
 	var seq, qual []byte
 	var err error
 	if p.legacy {
-		seq, qual, err = p.bases(r, length, readStart, p.fixedLength, func(n int) []byte { return p.qualities(r, nil, n, 1) })
+		seq, qual, err = p.bases(r, length, readStart, p.fixedLength, func(n int) []byte { return p.qualities(r, nil, n, 1, -1) })
 	} else if seq, _, err = p.bases(r, length, readStart, p.fixedLength, nil); err == nil {
-		qual = p.qualities(r, seq, len(seq), 1)
+		qual = p.qualities(r, seq, len(seq), 1, -1)
 	}
 	if err != nil {
 		return nil, nil, err

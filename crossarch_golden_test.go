@@ -34,11 +34,12 @@ import (
 // (#33); the same values were produced there by v0.10.1. The Illumina
 // binned cases (and the scenario and HMM cases, which use binned
 // qualities) were re-pinned when qualities came to depend on the read's
-// bases (#35).
+// bases (#35), and the paired Illumina cases again when the mates came to
+// draw their quality classes together (#35).
 var goldenWant = map[string]string{
-	"illumina binned paired":               "5357ac1686587da94cb76d5090e83d0933f9ed64bc9920a0b1bf1685ea7bbd28",
-	"illumina reference paired":            "2e641560f5426c823495ea8c036cb19c0d88359d85c593d4dd13662ea79577c0",
-	"illumina lognormal inserts and reads": "6af43b9c170c5a6b402c2b08d8ff0b78489fe13c37b9b063591994db943b58af",
+	"illumina binned paired":               "301a2fe8e88eec47d2fa9a8faac2e59edcb7ad77a3d9e516c857217bfb33a77b",
+	"illumina reference paired":            "7b1d08cafe4624520addaabcb4a73d2833d15dcccfb3ca781de903cccd991a8c",
+	"illumina lognormal inserts and reads": "5b06f6b6fd96fb0d6f44e37906b621f98b5af63cc27bacaf87be56fd40afe589",
 	"ont hac lognormal":                    "be4106e6e7c7124f5bf7b9cb241f322e366c2c7b05f9c822828aa9713186e962",
 	"ont fast gamma":                       "d953196a6882cd0a44f4dcf8e6400204d178fe4857a0cedb85b1a228fda3aa31",
 	"signal dna":                           "682455f7f9c12b82beea715ea5c77482d68a82e319985039ba05410d0b7c26c0",

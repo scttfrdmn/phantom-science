@@ -27,6 +27,12 @@ Model (see the package documentation of internal/genomics/illumina):
   contexts (CONTEXT_PRIOR) and normalised to average 1 over the sample's
   context frequencies. Without RESULTS_DIR/context_classes.tsv only the
   classes are fitted (the first pass of illumina_calibrate.sh).
+* Mate coupling (#35): the two reads of a pair draw their classes together,
+  (k1, k2) with weight W[k1][k2]. W is the EM fit of illumina_stats.py
+  pairs (pair_classes.tsv, the pairs' four counts with the per-mate class
+  levels fixed), raked (iterative proportional fitting) so that its
+  margins are the per-mate weights exactly: each mate's reads keep their
+  class mixture. Without pair_classes.tsv the mates are independent.
 * Substitution rate per bin and cycle: the mismatch rate against hg38 minus
   the rate of sample variants. The variant rate is the Q37 mismatch rate
   minus the Q37 error rate measured where mates overlap (a mismatch in one
@@ -265,6 +271,36 @@ def fit_context(d, out):
     return factors
 
 
+RAKE_ITERS = 200
+
+
+def fit_pairs(d, out):
+    """The joint class weights of the mates (pair_classes.tsv), raked to the
+    per-mate class weights fitted above; None without pair_classes.tsv."""
+    path = os.path.join(d, "pair_classes.tsv")
+    if not os.path.exists(path):
+        return None
+    w = {m: [v for p, mate, _, v in out if p == "class_weight" and mate == m] for m in ("1", "2")}
+    W = [[0.0] * CLASSES for _ in range(CLASSES)]
+    for r in read_tsv(path):
+        W[int(r["class_r1"])][int(r["class_r2"])] = float(r["weight"])
+    for _ in range(RAKE_ITERS):
+        for i in range(CLASSES):
+            s = sum(W[i])
+            W[i] = [v * w["1"][i] / s for v in W[i]]
+        for j in range(CLASSES):
+            s = sum(W[i][j] for i in range(CLASSES))
+            for i in range(CLASSES):
+                W[i][j] *= w["2"][j] / s
+    worst = max(abs(sum(W[i][j] for i in range(CLASSES)) - w["2"][j]) for j in range(CLASSES))
+    worst = max([worst] + [abs(sum(W[i]) - w["1"][i]) for i in range(CLASSES)])
+    print(f"pairs: raked joint class weights, largest margin error {worst:.2g}", file=sys.stderr)
+    for i in range(CLASSES):
+        for j in range(CLASSES):
+            out.append(("class_pair", "pair", f"{i}:{j}", W[i][j]))
+    return W
+
+
 def context_summary(d):
     """Measured quality by called base, by preceding and called base, and
     after GG (context_quals.tsv), per mate and pooled over cycles: bases,
@@ -419,6 +455,8 @@ def main(d, go_path=None):
     for x in "ACGT":
         out.append(("base_factor", x, 0, rate[x] / mean))
 
+    fit_pairs(d, out)
+
     have_context = os.path.exists(os.path.join(d, "context_classes.tsv"))
     if have_context:
         fit_context(d, out)
@@ -474,6 +512,18 @@ def go_source(out):
         lines.append(f"	NoCall: {g('nocall_rate')},")
         lines.append("}")
         lines.append("")
+    if ("class_pair", "pair", "0:0") in P:
+        lines += [
+            "// NovaSeqPairs couples the read classes of a pair's two reads:",
+            "// Joint[k1][k2] is the share of pairs whose read 1 is in class k1 of",
+            "// Read1 and read 2 in class k2 of Read2 (its margins are the class",
+            "// weights).",
+            "var NovaSeqPairs = PairParams{",
+            "	Joint: [][]float64{",
+        ]
+        for i in range(CLASSES):
+            lines.append("		{" + ", ".join(g("class_pair", "pair", f"{i}:{j}") for j in range(CLASSES)) + "},")
+        lines += ["	},", "}", ""]
     early = lambda q: repr(float(f"{P[(f'error_q{q}_late', 'both', '0')] + P[(f'error_q{q}_early_excess', 'both', '0')]:.6g}"))
     lines += [
         "// NovaSeqErrors is the substitution model measured against GRCh38.",

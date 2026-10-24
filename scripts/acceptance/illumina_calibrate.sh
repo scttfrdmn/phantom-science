@@ -17,7 +17,8 @@
 #   4. qualities by called-base context (two bases before, the base, one
 #      after) per 10-cycle block, and within each read class against the
 #      calls expected without a context effect; class posteriors by read GC
-#      and longest homopolymer (#35);
+#      and longest homopolymer (#35); the joint read classes of the two
+#      mates of a pair and the measured mate coupling (#35);
 #   5. the model fit, written to RESULTS/fit.tsv and to GO_OUT (gofmt'd),
 #      with the measured quality by base and context in
 #      RESULTS/context_summary.tsv.
@@ -105,10 +106,12 @@ echo "Measuring errors and insert sizes ..."
 samtools view "$work/aln.bam" | python3 -I "$stats" sam "$results"
 
 echo "Fitting the read classes ..."
-rm -f "$results/context_classes.tsv"
+rm -f "$results/context_classes.tsv" "$results/pair_classes.tsv"
 python3 -I "$fit" "$results"
 echo "Measuring qualities by sequence context ..."
 python3 -I "$stats" context "$results" "$r1" "$r2" "$results/fit.tsv"
+echo "Measuring how the mates' read classes go together ..."
+python3 -I "$stats" pairs "$results" "$r1" "$r2" "$results/fit.tsv"
 echo "Fitting the model ..."
 python3 -I "$fit" "$results" "$go_out"
 if command -v gofmt >/dev/null 2>&1; then

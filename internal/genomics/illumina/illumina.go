@@ -70,6 +70,23 @@
 // Read 2 has its own parameters (it has more Q11 and Q25 than read 1, as on
 // every Illumina instrument).
 //
+// The two reads of a pair come from one cluster, and their qualities go
+// together: in DRR276626 the correlation of the mates' counts of bases
+// below Q30 is 0.37 (below Q20, 0.28), and pairs with both mates poor (5 or
+// more bases below Q20) are 3.95 times as common as if the mates were
+// independent; five NovaSeq 6000 runs from other centres show 0.42-0.57
+// below Q20 (results/heldout/calibration_stats.tsv). So a pair draws its
+// two read classes together (PairParams): Joint[k1][k2] was fitted by EM to
+// the pairs' Q11 and Q25 counts with each mate's class levels fixed, and
+// raked so its margins are the per-mate class weights, so each mate's
+// qualities are distributed as before. The generated pairs of
+// illumina_heldout.sh have the measured coupling: 0.37 and 0.29, a
+// both-poor ratio of 3.87, and a mean correlation of the mates' 10-cycle
+// block mean qualities of 0.062 (measured 0.064).
+// Within their classes the mates' cycles are drawn independently: a
+// low-quality event at the same cluster position in both reads is not
+// modelled beyond the shared class.
+//
 // # Errors
 //
 // Real Illumina bins are not exactly their Phred values. The substitution
@@ -321,16 +338,44 @@ func (p QualityParams) Target(c, n int) [4]float64 {
 	return t
 }
 
-// class returns the class of a uniform u.
-func (p QualityParams) class(u float64) ReadClass {
+// class returns the index of the class of a uniform u.
+func (p QualityParams) class(u float64) int {
 	acc := 0.0
-	for _, k := range p.Classes {
+	for i, k := range p.Classes {
 		acc += k.Weight
 		if u < acc {
-			return k
+			return i
 		}
 	}
-	return p.Classes[len(p.Classes)-1]
+	return len(p.Classes) - 1
+}
+
+// PairParams couples the read classes of the two reads of a pair (#35):
+// Joint[k1][k2] is the share of pairs whose read 1 is in class k1 of its
+// QualityParams and read 2 in class k2 of its own. The shares sum to 1 and
+// the margins are the classes' weights, so each mate's reads keep their
+// class mixture; a nil Joint leaves the mates independent.
+type PairParams struct {
+	Joint [][]float64
+}
+
+// Coupled reports whether p couples the mates' classes.
+func (p PairParams) Coupled() bool { return len(p.Joint) > 0 }
+
+// Classes returns the read-1 and read-2 classes of a pair for a uniform u
+// (cells in row-major order).
+func (p PairParams) Classes(u float64) (k1, k2 int) {
+	acc := 0.0
+	for i, row := range p.Joint {
+		for j, w := range row {
+			acc += w
+			if u < acc {
+				return i, j
+			}
+		}
+	}
+	last := len(p.Joint) - 1
+	return last, len(p.Joint[last]) - 1
 }
 
 // pick returns the bin of a uniform u under weights w (which sum to 1).
@@ -375,7 +420,7 @@ func (p QualityParams) TargetFor(seq []byte, c int) [4]float64 {
 // a sequence (no context factors), drawing one value from r for the read's
 // class and one per cycle.
 func (p QualityParams) Qualities(r *rand.Rand, n int) []byte {
-	return p.qualities(r, nil, n)
+	return p.qualities(r, nil, n, -1)
 }
 
 // QualitiesFor returns binned Phred scores (not ASCII) for the bases seq of
@@ -385,17 +430,28 @@ func (p QualityParams) Qualities(r *rand.Rand, n int) []byte {
 // draws from r as Qualities does: one value for the read's class and one
 // per cycle.
 func (p QualityParams) QualitiesFor(r *rand.Rand, seq []byte) []byte {
-	return p.qualities(r, seq, len(seq))
+	return p.qualities(r, seq, len(seq), -1)
 }
 
-// qualities draws n qualities, with the context factors of seq unless seq
-// is nil.
-func (p QualityParams) qualities(r *rand.Rand, seq []byte, n int) []byte {
+// QualitiesForClass is QualitiesFor for a read of class k (an index into
+// Classes, e.g. from PairParams.Classes): it draws only the per-cycle
+// values from r. A k outside Classes draws the class from r, as
+// QualitiesFor does.
+func (p QualityParams) QualitiesForClass(r *rand.Rand, seq []byte, k int) []byte {
+	return p.qualities(r, seq, len(seq), k)
+}
+
+// qualities draws n qualities of class ki (drawn from r if ki is not a
+// class index), with the context factors of seq unless seq is nil.
+func (p QualityParams) qualities(r *rand.Rand, seq []byte, n, ki int) []byte {
 	q := make([]byte, n)
 	if n == 0 {
 		return q
 	}
-	k := p.class(r.Float64())
+	if ki < 0 || ki >= len(p.Classes) {
+		ki = p.class(r.Float64())
+	}
+	k := p.Classes[ki]
 	j := 0
 	for c := range q {
 		low, mid := p.means(c, n, &j)
