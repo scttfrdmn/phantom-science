@@ -142,6 +142,10 @@ func TestPositiveControl(t *testing.T) {
 // quality features. (Real reads vary in GC far more from read to read than
 // uniform ones, so 0.2, the shift used on generated reads, is not enough:
 // on 1000 real NovaSeq reads it gives 0.896.)
+//
+// With PHANTOM_REAL_FASTQ2 (the reads 2, same order) the real reads are
+// pairs, generated reads are pairs, and the pair feature set is checked
+// the same way (null and quality-shift power).
 func TestRealReads(t *testing.T) {
 	path := os.Getenv("PHANTOM_REAL_FASTQ")
 	if path == "" {
@@ -157,7 +161,13 @@ func TestRealReads(t *testing.T) {
 		n, err = strconv.Atoi(s)
 		require.NoError(t, err, "PHANTOM_REAL_READS")
 	}
-	real, err := pt.LoadFASTQ(path, n)
+	var real *pt.SyntheticData
+	var err error
+	if path2 := os.Getenv("PHANTOM_REAL_FASTQ2"); path2 != "" {
+		real, err = pt.LoadPairedFASTQ(path, path2, n)
+	} else {
+		real, err = pt.LoadFASTQ(path, n)
+	}
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, len(real.Sequences), 8, "need at least eight real reads")
 
@@ -166,6 +176,7 @@ func TestRealReads(t *testing.T) {
 	require.NotNil(t, c, "unknown PHANTOM_REAL_PLATFORM %q", platform)
 	c.Reads = len(real.Sequences)
 	c.ReferencePath, c.ReferenceRegion = os.Getenv("PHANTOM_REFERENCE"), os.Getenv("PHANTOM_REGION")
+	c.PairedEnd = real.Paired()
 	if real.Stats.MinReadLength == real.Stats.MaxReadLength && c.ReadLengthDistribution.Dist == "" {
 		c.ReadLength = real.Stats.MinReadLength
 	}
@@ -176,7 +187,11 @@ func TestRealReads(t *testing.T) {
 	even, odd := pt.SplitAlternate(real)
 	gcOdd := pt.GCSkewed(odd, odd.Stats.GCContent+0.3, 1)
 	qOdd := pt.QualityShifted(odd, 1)
-	for _, set := range pt.AllFeatureSets {
+	sets := pt.AllFeatureSets
+	if real.Paired() {
+		sets = append(append([]pt.FeatureSet(nil), sets...), pt.FeaturePair)
+	}
+	for _, set := range sets {
 		gen, err := pt.HoldoutAccuracyFor(set, real, synth, 5)
 		require.NoError(t, err)
 		t.Logf("%s (%s): real vs generated %.4f on %d held-out reads (chance band 0.5 ± %.4f); top features %+v",
@@ -187,7 +202,7 @@ func TestRealReads(t *testing.T) {
 		band := pt.ChanceBand(null.Holdout, 4)
 		assert.InDelta(t, 0.5, null.Accuracy, band, "%s: real vs real (alternate halves) on %d held-out reads", set, null.Holdout)
 
-		if set != pt.FeatureQuality {
+		if set != pt.FeatureQuality && set != pt.FeaturePair {
 			power, err := pt.HoldoutAccuracyFor(set, even, gcOdd, 0)
 			require.NoError(t, err)
 			assert.Greater(t, power.Accuracy, 0.9, "%s: power on real reads (GC +0.3)", set)

@@ -22,9 +22,15 @@ const (
 	// FeatureCombined is the 4-mer counts followed by the quality features,
 	// classified with logistic regression.
 	FeatureCombined FeatureSet = "combined"
+	// FeaturePair is a read pair's quality profile: the quality features of
+	// read 1, those of read 2 and how the two mates' qualities relate
+	// (PairFeatureNames), classified with logistic regression. It needs
+	// paired reads (SyntheticData.Mates) and sees neither the bases nor the
+	// insert size.
+	FeaturePair FeatureSet = "pair"
 )
 
-// AllFeatureSets lists the feature sets in report order.
+// AllFeatureSets lists the single-read feature sets in report order.
 var AllFeatureSets = []FeatureSet{FeatureSequence, FeatureQuality, FeatureCombined}
 
 // Quality feature layout. Qualities are Phred+33; values at or above
@@ -189,13 +195,19 @@ func FeatureNames(set FeatureSet) ([]string, error) {
 		return QualityFeatureNames(), nil
 	case FeatureCombined:
 		return append(append([]string(nil), kmerNames...), qualityFeatureNames...), nil
+	case FeaturePair:
+		return PairFeatureNames(), nil
 	}
 	return nil, fmt.Errorf("unknown feature set %q", set)
 }
 
 // ReadFeatures returns set's feature vector for one read. The quality sets
-// need qualities (len(qual) == len(seq)).
+// need qualities (len(qual) == len(seq)). FeaturePair needs both reads of
+// a pair: see PairFeatures.
 func ReadFeatures(set FeatureSet, seq, qual []byte) ([]float64, error) {
+	if set == FeaturePair {
+		return nil, fmt.Errorf("feature set %s needs both reads of a pair", set)
+	}
 	if set != FeatureSequence && len(qual) != len(seq) {
 		return nil, fmt.Errorf("feature set %s needs qualities: read has %d bases and %d qualities", set, len(seq), len(qual))
 	}
@@ -218,7 +230,7 @@ type BinaryClassifier interface {
 
 // newClassifier returns the classifier used for set: Multinomial Naive
 // Bayes for the 4-mer counts, which are multinomial counts, logistic
-// regression for the continuous quality features, and for the combined set
+// regression for the continuous quality and pair features, and for the combined set
 // a logistic regression on the quality features and the Naive Bayes
 // sequence score (StackedClassifier).
 func newClassifier(set FeatureSet) BinaryClassifier {

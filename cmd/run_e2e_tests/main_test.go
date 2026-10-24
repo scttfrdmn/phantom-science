@@ -53,6 +53,20 @@ func TestValidateArgs(t *testing.T) {
 		{platforms: "novaseq", seed: 1, reference: filepath.Join(t.TempDir(), "missing.fa")},
 		{platforms: "novaseq", seed: 1, reads: 3},
 		{platforms: "novaseq", seed: 1, reads: -1},
+		{platforms: "novaseq", seed: 1, realFASTQ2: ref},
+		{platforms: "novaseq", seed: 1, realFASTQB: ref},
+		{platforms: "novaseq", seed: 1, realFASTQ: ref, realFASTQB2: ref},
+		{platforms: "novaseq", seed: 1, realFASTQ: ref, realFASTQ2: ref, realFASTQB: ref},
+		{platforms: "novaseq", seed: 1, realFASTQ: ref, realFASTQB: ref, realFASTQB2: ref},
+		{platforms: "novaseq", seed: 1, realFASTQ: ref, realFASTQ2: filepath.Join(t.TempDir(), "missing.fastq")},
+	}
+	for _, ok := range []*CommandLineArgs{
+		{platforms: "novaseq", seed: 1, realFASTQ: ref, realFASTQ2: ref, realFASTQB: ref, realFASTQB2: ref},
+		{platforms: "novaseq", seed: 1, realFASTQ: ref, realFASTQB: ref},
+	} {
+		if err := validateArgs(ok); err != nil {
+			t.Errorf("valid real-run args %+v: %v", ok, err)
+		}
 	}
 	for i, a := range bad {
 		if err := validateArgs(a); err == nil {

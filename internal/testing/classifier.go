@@ -80,10 +80,13 @@ func labelledFeatures(a, b *SyntheticData) ([][]float64, []int, error) {
 }
 
 // split returns the even-indexed reads of d and the odd-indexed ones, with
-// their qualities and headers.
+// their qualities and headers, and for paired reads their mates.
 func split(d *SyntheticData) (even, odd *SyntheticData) {
 	even = &SyntheticData{Platform: d.Platform, Population: d.Population, Seed: d.Seed}
 	odd = &SyntheticData{Platform: d.Platform, Population: d.Population, Seed: d.Seed}
+	if d.Mates != nil {
+		even.Mates, odd.Mates = split(d.Mates)
+	}
 	for i, seq := range d.Sequences {
 		dst := even
 		if i%2 == 1 {
@@ -108,8 +111,11 @@ func split(d *SyntheticData) (even, odd *SyntheticData) {
 // the same tiles of a real run.
 func SplitAlternate(d *SyntheticData) (even, odd *SyntheticData) {
 	even, odd = split(d)
-	even.Stats = ComputeReadStats(even.Sequences, even.QualityScores)
-	odd.Stats = ComputeReadStats(odd.Sequences, odd.QualityScores)
+	for _, h := range []*SyntheticData{even, odd} {
+		for x := h; x != nil; x = x.Mates {
+			x.Stats = ComputeReadStats(x.Sequences, x.QualityScores)
+		}
+	}
 	return even, odd
 }
 
@@ -154,7 +160,8 @@ type Holdout struct {
 // even-indexed reads of a (class 0) and b (class 1) and scores it on the
 // odd-indexed reads. It also ranks the features by effect size on the
 // training reads and keeps the top ones (none when top is 0). Each set
-// needs at least two reads, and qualities for the quality-aware sets.
+// needs at least two reads, qualities for the quality-aware sets, and
+// mates (SyntheticData.Mates) for FeaturePair.
 func HoldoutAccuracyFor(set FeatureSet, a, b *SyntheticData, top int) (*Holdout, error) {
 	if a == nil || b == nil || len(a.Sequences) < 2 || len(b.Sequences) < 2 {
 		return nil, fmt.Errorf("HoldoutAccuracy: each set needs at least two reads")
@@ -186,7 +193,7 @@ func HoldoutAccuracyFor(set FeatureSet, a, b *SyntheticData, top int) (*Holdout,
 		if err != nil {
 			return nil, err
 		}
-		r.Top = topFeatureDiffs(names, xTrain, yTrain, set != FeatureQuality, top)
+		r.Top = topFeatureDiffs(names, xTrain, yTrain, set == FeatureSequence || set == FeatureCombined, top)
 	}
 	return r, nil
 }
@@ -200,12 +207,18 @@ func labelledSetFeatures(set FeatureSet, a, b *SyntheticData) ([][]float64, []in
 	features := make([][]float64, 0, len(a.Sequences)+len(b.Sequences))
 	labels := make([]int, 0, cap(features))
 	for label, d := range []*SyntheticData{a, b} {
+		if set == FeaturePair && !d.Paired() {
+			return nil, nil, fmt.Errorf("feature set %s: set %d is not paired (one mate per read)", set, label)
+		}
 		for i, seq := range d.Sequences {
-			var qual []byte
-			if i < len(d.QualityScores) {
-				qual = d.QualityScores[i]
+			var x []float64
+			var err error
+			if set == FeaturePair {
+				m := d.Mates
+				x, err = PairFeatures(seq, qualAt(d, i), m.Sequences[i], qualAt(m, i))
+			} else {
+				x, err = ReadFeatures(set, seq, qualAt(d, i))
 			}
-			x, err := ReadFeatures(set, seq, qual)
 			if err != nil {
 				return nil, nil, fmt.Errorf("read %d of set %d: %w", i, label, err)
 			}
@@ -214,6 +227,14 @@ func labelledSetFeatures(set FeatureSet, a, b *SyntheticData) ([][]float64, []in
 		}
 	}
 	return features, labels, nil
+}
+
+// qualAt returns the qualities of read i of d, or nil.
+func qualAt(d *SyntheticData, i int) []byte {
+	if i < len(d.QualityScores) {
+		return d.QualityScores[i]
+	}
+	return nil
 }
 
 // topFeatureDiffs ranks features by |Cohen's d| between class 0 and 1 and
@@ -265,7 +286,7 @@ func topFeatureDiffs(names []string, x [][]float64, y []int, kmerFreq bool, top 
 // QualityShifted returns a copy of data with every quality lowered by
 // delta Phred (floored at Q2), bases unchanged. It is a positive control
 // for the quality-aware feature sets on reads whose quality model cannot be
-// switched, such as real reads.
+// switched, such as real reads. Mates, when present, are shifted too.
 func QualityShifted(data *SyntheticData, delta int) *SyntheticData {
 	out := *data
 	out.QualityScores = make([][]byte, len(data.QualityScores))
@@ -277,6 +298,9 @@ func QualityShifted(data *SyntheticData, delta int) *SyntheticData {
 		out.QualityScores[i] = s
 	}
 	out.Stats = ComputeReadStats(out.Sequences, out.QualityScores)
+	if data.Mates != nil {
+		out.Mates = QualityShifted(data.Mates, delta)
+	}
 	return &out
 }
 
@@ -300,7 +324,7 @@ func ChanceBand(n int, sigmas float64) float64 {
 // It is the positive control for classifier comparisons: a classifier that
 // cannot separate reads from their GC-skewed counterparts cannot detect any
 // real distributional difference of that size either. The seed makes the
-// skew deterministic.
+// skew deterministic. Mates, when present, are skewed too (seed+1).
 func GCSkewed(data *SyntheticData, targetGC float64, seed uint64) *SyntheticData {
 	g := data.Stats.GCContent
 	if data.Stats.Reads == 0 {
@@ -324,5 +348,8 @@ func GCSkewed(data *SyntheticData, targetGC float64, seed uint64) *SyntheticData
 		out.Sequences[i] = s
 	}
 	out.Stats = ComputeReadStats(out.Sequences, out.QualityScores)
+	if data.Mates != nil {
+		out.Mates = GCSkewed(data.Mates, targetGC, seed+1)
+	}
 	return &out
 }
