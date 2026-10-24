@@ -23,14 +23,14 @@
 #      own run are kept (generated-P);
 #   3. run_e2e_tests -real-only -real-fastq-b for every pair of runs: real
 #      run A vs real run B, the realistic target;
-#   4. illumina_stats.py (fastq, and sam on minimap2 -ax sr alignments to
-#      REFERENCE) and heldout_compare.py basequal on every run and on every
-#      profile's reads;
+#   4. illumina_stats.py (fastq, structure, and sam on minimap2 -ax sr
+#      alignments to REFERENCE) and heldout_compare.py basequal on every run
+#      and on every profile's reads;
 #   5. heldout_compare.py writes the tables to RESULTS: classifier_matrix,
 #      classifier_spread, profile_matrix, profile_matching,
-#      calibration_stats, cycle_delta, runs (ENA metadata, alphabet, md5 of
-#      the streamed reads) and run.tsv; and for each read set its small
-#      tables under RESULTS/sets/NAME.
+#      calibration_stats, cycle_delta, structure_compare (#36), runs (ENA
+#      metadata, alphabet, md5 of the streamed reads) and run.tsv; and for
+#      each read set its small tables under RESULTS/sets/NAME.
 #
 # Environment (defaults in brackets):
 #   RUNS     ["DRR276626 DRR394916 ERR15600747 DRR260182 SRR30646135
@@ -218,10 +218,11 @@ for name in "${models[@]}" "${runs[@]}"; do
 	mkdir -p "$out"
 	python3 -I "$stats" fastq "$out" "$work/reads/${name}_1.fastq" "$work/reads/${name}_2.fastq"
 	python3 -I "$compare" basequal "$out" "$work/reads/${name}_1.fastq" "$work/reads/${name}_2.fastq"
+	python3 -I "$stats" structure "$out" "$work/reads/${name}_1.fastq" "$work/reads/${name}_2.fastq"
 	minimap2 -ax sr --MD -t "$threads" "$mmi" "$work/reads/${name}_1.fastq" "$work/reads/${name}_2.fastq" 2>"$out/minimap2.log" |
 		python3 -I "$stats" sam "$out"
 	mkdir -p "$results/sets/$name"
-	for f in fastq_summary sam_summary errors_quality cycle_quals run_lengths insert_sizes base_quality pair_coupling; do
+	for f in fastq_summary sam_summary errors_quality cycle_quals run_lengths insert_sizes base_quality pair_coupling structure; do
 		cp "$out/$f.tsv" "$results/sets/$name/"
 	done
 done
@@ -229,6 +230,7 @@ done
 # 5. Tables.
 python3 -I "$compare" classifiers "$results" "$work/stats" "$prof_list" -- "${run_args[@]}" -- "${cross_args[@]}"
 python3 -I "$compare" calibration "$results" "$work/stats" "$prof_list" "${models[@]}" "${runs[@]}"
+python3 -I "$compare" structure "$results" "$work/stats" "$prof_list" "${models[@]}" "${runs[@]}"
 {
 	printf 'key\tvalue\n'
 	printf 'runs\t%s\n' "${runs[*]}"

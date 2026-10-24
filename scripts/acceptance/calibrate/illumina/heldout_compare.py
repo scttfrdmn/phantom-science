@@ -36,6 +36,12 @@ Run with `python3 -I` (no third-party packages). Subcommands:
       generated reads minus its run) and cycle_delta.tsv (mean |difference|
       of the per-cycle quality fractions between every two read sets).
 
+  structure OUTDIR STATS_ROOT PROFILE=RUN,... SET ...
+      Puts the quality-structure statistics of each read set
+      (illumina_stats.py structure, STATS_ROOT/SET/structure.tsv) side by
+      side: structure_compare.tsv, one column per set, the spread of the
+      held-out runs and each profile's reads minus its run (#36).
+
 All output is tab-separated with a header line.
 """
 
@@ -449,6 +455,46 @@ def calibration(outdir, args):
     write_tsv(os.path.join(outdir, "cycle_delta.tsv"), ["a", "b", "mean_abs_delta_r1", "mean_abs_delta_r2"], drows)
 
 
+# ---------------------------------------------------------------- structure
+
+
+def structure(outdir, args):
+    """structure OUTDIR STATS_ROOT PROFILE=RUN,... SET ...
+
+    Puts the structure.tsv of every read set (illumina_stats.py structure)
+    side by side in structure_compare.tsv: one row per statistic and mate,
+    one column per set, the spread of the held-out runs and each profile's
+    generated reads minus its run."""
+    root, prof_arg, sets = args[0], args[1], args[2:]
+    profiles = dict(p.split("=", 1) for p in prof_arg.split(","))
+    fitted = set(profiles.values())
+    heldout = [n for n in sets if n not in fitted and not n.startswith("generated-")]
+    vals, keys = {}, []
+    for n in sets:
+        for r in read_tsv(os.path.join(root, n, "structure.tsv")):
+            k = (r["section"], r["mate"], r["key"])
+            if k not in vals:
+                vals[k] = {}
+                keys.append(k)
+            vals[k][n] = float(r["value"])
+    gen = {p: "generated-" + p for p in profiles if "generated-" + p in sets}
+    rows = []
+    for k in keys:
+        v = vals[k]
+        hv = [v[n] for n in heldout if n in v]
+        row = list(k) + [fmt(v[n]) if n in v else "" for n in sets]
+        row += [fmt(min(hv)), fmt(statistics.median(hv)), fmt(max(hv))] if hv else [""] * 3
+        for p, g in gen.items():
+            a, b = v.get(g), v.get(profiles[p])
+            row.append(fmt(a - b) if a is not None and b is not None else "")
+        rows.append(row)
+    write_tsv(
+        os.path.join(outdir, "structure_compare.tsv"),
+        ["section", "mate", "key"] + sets + ["heldout_min", "heldout_median", "heldout_max"] + [f"{g}_minus_{profiles[p]}" for p, g in gen.items()],
+        rows,
+    )
+
+
 def main(argv):
     if len(argv) < 3:
         raise SystemExit(__doc__)
@@ -460,6 +506,8 @@ def main(argv):
         classifiers(outdir, argv[3:])
     elif cmd == "calibration" and len(argv) > 5:
         calibration(outdir, argv[3:])
+    elif cmd == "structure" and len(argv) > 5:
+        structure(outdir, argv[3:])
     else:
         raise SystemExit(__doc__)
 
