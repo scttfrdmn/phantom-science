@@ -1,0 +1,99 @@
+comparison	a	b	read	features	classifier	holdout	accuracy	chance_band_4sigma
+real_vs_real	DRR276626	DRR276626	1	sequence	multinomial naive Bayes	100000	0.4984	0.0063
+real_vs_real	DRR276626	DRR276626	1	quality	logistic regression	100000	0.4982	0.0063
+real_vs_real	DRR276626	DRR276626	1	combined	stacked NB score + LR	100000	0.4986	0.0063
+generated_vs_fitted_run	DRR276626	generated	1	sequence	multinomial naive Bayes	200000	0.5185	0.0045
+generated_vs_fitted_run	DRR276626	generated	1	quality	logistic regression	200000	0.5259	0.0045
+generated_vs_fitted_run	DRR276626	generated	1	combined	stacked NB score + LR	200000	0.5279	0.0045
+real_vs_real	DRR276626	DRR276626	2	sequence	multinomial naive Bayes	100000	0.5016	0.0063
+real_vs_real	DRR276626	DRR276626	2	quality	logistic regression	100000	0.5005	0.0063
+real_vs_real	DRR276626	DRR276626	2	combined	stacked NB score + LR	100000	0.5015	0.0063
+generated_vs_fitted_run	DRR276626	generated	2	sequence	multinomial naive Bayes	200000	0.5198	0.0045
+generated_vs_fitted_run	DRR276626	generated	2	quality	logistic regression	200000	0.5425	0.0045
+generated_vs_fitted_run	DRR276626	generated	2	combined	stacked NB score + LR	200000	0.5379	0.0045
+real_vs_real	DRR276626	DRR276626	pair	pair	logistic regression	100000	0.5008	0.0063
+generated_vs_fitted_run	DRR276626	generated	pair	pair	logistic regression	200000	0.593	0.0045
+real_vs_real	ERR15600747	ERR15600747	1	sequence	multinomial naive Bayes	100000	0.5008	0.0063
+real_vs_real	ERR15600747	ERR15600747	1	quality	logistic regression	100000	0.5017	0.0063
+real_vs_real	ERR15600747	ERR15600747	1	combined	stacked NB score + LR	100000	0.4995	0.0063
+generated_vs_heldout_run	ERR15600747	generated	1	sequence	multinomial naive Bayes	200000	0.5323	0.0045
+generated_vs_heldout_run	ERR15600747	generated	1	quality	logistic regression	200000	0.7621	0.0045
+generated_vs_heldout_run	ERR15600747	generated	1	combined	stacked NB score + LR	200000	0.7647	0.0045
+real_vs_real	ERR15600747	ERR15600747	2	sequence	multinomial naive Bayes	100000	0.4989	0.0063
+real_vs_real	ERR15600747	ERR15600747	2	quality	logistic regression	100000	0.4982	0.0063
+real_vs_real	ERR15600747	ERR15600747	2	combined	stacked NB score + LR	100000	0.4974	0.0063
+generated_vs_heldout_run	ERR15600747	generated	2	sequence	multinomial naive Bayes	200000	0.5408	0.0045
+generated_vs_heldout_run	ERR15600747	generated	2	quality	logistic regression	200000	0.7224	0.0045
+generated_vs_heldout_run	ERR15600747	generated	2	combined	stacked NB score + LR	200000	0.7248	0.0045
+real_vs_real	ERR15600747	ERR15600747	pair	pair	logistic regression	100000	0.5003	0.0063
+generated_vs_heldout_run	ERR15600747	generated	pair	pair	logistic regression	200000	0.8072	0.0045
+real_vs_real	DRR394916	DRR394916	1	sequence	multinomial naive Bayes	100000	0.4996	0.0063
+real_vs_real	DRR394916	DRR394916	1	quality	logistic regression	100000	0.4995	0.0063
+real_vs_real	DRR394916	DRR394916	1	combined	stacked NB score + LR	100000	0.4995	0.0063
+generated_vs_heldout_run	DRR394916	generated	1	sequence	multinomial naive Bayes	200000	0.5142	0.0045
+generated_vs_heldout_run	DRR394916	generated	1	quality	logistic regression	200000	0.6719	0.0045
+generated_vs_heldout_run	DRR394916	generated	1	combined	stacked NB score + LR	200000	0.6723	0.0045
+real_vs_real	DRR394916	DRR394916	2	sequence	multinomial naive Bayes	100000	0.5026	0.0063
+real_vs_real	DRR394916	DRR394916	2	quality	logistic regression	100000	0.4985	0.0063
+real_vs_real	DRR394916	DRR394916	2	combined	stacked NB score + LR	100000	0.498	0.0063
+generated_vs_heldout_run	DRR394916	generated	2	sequence	multinomial naive Bayes	200000	0.5234	0.0045
+generated_vs_heldout_run	DRR394916	generated	2	quality	logistic regression	200000	0.7272	0.0045
+generated_vs_heldout_run	DRR394916	generated	2	combined	stacked NB score + LR	200000	0.7288	0.0045
+real_vs_real	DRR394916	DRR394916	pair	pair	logistic regression	100000	0.4989	0.0063
+generated_vs_heldout_run	DRR394916	generated	pair	pair	logistic regression	200000	0.7695	0.0045
+real_vs_real	DRR260182	DRR260182	1	sequence	multinomial naive Bayes	100000	0.4993	0.0063
+real_vs_real	DRR260182	DRR260182	1	quality	logistic regression	100000	0.4996	0.0063
+real_vs_real	DRR260182	DRR260182	1	combined	stacked NB score + LR	100000	0.4999	0.0063
+generated_vs_heldout_run	DRR260182	generated	1	sequence	multinomial naive Bayes	200000	0.5116	0.0045
+generated_vs_heldout_run	DRR260182	generated	1	quality	logistic regression	200000	0.6194	0.0045
+generated_vs_heldout_run	DRR260182	generated	1	combined	stacked NB score + LR	200000	0.6206	0.0045
+real_vs_real	DRR260182	DRR260182	2	sequence	multinomial naive Bayes	100000	0.5007	0.0063
+real_vs_real	DRR260182	DRR260182	2	quality	logistic regression	100000	0.503	0.0063
+real_vs_real	DRR260182	DRR260182	2	combined	stacked NB score + LR	100000	0.5015	0.0063
+generated_vs_heldout_run	DRR260182	generated	2	sequence	multinomial naive Bayes	200000	0.5144	0.0045
+generated_vs_heldout_run	DRR260182	generated	2	quality	logistic regression	200000	0.6638	0.0045
+generated_vs_heldout_run	DRR260182	generated	2	combined	stacked NB score + LR	200000	0.6648	0.0045
+real_vs_real	DRR260182	DRR260182	pair	pair	logistic regression	100000	0.5031	0.0063
+generated_vs_heldout_run	DRR260182	generated	pair	pair	logistic regression	200000	0.7181	0.0045
+real_run_vs_real_run	DRR276626	ERR15600747	1	sequence	multinomial naive Bayes	200000	0.5237	0.0045
+real_run_vs_real_run	DRR276626	ERR15600747	1	quality	logistic regression	200000	0.7667	0.0045
+real_run_vs_real_run	DRR276626	ERR15600747	1	combined	stacked NB score + LR	200000	0.7676	0.0045
+real_run_vs_real_run	DRR276626	ERR15600747	2	sequence	multinomial naive Bayes	200000	0.5277	0.0045
+real_run_vs_real_run	DRR276626	ERR15600747	2	quality	logistic regression	200000	0.7201	0.0045
+real_run_vs_real_run	DRR276626	ERR15600747	2	combined	stacked NB score + LR	200000	0.7215	0.0045
+real_run_vs_real_run	DRR276626	ERR15600747	pair	pair	logistic regression	200000	0.7802	0.0045
+real_run_vs_real_run	DRR276626	DRR394916	1	sequence	multinomial naive Bayes	200000	0.5155	0.0045
+real_run_vs_real_run	DRR276626	DRR394916	1	quality	logistic regression	200000	0.6769	0.0045
+real_run_vs_real_run	DRR276626	DRR394916	1	combined	stacked NB score + LR	200000	0.6766	0.0045
+real_run_vs_real_run	DRR276626	DRR394916	2	sequence	multinomial naive Bayes	200000	0.523	0.0045
+real_run_vs_real_run	DRR276626	DRR394916	2	quality	logistic regression	200000	0.7291	0.0045
+real_run_vs_real_run	DRR276626	DRR394916	2	combined	stacked NB score + LR	200000	0.7299	0.0045
+real_run_vs_real_run	DRR276626	DRR394916	pair	pair	logistic regression	200000	0.7423	0.0045
+real_run_vs_real_run	DRR276626	DRR260182	1	sequence	multinomial naive Bayes	200000	0.5114	0.0045
+real_run_vs_real_run	DRR276626	DRR260182	1	quality	logistic regression	200000	0.6274	0.0045
+real_run_vs_real_run	DRR276626	DRR260182	1	combined	stacked NB score + LR	200000	0.6277	0.0045
+real_run_vs_real_run	DRR276626	DRR260182	2	sequence	multinomial naive Bayes	200000	0.5133	0.0045
+real_run_vs_real_run	DRR276626	DRR260182	2	quality	logistic regression	200000	0.6652	0.0045
+real_run_vs_real_run	DRR276626	DRR260182	2	combined	stacked NB score + LR	200000	0.6653	0.0045
+real_run_vs_real_run	DRR276626	DRR260182	pair	pair	logistic regression	200000	0.6781	0.0045
+real_run_vs_real_run	ERR15600747	DRR394916	1	sequence	multinomial naive Bayes	200000	0.5314	0.0045
+real_run_vs_real_run	ERR15600747	DRR394916	1	quality	logistic regression	200000	0.6189	0.0045
+real_run_vs_real_run	ERR15600747	DRR394916	1	combined	stacked NB score + LR	200000	0.6231	0.0045
+real_run_vs_real_run	ERR15600747	DRR394916	2	sequence	multinomial naive Bayes	200000	0.5353	0.0045
+real_run_vs_real_run	ERR15600747	DRR394916	2	quality	logistic regression	200000	0.553	0.0045
+real_run_vs_real_run	ERR15600747	DRR394916	2	combined	stacked NB score + LR	200000	0.5658	0.0045
+real_run_vs_real_run	ERR15600747	DRR394916	pair	pair	logistic regression	200000	0.6405	0.0045
+real_run_vs_real_run	ERR15600747	DRR260182	1	sequence	multinomial naive Bayes	200000	0.5277	0.0045
+real_run_vs_real_run	ERR15600747	DRR260182	1	quality	logistic regression	200000	0.664	0.0045
+real_run_vs_real_run	ERR15600747	DRR260182	1	combined	stacked NB score + LR	200000	0.667	0.0045
+real_run_vs_real_run	ERR15600747	DRR260182	2	sequence	multinomial naive Bayes	200000	0.5316	0.0045
+real_run_vs_real_run	ERR15600747	DRR260182	2	quality	logistic regression	200000	0.5934	0.0045
+real_run_vs_real_run	ERR15600747	DRR260182	2	combined	stacked NB score + LR	200000	0.5993	0.0045
+real_run_vs_real_run	ERR15600747	DRR260182	pair	pair	logistic regression	200000	0.6754	0.0045
+real_run_vs_real_run	DRR394916	DRR260182	1	sequence	multinomial naive Bayes	200000	0.5087	0.0045
+real_run_vs_real_run	DRR394916	DRR260182	1	quality	logistic regression	200000	0.5726	0.0045
+real_run_vs_real_run	DRR394916	DRR260182	1	combined	stacked NB score + LR	200000	0.5716	0.0045
+real_run_vs_real_run	DRR394916	DRR260182	2	sequence	multinomial naive Bayes	200000	0.5135	0.0045
+real_run_vs_real_run	DRR394916	DRR260182	2	quality	logistic regression	200000	0.5945	0.0045
+real_run_vs_real_run	DRR394916	DRR260182	2	combined	stacked NB score + LR	200000	0.5949	0.0045
+real_run_vs_real_run	DRR394916	DRR260182	pair	pair	logistic regression	200000	0.6184	0.0045

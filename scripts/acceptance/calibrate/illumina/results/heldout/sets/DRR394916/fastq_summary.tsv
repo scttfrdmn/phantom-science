@@ -1,0 +1,27 @@
+mate	key	value
+1	reads	200000
+1	bases	30200000
+1	max_length	151
+1	alphabet	,:F
+1	alphabet_phred	11,25,37
+1	frac_Q11	0.0396559
+1	frac_Q25	0.0568773
+1	frac_Q37	0.903467
+1	mean_q	35.2864
+1	frac_ge_q30	0.903467
+1	n_calls	0
+1	n_rate	0
+1	n_call_quals	
+2	reads	200000
+2	bases	30200000
+2	max_length	151
+2	alphabet	,:F
+2	alphabet_phred	11,25,37
+2	frac_Q11	0.0596082
+2	frac_Q25	0.0711171
+2	frac_Q37	0.869275
+2	mean_q	34.5968
+2	frac_ge_q30	0.869275
+2	n_calls	0
+2	n_rate	0
+2	n_call_quals	

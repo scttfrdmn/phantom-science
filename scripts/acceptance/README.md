@@ -12,6 +12,7 @@ is missing.
 | `calibrate/` | Ablation of the synthetic-vs-real basecalling gap, DNA R10.4.1 and RNA004 | #28 | Run 2026-10-20: results in `calibrate/results/` (see below) |
 | `transcriptome_bambu.sh` | Bambu quantification and novel-isoform discovery on simulated cDNA | #13 | Completed on GRCh38 chr22 / GENCODE v49: count Pearson 0.872, Spearman 0.832; novel precision 0.90, recall 0.55 |
 | `pycoqc.sh` | PycoQC reads a generated `sequencing_summary.txt` | #16 | Passed: PycoQC 2.5.2 counted all 537 reads |
+| `illumina_heldout.sh` | The Illumina model (fitted to DRR276626) against three held-out NovaSeq 6000 runs and against real-run-vs-real-run distances | #35 | Run 2026-10-23: results in `calibrate/illumina/results/heldout/` (see below) |
 | `../fetch-pore-model.sh` | Downloads an ONT k-mer pore model for `signal` | #14 | Used for the end-to-end example below |
 
 Until a script has been run, the feature it checks has only the repository's
@@ -220,6 +221,24 @@ scripts/acceptance/calibrate/run_conditions.sh \
     --conditions scripts/acceptance/calibrate/conditions_rna.tsv \
     --results scripts/acceptance/calibrate/results/rna.tsv       # RNA004
 ```
+
+## illumina_heldout.sh (#35)
+
+```sh
+scripts/acceptance/illumina_heldout.sh hg38.primary.fa   # or no argument: downloads UCSC hg38
+```
+
+Streams the first 200,000 read pairs of DRR276626 (the fitted run) and of
+the held-out NovaSeq 6000 runs ERR15600747, DRR394916 and DRR260182 from ENA
+(rejecting runs without binned `#,:F` qualities), then runs
+`run_e2e_tests` paired against each run (real vs real, real vs generated)
+and for every pair of runs (`-real-only -real-fastq-b`), and compares
+calibration statistics (`illumina_stats.py`, minimap2 alignments,
+`heldout_compare.py`) of every run with the generated reads. Results, with
+the md5 of the streamed reads, are in `calibrate/illumina/results/heldout/`:
+`classifier_matrix.tsv`, `classifier_spread.tsv`, `calibration_stats.tsv`,
+`cycle_delta.tsv`, `runs.tsv`, `run.tsv`, and per read set `sets/NAME/`.
+About 45 minutes on 12 cores; 9 GB for the minimap2 index.
 
 ## transcriptome_bambu.sh (#13)
 

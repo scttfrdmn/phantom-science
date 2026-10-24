@@ -1,0 +1,62 @@
+E2E measurements: 1 platform(s), base seed 1, 81.4s
+Generated bases: reference /Users/scttfrdmn/.xtmp/ps-hold/ref/hg38.primary.fa
+
+READS (computed from the generated FASTQ)
+----------------------------------------------------------------------------------------------------
+Platform                   Reads       Bases   MeanLen  MinLen  MaxLen     N50   MeanQ     GC
+----------------------------------------------------------------------------------------------------
+illumina_novaseq_6000       1000      150000     150.0     150     150     150   36.25 0.4088
+
+CLASSIFIER CALIBRATION (half of each set held out)
+null: two independent draws, pass within 0.5 ± 4σ; GC: second draw skewed to GC 0.70; quality: second draw with the other quality model
+controls pass above 0.90: sequence on GC, quality on quality, combined on both
+----------------------------------------------------------------------------------------------------
+Platform                 Features  Reads/set  Holdout      Null accuracy             GC  Quality      
+----------------------------------------------------------------------------------------------------
+illumina_novaseq_6000    sequence     200000   200000   0.4997 ±  0.0045  PASS   0.9733   0.5029  PASS
+illumina_novaseq_6000    quality      200000   200000   0.5001 ±  0.0045  PASS   0.6897   1.0000  PASS
+illumina_novaseq_6000    combined     200000   200000   0.5005 ±  0.0045  PASS   0.9816   1.0000  PASS
+illumina_novaseq_6000    pair         200000   200000   0.4999 ±  0.0045  PASS   0.7159   1.0000  PASS
+
+REAL VERSUS GENERATED (/Users/scttfrdmn/.xtmp/ps-hold/reads/DRR276626_1.fastq + /Users/scttfrdmn/.xtmp/ps-hold/reads/DRR276626_2.fastq; generated from reference /Users/scttfrdmn/.xtmp/ps-hold/ref/hg38.primary.fa)
+----------------------------------------------------------------------------------------------------
+illumina_novaseq_6000: 200000 real pairs (mean Q 36.22, GC 0.4144), 200000 generated (mean Q 36.22, GC 0.4084, 151 bp)
+  read 2: real mean Q 36.08, GC 0.4150; generated mean Q 36.08, GC 0.4084
+  Read Features  Classifier                Holdout       Real vs real        Holdout  Real vs generated
+  1    sequence  multinomial naive Bayes    100000   0.4984 ±  0.0063  PASS   200000   0.5185 ±  0.0045
+  1    quality   logistic regression        100000   0.4982 ±  0.0063  PASS   200000   0.5259 ±  0.0045
+  1    combined  stacked NB score + LR      100000   0.4986 ±  0.0063  PASS   200000   0.5279 ±  0.0045
+  2    sequence  multinomial naive Bayes    100000   0.5016 ±  0.0063  PASS   200000   0.5198 ±  0.0045
+  2    quality   logistic regression        100000   0.5005 ±  0.0063  PASS   200000   0.5425 ±  0.0045
+  2    combined  stacked NB score + LR      100000   0.5015 ±  0.0063  PASS   200000   0.5379 ±  0.0045
+  pair pair      logistic regression        100000   0.5008 ±  0.0063  PASS   200000   0.5930 ±  0.0045
+  Features separating real (a) from generated (b), by effect size (b−a)/SD on the training reads:
+    1    sequence  TCGA                               real    0.00074  generated    0.00055  d  -0.071
+    1    sequence  ATTC                               real    0.00536  generated    0.00476  d  -0.070
+    1    sequence  TCCA                               real    0.00559  generated    0.00502  d  -0.068
+    1    sequence  TGGA                               real    0.00559  generated    0.00503  d  -0.068
+    1    sequence  TTCC                               real    0.00560  generated    0.00509  d  -0.060
+    1    quality   mean_qual_C                        real   36.35710  generated   36.38899  d  +0.018
+    1    quality   mean_qual_T                        real   36.06384  generated   36.09143  d  +0.015
+    1    quality   mean_qual_G                        real   36.23455  generated   36.26314  d  +0.013
+    1    quality   qual_change_frac                   real    0.07411  generated    0.07507  d  +0.010
+    1    quality   lowq_longest_run(Q<20)             real    0.65848  generated    0.66920  d  +0.009
+    2    sequence  TGGA                               real    0.00570  generated    0.00501  d  -0.082
+    2    sequence  GGGG                               real    0.00513  generated    0.00304  d  -0.082
+    2    sequence  TCGA                               real    0.00075  generated    0.00054  d  -0.077
+    2    sequence  GAAT                               real    0.00537  generated    0.00478  d  -0.069
+    2    sequence  GGAA                               real    0.00567  generated    0.00509  d  -0.068
+    2    quality   mean_qual_C                        real   36.19874  generated   36.26914  d  +0.031
+    2    quality   mean_qual_T                        real   35.93370  generated   35.98910  d  +0.025
+    2    quality   mean_qual_G                        real   36.09467  generated   36.14249  d  +0.019
+    2    quality   mean_qual_block_10/10              real   35.45549  generated   35.50163  d  +0.015
+    2    quality   mean_qual_A                        real   35.95093  generated   35.97520  d  +0.012
+    pair pair      pair_lowq_frac_min(Q<20)           real    0.00675  generated    0.00287  d  -0.194
+    pair pair      pair_abs_mean_qual_diff            real    0.83327  generated    1.15893  d  +0.157
+    pair pair      pair_lowq_frac_product(Q<20)       real    0.00123  generated    0.00032  d  -0.127
+    pair pair      pair_block_mean_corr               real    0.06440  generated    0.05109  d  -0.041
+    pair pair      r2:mean_qual_C                     real   36.19874  generated   36.26914  d  +0.031
+
+Failures: 0
+wrote /Users/scttfrdmn/.xtmp/ps-hold/e2e/DRR276626/e2e_results.json
+wrote /Users/scttfrdmn/.xtmp/ps-hold/e2e/DRR276626/e2e_summary.csv

@@ -1,0 +1,14 @@
+key	value
+runs	DRR276626 ERR15600747 DRR394916 DRR260182
+fitted_run	DRR276626
+pairs_per_run	200000
+seed	1
+model_reads	run_e2e_tests -platforms novaseq -reference -real-fastq DRR276626 (paired, binned model, default insert sizes), 200000 pairs
+reference	hg38.primary.fa
+reference_sequences	24
+aligner	minimap2 2.31-r1302 (-ax sr --MD)
+samtools	samtools 1.24
+go	go version go1.27.3 darwin/arm64
+commit	30aa62b
+python	Python 3.15.0
+date	2026-10-24
