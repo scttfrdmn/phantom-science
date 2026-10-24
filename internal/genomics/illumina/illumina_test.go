@@ -25,6 +25,27 @@ func binIndex(q byte) int {
 	return -1
 }
 
+// The default profile is novaseq6000-drr394916 and is listed first; the
+// package's default models are its; the linear model's substitution model
+// (ApplyErrors) stays novaseq6000-drr276626's, so linear output does not
+// change with the default.
+func TestDefaultProfile(t *testing.T) {
+	if DefaultProfile != "novaseq6000-drr394916" || ProfileNames()[0] != DefaultProfile {
+		t.Fatalf("default %q, names %v", DefaultProfile, ProfileNames())
+	}
+	p, err := LookupProfile("")
+	if err != nil || p != &profileDRR394916 {
+		t.Fatalf("LookupProfile(\"\") = %v, %v", p, err)
+	}
+	if NovaSeqErrors != profileDRR394916.Errors || &Read1.Classes[0] != &profileDRR394916.Read1.Classes[0] ||
+		&Read2.Classes[0] != &profileDRR394916.Read2.Classes[0] || &NovaSeqPairs.Joint[0] != &profileDRR394916.Pairs.Joint[0] {
+		t.Error("the package's default models are not the default profile's")
+	}
+	if linearErrors != profileDRR276626.Errors {
+		t.Error("ApplyErrors is not novaseq6000-drr276626's substitution model")
+	}
+}
+
 // The class weights sum to 1 and the weighted class factors average to 1,
 // so the class mixture has the mean per-cycle fractions (every profile).
 func TestQualityParams_ClassesNormalised(t *testing.T) {
@@ -153,9 +174,10 @@ func TestQualities_FrequenciesMatchTarget(t *testing.T) {
 
 // The substitution rate of each quality and cycle matches Rate(q, c) times
 // the base factor within the 99 % binomial CI; substituted bases follow
-// Matrix; Q2 bases become N; other qualities use the Phred rate.
+// Matrix; Q2 bases become N; other qualities use the Phred rate. ApplyErrors
+// is the linear model's substitution model, novaseq6000-drr276626's.
 func TestApplyErrors_RateAndSpectrum(t *testing.T) {
-	e := NovaSeqErrors
+	e := profileDRR276626.Errors
 	r := newRand(5)
 	const n = 150
 	for _, q := range []byte{QLow, QMid, QHigh, 30} {

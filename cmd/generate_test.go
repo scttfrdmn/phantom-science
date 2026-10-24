@@ -238,8 +238,9 @@ func TestGenerate_ScaleFlags(t *testing.T) {
 	})
 }
 
-// --illumina-profile reaches the engine: a lower-quality run's profile
-// lowers the mean quality; an unknown name fails.
+// --illumina-profile reaches the engine: the profile sets the mean quality
+// (the default, DRR394916, lies between DRR276626 and ERR15600747); an
+// unknown name fails.
 func TestGenerate_IlluminaProfileFlag(t *testing.T) {
 	meanQ := func(profile string) (float64, error) {
 		flags := map[string]string{"config": writeGenerateConfig(t, 150, 2000), "stdout": "true", "seed": "3"}
@@ -265,12 +266,18 @@ func TestGenerate_IlluminaProfileFlag(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	high, err := meanQ("novaseq6000-drr276626")
+	if err != nil {
+		t.Fatal(err)
+	}
 	low, err := meanQ("novaseq6000-err15600747")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !(low < def-1) {
-		t.Errorf("mean Q %.2f with novaseq6000-err15600747, %.2f by default; want about 1.6 lower", low, def)
+	// Read 1 runs: DRR276626 36.22, DRR394916 (the default) 35.29,
+	// ERR15600747 34.57.
+	if !(high > def+0.5) || !(low < def-0.4) {
+		t.Errorf("mean Q %.2f with novaseq6000-drr276626, %.2f by default, %.2f with novaseq6000-err15600747; want about 36.2, 35.3, 34.6", high, def, low)
 	}
 	if _, err := meanQ("novaseq6000-nosuchrun"); err == nil || !strings.Contains(err.Error(), "unknown illumina profile") {
 		t.Errorf("unknown profile: err = %v", err)

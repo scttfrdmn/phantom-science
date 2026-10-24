@@ -219,11 +219,14 @@ const (
 	InsertSizeLognormal   = "lognormal"
 	// The default insert size is lognormal with the mean and SD measured on
 	// proper pairs of NovaSeq 6000 run DRR276626 aligned to GRCh38 (454.5 ±
-	// 99.8, right-skewed; scripts/acceptance/illumina_calibrate.sh), the run
-	// of the default profile. Insert size is a property of the library
-	// preparation, not the instrument: another illumina.profile brings its
-	// run's insert sizes, and illumina.insert_size sets them for other
-	// libraries.
+	// 99.8, right-skewed; scripts/acceptance/illumina_calibrate.sh), the
+	// default profile of earlier releases. It applies when illumina.profile
+	// is not set (although the default profile is now
+	// novaseq6000-drr394916, whose run's inserts are 560 ± 115), to the
+	// linear quality model, and to the fields of a set insert_size left
+	// empty. Insert size is a property of the library preparation, not the
+	// instrument: an illumina.profile set explicitly brings its run's insert
+	// sizes, and illumina.insert_size sets them for other libraries.
 	DefaultInsertSizeMean  = 455.0
 	DefaultInsertSizeSD    = 100.0
 	maxInsertSizeParameter = 1 << 20
@@ -237,12 +240,17 @@ type IlluminaSpec struct {
 	// marks a no-call. "linear" keeps the earlier model, BaseQuality −
 	// cycle·QualityDecay, and the earlier output.
 	QualityModel string `json:"quality_model,omitempty" yaml:"quality_model,omitempty"`
-	// Profile selects the run the binned model is fitted to (#35), e.g.
-	// "novaseq6000-drr276626" (the default when empty),
-	// "novaseq6000-drr394916" or "novaseq6000-err15600747": its qualities,
-	// mate coupling, substitution errors and, unless InsertSize is set,
-	// insert sizes. Names are checked by the engine
-	// (illumina.ProfileNames); it needs quality_model binned.
+	// Profile selects the run the binned model is fitted to (#35):
+	// "novaseq6000-drr394916" (the default when empty),
+	// "novaseq6000-drr276626" (the default of earlier releases) or
+	// "novaseq6000-err15600747": its qualities, mate coupling, substitution
+	// errors, context factors and, when Profile is set and InsertSize is
+	// not, its run's insert sizes. Empty, the qualities are
+	// novaseq6000-drr394916's but the insert size is the lognormal
+	// DefaultInsertSizeMean ± DefaultInsertSizeSD (455 ± 100), not that
+	// run's 560 ± 115; naming novaseq6000-drr394916 gives its 560 ± 115.
+	// Names are checked by the engine (illumina.ProfileNames); it needs
+	// quality_model binned.
 	Profile string `json:"profile,omitempty" yaml:"profile,omitempty"`
 	// Errors is "quality" or "none". "quality" substitutes bases at the
 	// measured rate of their quality and cycle and writes Q2 bases as N
@@ -251,15 +259,19 @@ type IlluminaSpec struct {
 	// for the linear one.
 	Errors string `json:"errors,omitempty" yaml:"errors,omitempty"`
 	// InsertSize is the fragment-length distribution of paired-end reads.
-	// Unset, the binned model uses its profile's measured distribution (the
-	// default profile's is the WithDefaults default).
+	// Resolution, in order: set (any field), it wins, its empty fields
+	// filled by WithDefaults; else, with Profile set (binned model), the
+	// profile's measured distribution; else the WithDefaults default,
+	// lognormal 455 ± 100.
 	InsertSize InsertSizeSpec `json:"insert_size,omitzero" yaml:"insert_size,omitempty"`
 }
 
 // InsertSizeSpec is the fragment (insert) length distribution of paired-end
 // reads: Dist "normal" or "lognormal", with the fragment length's Mean and
-// SD. When nothing is set the default is lognormal 455 ± 100 (measured on
-// NovaSeq 6000 run DRR276626); a Mean or SD without Dist means normal. Draws outside
+// SD. When nothing is set the default (WithDefaults) is lognormal 455 ± 100
+// (measured on NovaSeq 6000 run DRR276626), unless an explicitly set
+// illumina.profile brings its run's (IlluminaSpec.InsertSize); a Mean or SD
+// without Dist means normal. Draws outside
 // [max(Min, read length), Max] are redrawn (Max 0: no upper bound).
 type InsertSizeSpec struct {
 	Dist string  `json:"dist,omitempty" yaml:"dist,omitempty"`

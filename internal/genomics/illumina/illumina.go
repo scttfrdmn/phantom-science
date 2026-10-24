@@ -23,21 +23,22 @@
 // insert sizes) is fitted to each run by the same pipeline, and selected by
 // name (illumina.profile):
 //
-//   - novaseq6000-drr276626 (the default; the model of earlier releases):
-//     DRR276626, SAGA_U, library not recorded, 2×151; mean Q 36.22 / 36.08
-//     (read 1 / read 2), 95.4 % / 94.7 % at Q30 or more, Q11 1.6 % / 2.0 %,
-//     insert median 446;
-//   - novaseq6000-drr394916: DRR394916, NCCHD, TruSeq DNA PCR-Free, 2×151;
-//     mean Q 35.29 / 34.60, 90.3 % / 86.9 %, Q11 4.0 % / 6.0 %, insert
-//     median 559;
+//   - novaseq6000-drr394916 (the default): DRR394916, NCCHD, TruSeq DNA
+//     PCR-Free, 2×151; mean Q 35.29 / 34.60 (read 1 / read 2), 90.3 % /
+//     86.9 % at Q30 or more, Q11 4.0 % / 6.0 %, insert median 559;
+//   - novaseq6000-drr276626 (the default of earlier releases): DRR276626,
+//     SAGA_U, library not recorded, 2×151; mean Q 36.22 / 36.08, 95.4 % /
+//     94.7 %, Q11 1.6 % / 2.0 %, insert median 446;
 //   - novaseq6000-err15600747: ERR15600747, EBI / Southampton, Agilent
 //     SureSelect QXT, 2×150; mean Q 34.57 / 34.31, 86.5 % / 85.5 %, Q11
 //     5.8 % / 6.8 %, insert median 361.
 //
 // The insert size belongs to the profile because a profile reproduces one
 // run, and the run's library is part of it; illumina.insert_size overrides
-// it. The figures in the rest of this documentation are the default
-// profile's.
+// it. With no profile set, though, the insert size is lognormal 455 ± 100
+// (DRR276626's), not the default profile's 560 ± 115: see "The default" in
+// profiles.go for the exact rule. The figures in the rest of this
+// documentation are DRR276626's, the run the model was first fitted to.
 //
 // # Qualities
 //
@@ -568,9 +569,11 @@ var errorProb = func() (t [94]float64) {
 // (see SubstitutionRate).
 func ErrorProb(q byte) float64 { return errorProb[min(int(q), len(errorProb)-1)] }
 
-// SubstitutionRate returns the substitution rate that ApplyErrors applies,
-// on average over bases, to a base of quality q at 0-based cycle c.
-func SubstitutionRate(q byte, c int) float64 { return NovaSeqErrors.Rate(q, c) }
+// SubstitutionRate returns the substitution rate that ApplyErrors (the
+// linear quality model's errors) applies, on average over bases, to a base
+// of quality q at 0-based cycle c. The binned model's rates are its
+// profile's, Profile.Errors.Rate.
+func SubstitutionRate(q byte, c int) float64 { return linearErrors.Rate(q, c) }
 
 // baseIndex maps A, C, G, T to 0-3 and every other byte to -1.
 var baseIndex = func() (t [256]int8) {
@@ -619,11 +622,14 @@ func (e ErrorParams) Apply(r *rand.Rand, seq, qual []byte) ([]byte, []byte) {
 	return seq, qual
 }
 
-// ApplyErrors applies the NovaSeq substitution model (NovaSeqErrors.Apply)
-// to seq in place, treating index i as sequencing cycle i (the engine passes
-// reads in sequencing orientation).
+// ApplyErrors applies the substitution model of the linear quality model
+// (illumina.errors quality with quality_model linear) to seq in place,
+// treating index i as sequencing cycle i (the engine passes reads in
+// sequencing orientation). It is novaseq6000-drr276626's model
+// (Profile.Errors.Apply), whatever the default profile, so linear output
+// does not change with it; the binned model applies its profile's.
 func ApplyErrors(r *rand.Rand, seq, qual []byte) ([]byte, []byte) {
-	return NovaSeqErrors.Apply(r, seq, qual)
+	return linearErrors.Apply(r, seq, qual)
 }
 
 // maxRedraws bounds the redraws of an out-of-range insert size.

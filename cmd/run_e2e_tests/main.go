@@ -137,7 +137,7 @@ func parseCommandLineArgs() *CommandLineArgs {
 	flag.StringVar(&args.writeGenerated, "write-generated", "",
 		"Directory to write the generated reads of the real comparison to (<platform>_1.fastq, and _2.fastq for pairs)")
 	flag.StringVar(&args.illuminaProfile, "illumina-profile", "",
-		"Illumina run profile of the generated reads: "+strings.Join(illumina.ProfileNames(), ", ")+" (default "+illumina.DefaultProfile+")")
+		"Illumina run profile of the generated reads: "+strings.Join(illumina.ProfileNames(), ", ")+" (default "+illumina.DefaultProfile+" with lognormal 455 ± 100 inserts; set explicitly, the profile's own inserts)")
 	flag.BoolVar(&args.help, "help", false, "Show this help message")
 	flag.Parse()
 	return args

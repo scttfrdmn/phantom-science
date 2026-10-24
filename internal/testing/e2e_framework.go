@@ -109,11 +109,14 @@ type PlatformConfig struct {
 	ErrorTier              string
 	ReadLengthDistribution types.ReadLengthSpec
 	// IlluminaQualityModel is SequencerConfig.Illumina.QualityModel:
-	// empty or "binned" (the model fitted to NovaSeq 6000 run DRR276626),
+	// empty or "binned" (the model fitted to a NovaSeq 6000 run, see
+	// IlluminaProfile),
 	// or "linear" (BaseQuality − cycle·QualityDecay).
 	IlluminaQualityModel string
 	// IlluminaProfile is SequencerConfig.Illumina.Profile: the run the
-	// binned model is fitted to (empty: the default, DRR276626).
+	// binned model is fitted to (empty: the default profile's qualities,
+	// DRR394916, with lognormal 455 ± 100 inserts; set, the profile's own
+	// inserts).
 	IlluminaProfile string
 
 	// ReferencePath and ReferenceRegion are SequencerConfig.ReferencePath

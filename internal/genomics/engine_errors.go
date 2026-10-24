@@ -31,7 +31,7 @@ package genomics
 //     tier, ONT reads get the linear decay and no errors.
 //   - Illumina, quality_model "binned" (the default): qualities in the
 //     NovaSeq 6000 bins (Q2/Q11/Q25/Q37) from package illumina, fitted to
-//     a real run (illumina.profile, default run DRR276626, #35) and drawn
+//     a real run (illumina.profile, default run DRR394916, #35) and drawn
 //     given the read's bases (each cycle's Q11 and
 //     Q25 probabilities depend on its 4-base context, #35; the two reads of
 //     a pair draw their quality classes together, #35), and with errors
@@ -108,11 +108,15 @@ func (e *Engine) illuminaProfile() (*illumina.Profile, error) {
 	return illumina.LookupProfile(e.config.Illumina.Profile)
 }
 
-// insertSizes returns the insert-size distribution of paired-end reads:
-// illumina.insert_size when set, else the profile's measured one (the
-// default profile's is the types default), with defaults applied.
+// insertSizes returns the insert-size distribution of paired-end reads, with
+// defaults applied: illumina.insert_size when set (any field); else, with
+// illumina.profile set and binned qualities, that profile's measured one;
+// else the types default, lognormal 455 ± 100. An unset profile thus gives
+// the default profile's qualities (illumina.DefaultProfile) but not its
+// run's inserts; see the illumina package's profile documentation.
 func (e *Engine) insertSizes() (types.InsertSizeSpec, error) {
-	if e.config.Illumina.InsertSize != (types.InsertSizeSpec{}) || !e.binnedQualities() {
+	il := e.config.Illumina
+	if il.InsertSize != (types.InsertSizeSpec{}) || il.Profile == "" || !e.binnedQualities() {
 		return e.illuminaSpec().InsertSize, nil
 	}
 	prof, err := e.illuminaProfile()

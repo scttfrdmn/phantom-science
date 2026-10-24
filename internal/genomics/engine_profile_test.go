@@ -14,21 +14,80 @@ import (
 	"github.com/scttfrdmn/phantom-science/pkg/types"
 )
 
-// Naming the default profile gives exactly the output of no profile; an
-// unknown profile, or a profile with the linear model, is rejected before
-// any output.
+// The profile and the insert size are resolved by the rule documented in
+// package illumina (profiles.go): no profile gives the default profile
+// (novaseq6000-drr394916) with lognormal 455 ± 100 inserts; a profile set
+// explicitly, the default included, brings its run's inserts; a set
+// insert_size always wins (its empty fields defaulted).
+func TestIllumina_ProfileResolution(t *testing.T) {
+	ln := func(m, sd float64) types.InsertSizeSpec {
+		return types.InsertSizeSpec{Dist: types.InsertSizeLognormal, Mean: m, SD: sd}
+	}
+	normal300 := types.InsertSizeSpec{Dist: types.InsertSizeNormal, Mean: 300, SD: 30}
+	for _, tc := range []struct {
+		name    string
+		spec    types.IlluminaSpec
+		profile string
+		insert  types.InsertSizeSpec
+	}{
+		{"unset", types.IlluminaSpec{}, "novaseq6000-drr394916", ln(455, 100)},
+		{"explicit drr394916", types.IlluminaSpec{Profile: "novaseq6000-drr394916"}, "novaseq6000-drr394916", ln(560, 115)},
+		{"explicit drr394916, other case", types.IlluminaSpec{Profile: "NovaSeq6000-DRR394916"}, "novaseq6000-drr394916", ln(560, 115)},
+		{"explicit drr276626", types.IlluminaSpec{Profile: "novaseq6000-drr276626"}, "novaseq6000-drr276626", ln(455, 100)},
+		{"explicit err15600747", types.IlluminaSpec{Profile: "novaseq6000-err15600747"}, "novaseq6000-err15600747", ln(390, 150)},
+		{"insert_size, no profile", types.IlluminaSpec{InsertSize: types.InsertSizeSpec{Mean: 300, SD: 30}},
+			"novaseq6000-drr394916", normal300},
+		{"insert_size wins over drr394916", types.IlluminaSpec{Profile: "novaseq6000-drr394916", InsertSize: types.InsertSizeSpec{Mean: 300, SD: 30}},
+			"novaseq6000-drr394916", normal300},
+		{"insert_size wins over err15600747", types.IlluminaSpec{Profile: "novaseq6000-err15600747", InsertSize: ln(250, 40)},
+			"novaseq6000-err15600747", ln(250, 40)},
+		{"partial insert_size: defaults, not the profile's", types.IlluminaSpec{Profile: "novaseq6000-drr394916", InsertSize: types.InsertSizeSpec{Max: 900}},
+			"novaseq6000-drr394916", types.InsertSizeSpec{Dist: types.InsertSizeLognormal, Mean: 455, SD: 100, Max: 900}},
+		{"linear model", types.IlluminaSpec{QualityModel: types.IlluminaQualityLinear}, "novaseq6000-drr394916", ln(455, 100)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := binnedConfig(t.TempDir())
+			c.Illumina = tc.spec
+			e := NewEngine(c)
+			defer e.Close()
+			if err := e.checkIllumina(); err != nil {
+				t.Fatal(err)
+			}
+			p, err := e.illuminaProfile()
+			if err != nil || p.Name != tc.profile {
+				t.Errorf("profile %v (err %v), want %s", p, err, tc.profile)
+			}
+			got, err := e.insertSizes()
+			if err != nil || got != tc.insert {
+				t.Errorf("insert size %+v (err %v), want %+v", got, err, tc.insert)
+			}
+		})
+	}
+}
+
+// Naming the default profile gives the qualities, errors and mate coupling
+// of no profile and differs only in the inserts: single-end output is
+// identical, and paired output is identical once the inserts are set to the
+// unset default (lognormal 455 ± 100) but not without. An unknown profile,
+// or a profile with the linear model, is rejected before any output.
 func TestIllumina_ProfileSelection(t *testing.T) {
+	for _, paired := range []bool{false, true} {
+		c := binnedConfig(t.TempDir())
+		c.ReadsPerBatch, c.PairedEnd = 300, paired
+		base := streamOutput(t, c, GenerateOpts{})
+		for _, name := range []string{illumina.DefaultProfile, strings.ToUpper(illumina.DefaultProfile)} {
+			c.Illumina = types.IlluminaSpec{Profile: name}
+			if same := bytes.Equal(streamOutput(t, c, GenerateOpts{}), base); same == paired {
+				t.Errorf("paired %v, profile %s named: output equal to no profile's %v, want %v", paired, name, same, !paired)
+			}
+			c.Illumina.InsertSize = types.InsertSizeSpec{Dist: types.InsertSizeLognormal, Mean: types.DefaultInsertSizeMean, SD: types.DefaultInsertSizeSD}
+			if !bytes.Equal(streamOutput(t, c, GenerateOpts{}), base) {
+				t.Errorf("paired %v, profile %s with the default inserts: output differs from no profile's", paired, name)
+			}
+		}
+	}
 	c := binnedConfig(t.TempDir())
 	c.ReadsPerBatch = 300
-	base := streamOutput(t, c, GenerateOpts{})
-	c.Illumina.Profile = illumina.DefaultProfile
-	if !bytes.Equal(streamOutput(t, c, GenerateOpts{}), base) {
-		t.Error("the default profile named explicitly changed the output")
-	}
-	c.Illumina.Profile = strings.ToUpper(illumina.DefaultProfile)
-	if !bytes.Equal(streamOutput(t, c, GenerateOpts{}), base) {
-		t.Error("profile names are not case-insensitive")
-	}
 	for _, tc := range []struct {
 		spec types.IlluminaSpec
 		want string

@@ -96,19 +96,21 @@ func TestIllumina_DefaultBinnedQualities(t *testing.T) {
 					t.Errorf("mean quality cycles 1-30 %.2f, 121-150 %.2f: want a decrease", early, late)
 				}
 			}
-			// DRR276626 (NovaSeq 6000) measured R1 36.22 and R2 36.08.
+			// The default profile's run, DRR394916 (NovaSeq 6000), measured
+			// R1 35.29 and R2 34.60. Its reads vary more in quality than
+			// DRR276626's (more poor reads), so 2,000 pairs allow ±0.25.
 			m1, m2 := meanQ(r1, 0, 150), meanQ(r2, 0, 150)
-			if math.Abs(m1-36.22) > 0.15 || math.Abs(m2-36.08) > 0.15 || !(m2 < m1) {
-				t.Errorf("mean quality R1 %.2f, R2 %.2f; want 36.22 and 36.08 (±0.15), R2 below R1", m1, m2)
+			if math.Abs(m1-35.29) > 0.25 || math.Abs(m2-34.60) > 0.25 || !(m2 < m1) {
+				t.Errorf("mean quality R1 %.2f, R2 %.2f; want 35.29 and 34.60 (±0.25), R2 below R1", m1, m2)
 			}
 			t.Logf("mean quality R1 %.2f, R2 %.2f", m1, m2)
 		})
 	}
 }
 
-// The empirical substitution count per quality bin matches the model's
-// fitted, cycle-dependent rates (illumina.SubstitutionRate × BaseFactor of
-// the true base), within 99 % of a Poisson-binomial. Truth is the error-free
+// The empirical substitution count per quality bin matches the default
+// profile's fitted, cycle-dependent rates (illumina.NovaSeqErrors: Rate ×
+// BaseFactor of the true base), within 99 % of a Poisson-binomial. Truth is the error-free
 // run with the same seed: paired file output draws each fragment from the
 // pair stream, so turning errors off changes only the mate streams
 // (qualities and errors), not the fragments.
@@ -134,7 +136,7 @@ func TestIllumina_ErrorRateMatchesQuality(t *testing.T) {
 					subs[qc]++
 				}
 				if q := qc - '!'; q != illumina.QNoCall {
-					p := illumina.SubstitutionRate(q, j) * illumina.NovaSeqErrors.BaseFactor[baseIdx[truth[i].seq[j]]]
+					p := illumina.NovaSeqErrors.Rate(q, j) * illumina.NovaSeqErrors.BaseFactor[baseIdx[truth[i].seq[j]]]
 					mean[qc] += p
 					variance[qc] += p * (1 - p)
 				}
@@ -425,8 +427,8 @@ func TestIllumina_ConfigChecks(t *testing.T) {
 // The two reads of a pair draw their quality classes together (#35): in
 // file output (the classes come from the batch's pair stream, which the R1
 // and R2 files each regenerate) and in interleaved streams, the mates'
-// counts of bases below Q30 are correlated as in the fitted run (0.37;
-// independent mates: 0).
+// counts of bases below Q30 are correlated as in the default profile's run
+// (DRR394916: 0.51; independent mates: 0).
 func TestIllumina_MateQualitiesCoupled(t *testing.T) {
 	c := binnedConfig(t.TempDir())
 	c.ReadsPerBatch, c.TotalBatches = 3000, 2
@@ -448,8 +450,8 @@ func TestIllumina_MateQualitiesCoupled(t *testing.T) {
 		n := float64(len(r1))
 		got := (sxy - sx*sy/n) / math.Sqrt((sxx-sx*sx/n)*(syy-sy*sy/n))
 		t.Logf("correlation of the mates' low-quality counts %.3f over %d pairs", got, len(r1))
-		if got < 0.25 || got > 0.5 {
-			t.Errorf("correlation of the mates' low-quality counts %.3f, want about 0.37", got)
+		if got < 0.4 || got > 0.62 {
+			t.Errorf("correlation of the mates' low-quality counts %.3f, want about 0.51", got)
 		}
 	}
 	t.Run("files", func(t *testing.T) {

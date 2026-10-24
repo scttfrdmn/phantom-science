@@ -170,13 +170,16 @@ func TestGenerateSyntheticData_Paired(t *testing.T) {
 	// With a 151 bp read and few errors, the first 20 bases of most reads
 	// occur in the genome, and the mates of a pair on opposite strands:
 	// read 1 forward and read 2 reverse-complemented, or the other way round
-	// for fragments from the reverse strand.
+	// for fragments from the reverse strand. Each mate is checked on its
+	// first 20 cycles: the last cycles have the most errors, and in the
+	// default profile (DRR394916) about a quarter of reads have an error in
+	// their last 20.
 	in := func(b []byte) bool { return strings.Contains(genome, string(b[:20])) }
-	rc := func(b []byte) []byte { return []byte(reverseComplement(string(b))) }
+	inRC := func(b []byte) bool { return strings.Contains(genome, reverseComplement(string(b[:20]))) }
 	opposite := 0
 	for i := range d.Sequences {
 		r1, r2 := d.Sequences[i], d.Mates.Sequences[i]
-		if (in(r1) && in(rc(r2))) || (in(rc(r1)) && in(r2)) {
+		if (in(r1) && inRC(r2)) || (inRC(r1) && in(r2)) {
 			opposite++
 		}
 	}
