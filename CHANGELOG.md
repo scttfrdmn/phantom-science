@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - New config keys `variants_path` and `variants_region`.
 - File output with variants writes `<name>.variants.tsv` per batch (role `truth`): read name, read number, CHROM, POS, ID, REF, ALT, the allele drawn, and its offset (#32).
 - The manifest records the VCF as `variants` (name, bytes, sha256; no path), and `verify --variants calls.vcf` regenerates such runs. Without the VCF, verify refuses (#32).
+- `illumina_stats.py structure` and `heldout_compare.py structure` describe how qualities are arranged along the read, for each read set. `illumina_heldout.sh` writes `results/heldout/structure_compare.tsv` (#36).
 
 ### Changed
 - `--variants` and `--region` (without `--reference`) no longer require `--stdout`. `GenerateOpts` with nil `Variants`/`RefRegion` uses the configured `variants_path` (#32).

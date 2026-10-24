@@ -134,11 +134,26 @@ In the same runs the GC control scored 0.973–0.994 and the quality control
   good and poor reads, so the model multiplies each read class's Q11/Q25
   probabilities by factors of the 4-base context (two bases before, the
   base, one after), fitted to DRR276626.
-- **What still separates qualities:** how often quality changes between
-  cycles, low-quality run lengths (Q11 runs of 10 or more are about 4 times
-  rarer in the model), and read-level effects (GC-rich, homopolymer and
-  poly-G reads are poorer in real data). Modelling run lengths alone fixed
-  the runs but did not lower the classifier's accuracy, so it is not used.
+- **What still separates qualities:** the arrangement of low calls along
+  the read (#36; `scripts/acceptance/calibrate/illumina/results/heldout/structure_compare.tsv`).
+  In all six runs:
+  - good reads (1–4 calls below Q37) rarely repeat a Q11: P(Q11 | Q11)
+    0.005–0.009, against 0.022–0.070 in the profiles;
+  - Q11 is followed by Q25 more often, especially in cycles 1–30: 0.12–0.15,
+    against 0.06–0.10;
+  - good reads have their low calls at the read's end, while poor reads
+    plateau after cycle 60; the model gives every read the same shape;
+  - low calls cluster 2–20 cycles apart, and long low segments start
+    mid-read (median cycle about 105, 9% reaching the end).
+
+  Per-class cycle curves with a fitted carry between bins reproduce all of
+  this except long runs. They improve each profile against its own run
+  (read 2 −0.007 to −0.014, pair −0.008 to −0.013) but not against the
+  never-fitted runs taken together (medians: read 1 +0.010, read 2 −0.006,
+  pair +0.004), so they are not used. Each profile becomes closer to a copy
+  of its own run, and real runs differ that much from each other. Part of
+  the remaining per-read signal is in per-base mean quality and read-level
+  effects (GC-rich, homopolymer and poly-G reads are poorer in real data).
   Read 2 also shows poly-G 4-mers in real data.
 - A single region biases composition (chr22: sequence 0.618), so the
   whole-genome reference is the meaningful comparison.
