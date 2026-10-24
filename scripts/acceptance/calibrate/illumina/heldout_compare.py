@@ -11,22 +11,30 @@ Run with `python3 -I` (no third-party packages). Subcommands:
       correlation of the mates' 10 cycle-block mean qualities (the pair
       classifier's feature) (pair_coupling.tsv).
 
-  classifiers OUTDIR NAME=E2E_RESULTS.json ... -- A:B=E2E_RESULTS.json ...
-      Reads run_e2e_tests reports: one per run (real vs real and real vs
-      generated) and one per pair of runs (-real-fastq-b, real run A vs
-      real run B). Writes classifier_matrix.tsv (every comparison) and
-      classifier_spread.tsv (per read and feature set: the real-vs-real
-      nulls, generated vs each held-out run, generated vs the fitted run,
-      and real run vs real run, as min / median / max).
+  classifiers OUTDIR STATS_ROOT PROFILE=RUN,... -- PROFILE@RUN=E2E.json ... -- A:B=E2E.json ...
+      Reads run_e2e_tests reports: one per profile and run (real vs real,
+      and real vs the profile's generated reads), and one per pair of runs
+      (-real-fastq-b, real run A vs real run B). PROFILE=RUN names the run
+      each profile was fitted to; the other runs are held out. Writes
+      classifier_matrix.tsv (every comparison), classifier_spread.tsv (per
+      read and feature set, min / median / max of: the real-vs-real nulls,
+      a profile against its own run, against the other fitted runs, against
+      the held-out runs, and real run against real run), profile_matrix.tsv
+      (the accuracy of every profile's reads and every real run against
+      every run) and profile_matching.tsv: per run, the profile chosen by
+      the matching rule (the profile whose run is closest in the mean
+      quality of read 1 and read 2, STATS_ROOT/RUN/fastq_summary.tsv; for a
+      fitted run, among the other profiles), its accuracy, the best other
+      profile's, and the accuracy of the other real runs against the run.
 
-  calibration OUTDIR MODEL FITTED STATS_ROOT NAME ...
+  calibration OUTDIR STATS_ROOT PROFILE=RUN,... SET ...
       Compares calibration statistics of each read set (illumina_stats.py
-      fastq and sam output, and basequal output, in STATS_ROOT/NAME) with
-      the generated reads (MODEL) and the fitted run (FITTED). Writes
+      fastq and sam output, and basequal output, in STATS_ROOT/SET; the
+      generated reads of a profile are the set generated-PROFILE). Writes
       calibration_stats.tsv (one row per statistic and mate, one column per
-      read set, plus the spread of the held-out runs) and cycle_delta.tsv
-      (mean |difference| of the per-cycle quality fractions between every
-      two read sets).
+      read set, the spread of the held-out runs, and each profile's
+      generated reads minus its run) and cycle_delta.tsv (mean |difference|
+      of the per-cycle quality fractions between every two read sets).
 
 All output is tab-separated with a header line.
 """
@@ -165,47 +173,80 @@ def comparisons(cs):
     return {c["feature_set"]: c for c in cs or []}
 
 
+# Feature sets of profile_matrix.tsv and profile_matching.tsv.
+MATRIX_SETS = [("1", "sequence"), ("1", "quality"), ("2", "quality"), ("pair", "pair")]
+# Statistics of the profile-matching rule: per mate mean quality of the
+# reads (fastq_summary.tsv), which a user can compute from their own run.
+MATCH_STATS = [("mean_q", 1), ("mean_q", 2)]
+
+
+def realism_blocks(path):
+    """(read, real-vs-real comparisons, real-vs-generated comparisons) of a
+    run_e2e_tests report."""
+    with open(path, encoding="utf-8") as f:
+        r = json.load(f)
+    x = r["platforms"][0]["realism"]
+    blocks = [("1", x["real_vs_real"], x.get("real_vs_generated"))]
+    for key, read in (("read2", "2"), ("pair", "pair")):
+        if x.get(key):
+            blocks.append((read, x[key]["real_vs_real"], x[key].get("real_vs_generated")))
+    return blocks
+
+
 def classifiers(outdir, args):
-    if "--" not in args:
+    """classifiers OUTDIR STATS_ROOT PROFILE=RUN,... -- PROFILE@RUN=E2E.json ... -- A:B=E2E.json ..."""
+    if args.count("--") != 2:
         raise SystemExit(__doc__)
-    sep = args.index("--")
-    runs = [a.split("=", 1) for a in args[:sep]]
-    crosses = [a.split("=", 1) for a in args[sep + 1 :]]
+    i = args.index("--")
+    j = args.index("--", i + 1)
+    root, prof_arg = args[0], args[1]
+    profiles = dict(p.split("=", 1) for p in prof_arg.split(","))
+    fitted_runs = set(profiles.values())
+    gens = [a.split("=", 1) for a in args[i + 1 : j]]
+    crosses = [a.split("=", 1) for a in args[j + 1 :]]
     rows = []
-    # (read, set) -> kind -> [accuracy]
-    spread = {}
-    fitted = runs[0][0]
+    acc = {}  # (read, features, a, b) -> accuracy; a is "real:RUN" or a profile
+    spread = {}  # (read, features) -> kind -> [accuracy]
+    runs = []
 
     def add(kind, a, b, read, c):
         rows.append([kind, a, b, read, c["feature_set"], c["classifier"], c["holdout_reads"], fmt(c["accuracy"], 4), fmt(c["chance_band"], 2)])
+        acc[(read, c["feature_set"], a, b)] = c["accuracy"]
         spread.setdefault((read, c["feature_set"]), {}).setdefault(kind, []).append(c["accuracy"])
 
-    for name, path in runs:
-        with open(path, encoding="utf-8") as f:
-            r = json.load(f)
-        x = r["platforms"][0]["realism"]
-        blocks = [("1", x["real_vs_real"], x["real_vs_generated"])]
-        for key, read in (("read2", "2"), ("pair", "pair")):
-            if x.get(key):
-                blocks.append((read, x[key]["real_vs_real"], x[key].get("real_vs_generated")))
-        for read, null, gen in blocks:
-            for c in null:
-                add("real_vs_real", name, name, read, c)
+    seen_null = set()
+    for key, path in gens:
+        prof, run = key.split("@", 1)
+        if run not in runs:
+            runs.append(run)
+        for read, null, gen in realism_blocks(path):
+            if run not in seen_null:
+                for c in null:
+                    add("real_vs_real", "real:" + run, run, read, c)
+            if profiles[prof] == run:
+                kind = "generated_vs_own_run"
+            elif run in fitted_runs:
+                kind = "generated_vs_other_fitted_run"
+            else:
+                kind = "generated_vs_heldout_run"
             for c in gen or []:
-                add("generated_vs_fitted_run" if name == fitted else "generated_vs_heldout_run", name, "generated", read, c)
+                add(kind, prof, run, read, c)
+        seen_null.add(run)
     for pair, path in crosses:
         a, b = pair.split(":", 1)
         with open(path, encoding="utf-8") as f:
             x = json.load(f)["cross_run"]
         for key, read in (("read1", "1"), ("read2", "2"), ("pair", "pair")):
             for c in x.get(key) or []:
-                add("real_run_vs_real_run", a, b, read, c)
+                kind = "real_run_vs_real_run"
+                add(kind, "real:" + a, b, read, c)
+                acc[(read, c["feature_set"], "real:" + b, a)] = c["accuracy"]
     write_tsv(
         os.path.join(outdir, "classifier_matrix.tsv"),
         ["comparison", "a", "b", "read", "features", "classifier", "holdout", "accuracy", "chance_band_4sigma"],
         rows,
     )
-    kinds = ["real_vs_real", "generated_vs_fitted_run", "generated_vs_heldout_run", "real_run_vs_real_run"]
+    kinds = ["real_vs_real", "generated_vs_own_run", "generated_vs_other_fitted_run", "generated_vs_heldout_run", "real_run_vs_real_run"]
     out = []
     for (read, fs), d in spread.items():
         row = [read, fs]
@@ -217,6 +258,56 @@ def classifiers(outdir, args):
     for k in kinds:
         header += [f"{k}_n", f"{k}_min", f"{k}_median", f"{k}_max"]
     write_tsv(os.path.join(outdir, "classifier_spread.tsv"), header, out)
+
+    # Profile x run matrix: generated reads of each profile, and each real
+    # run, against each run (the diagonal of the real rows is the
+    # real-vs-real null).
+    sources = list(profiles) + ["real:" + r for r in runs]
+    mrows = []
+    for read, fs in MATRIX_SETS:
+        for s in sources:
+            role = "profile fitted to " + profiles[s] if s in profiles else ("fitted run" if s[5:] in fitted_runs else "held-out run")
+            mrows.append([read, fs, s, role] + [fmt(acc.get((read, fs, s, r)), 4) for r in runs])
+    write_tsv(os.path.join(outdir, "profile_matrix.tsv"), ["read", "features", "source", "role"] + runs, mrows)
+
+    # Profile matching: per run, the profile whose fitted run is closest in
+    # the per-mate mean quality, against the best profile and the real runs.
+    st = {r: kv_stats(os.path.join(root, r)) for r in runs}
+    prows = []
+    for run in runs:
+        dist = {}
+        for p, fr in profiles.items():
+            dist[p] = math.sqrt(sum((st[run][k] - st[fr][k]) ** 2 for k in MATCH_STATS))
+        # a fitted run is matched among the other profiles
+        cands = [p for p in profiles if profiles[p] != run]
+        matched = min(cands, key=lambda p: dist[p])
+        for read, fs in MATRIX_SETS:
+            gen = {p: acc.get((read, fs, p, run)) for p in profiles}
+            other = [p for p in cands if gen[p] is not None]
+            best = min(other, key=lambda p: gen[p]) if other else ""
+            reals = sorted(v for (rd, f, a, b), v in acc.items() if rd == read and f == fs and b == run and a.startswith("real:") and a[5:] != run)
+            m = gen.get(matched)
+            prows.append([
+                run, "fitted" if run in fitted_runs else "held-out", read, fs,
+                matched, fmt(dist[matched], 3), fmt(m, 4), best, fmt(gen.get(best), 4),
+                len(reals), fmt(reals[0], 4) if reals else "", fmt(statistics.median(reals), 4) if reals else "", fmt(reals[-1], 4) if reals else "",
+                ("yes" if m <= reals[-1] else "no") if reals and m is not None else "",
+                ("yes" if m <= statistics.median(reals) else "no") if reals and m is not None else "",
+            ])
+    write_tsv(
+        os.path.join(outdir, "profile_matching.tsv"),
+        ["run", "role", "read", "features", "matched_profile", "mean_q_distance", "matched_accuracy", "best_other_profile", "best_other_accuracy",
+         "real_runs_n", "real_runs_min", "real_runs_median", "real_runs_max", "matched_within_real_max", "matched_within_real_median"],
+        prows,
+    )
+
+
+def kv_stats(d):
+    """The matching statistics (MATCH_STATS) of a read set."""
+    out = {}
+    for stat, mate in MATCH_STATS:
+        out[(stat, mate)] = float(kv(os.path.join(d, "fastq_summary.tsv"), mate)[stat])
+    return out
 
 
 # ---------------------------------------------------------------- calibration
@@ -320,10 +411,14 @@ def cycle_delta(a, b):
     return res
 
 
-def calibration(outdir, model, fitted, root, names):
-    sets = [model] + names
+def calibration(outdir, args):
+    """calibration OUTDIR STATS_ROOT PROFILE=RUN,... SET ..."""
+    root, prof_arg, sets = args[0], args[1], args[2:]
+    profiles = dict(p.split("=", 1) for p in prof_arg.split(","))
+    fitted = set(profiles.values())
     stats = {n: set_stats(os.path.join(root, n)) for n in sets}
-    heldout = [n for n in names if n != fitted]
+    gen = {p: "generated-" + p for p in profiles if "generated-" + p in stats}
+    heldout = [n for n in sets if n not in fitted and not n.startswith("generated-")]
     keys = []
     for n in sets:
         for k in stats[n]:
@@ -335,16 +430,14 @@ def calibration(outdir, model, fitted, root, names):
         hv = [stats[n].get((stat, mate)) for n in heldout]
         hv = [v for v in hv if isinstance(v, float)]
         row = [stat, mate if mate else "pair"] + [fmt(v) if not isinstance(v, str) else v for v in vals]
-        if hv:
-            row += [fmt(min(hv)), fmt(statistics.median(hv)), fmt(max(hv))]
-            m, f = stats[model].get((stat, mate)), stats[fitted].get((stat, mate))
-            row += [fmt(m - statistics.median(hv)) if isinstance(m, float) else "", fmt(f - statistics.median(hv)) if isinstance(f, float) else ""]
-        else:
-            row += [""] * 5
+        row += [fmt(min(hv)), fmt(statistics.median(hv)), fmt(max(hv))] if hv else [""] * 3
+        for p, g in gen.items():
+            a, b = stats[g].get((stat, mate)), stats[profiles[p]].get((stat, mate))
+            row.append(fmt(a - b) if isinstance(a, float) and isinstance(b, float) else "")
         rows.append(row)
     write_tsv(
         os.path.join(outdir, "calibration_stats.tsv"),
-        ["statistic", "mate"] + sets + ["heldout_min", "heldout_median", "heldout_max", "model_minus_heldout_median", "fitted_minus_heldout_median"],
+        ["statistic", "mate"] + sets + ["heldout_min", "heldout_median", "heldout_max"] + [f"{g}_minus_{profiles[p]}" for p, g in gen.items()],
         rows,
     )
     cyc = {n: cycle_fracs(os.path.join(root, n)) for n in sets}
@@ -363,10 +456,10 @@ def main(argv):
     os.makedirs(outdir, exist_ok=True)
     if cmd == "basequal" and len(argv) == 5:
         basequal(outdir, argv[3], argv[4])
-    elif cmd == "classifiers" and len(argv) > 4:
+    elif cmd == "classifiers" and len(argv) > 6:
         classifiers(outdir, argv[3:])
-    elif cmd == "calibration" and len(argv) > 6:
-        calibration(outdir, argv[3], argv[4], argv[5], argv[6:])
+    elif cmd == "calibration" and len(argv) > 5:
+        calibration(outdir, argv[3:])
     else:
         raise SystemExit(__doc__)
 

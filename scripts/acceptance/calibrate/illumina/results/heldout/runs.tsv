@@ -1,5 +1,7 @@
 run	study	center	instrument	layout	strategy	source	library_protocol	nominal_insert	read_length	alphabet_r1	alphabet_r2	pairs	md5_r1	md5_r2
 DRR276626	PRJDB11215	SAGA_U	Illumina NovaSeq 6000	PAIRED	WGS	GENOMIC		626	151	,:F	,:F	200000	e74f844a2a16d15b10496df2f99b62c2	e2e45360457951787657ecb23c69d9b3
-ERR15600747	PRJEB97783	European Bioinformatics Institute;SOTON	Illumina NovaSeq 6000	PAIRED	WGS	GENOMIC	Peripheral blood mononuclear cell samples via venipuncture Qiagne DNeasy column extraction Agilent SureSelect QXT whole genome library preparation kit		150	,:#F	,:F	200000	7992b99621cde9121271dc1e2ad43db5	89d645ed8d00d83b5967baf45830af5c
 DRR394916	PRJDB13883	NCCHD	Illumina NovaSeq 6000	PAIRED	WGS	GENOMIC	TruSeq DNA PCR Free Kit	567	151	,:F	,:F	200000	c7676887d9c4de2b4a37736318084451	4df7119fc82eb558af41a8e76c63af77
+ERR15600747	PRJEB97783	European Bioinformatics Institute;SOTON	Illumina NovaSeq 6000	PAIRED	WGS	GENOMIC	Peripheral blood mononuclear cell samples via venipuncture Qiagne DNeasy column extraction Agilent SureSelect QXT whole genome library preparation kit		150	,:#F	,:F	200000	7992b99621cde9121271dc1e2ad43db5	89d645ed8d00d83b5967baf45830af5c
 DRR260182	PRJDB10898	NCCRI	Illumina NovaSeq 6000	PAIRED	WGS	GENOMIC	TruSeq Nano DNA Library Prep Kit	292	150	,:#F	,:#F	200000	d35c7df4a75d810b63b0885f1d5eb9c7	321f20bfd1e6639091cbfcc7f14977b3
+SRR30646135	PRJNA200694	SUB14721553	Illumina NovaSeq 6000	PAIRED	WGS	GENOMIC			151	,:#F	,:F	200000	674edb2da5615854d80b2f8ad36e11b4	8f973726f7969019a89223425fc6f537
+ERR12737258	PRJEB73282	MRC Weatherall Institute of Molecular Medicine Clinical Genetics Group;MRC WIMM CGG	Illumina NovaSeq 6000	PAIRED	WGS	GENOMIC			150	,:#F	,:F	200000	90c512b51ca2c13f4518119838babe9d	8f2530ce709a611f77c4e8b51ff9c72b

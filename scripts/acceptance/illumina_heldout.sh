@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Held-out validation (#35): measure the Illumina model, fitted to NovaSeq
-# 6000 run DRR276626, against NovaSeq 6000 runs it was not fitted to, and
-# against the distance between real runs.
+# Held-out validation (#35): measure each Illumina run profile, fitted to
+# one NovaSeq 6000 run, against its own run, the other profiles' runs and
+# NovaSeq 6000 runs no profile was fitted to, and against the distance
+# between real runs.
 #
 # Usage:
 #   scripts/acceptance/illumina_heldout.sh [REFERENCE.fa]
@@ -13,25 +14,31 @@
 #      (the ENA metadata of each run is recorded); a run whose first 10,000
 #      quality lines use other characters than the NovaSeq binned alphabet
 #      '#', ',', ':', 'F' is rejected (SRA-Lite runs have only '?' and '$');
-#   2. cmd/run_e2e_tests -platforms novaseq -reference REFERENCE on each run,
-#      paired (-real-fastq2): real vs real (alternate halves) and real vs
-#      generated for read 1, read 2 and pairs; the calibration (null, GC and
-#      quality controls, pair set included) on the first run; the generated
-#      reads of the first run are kept as the model's reads;
+#   2. cmd/run_e2e_tests -platforms novaseq -reference REFERENCE
+#      -illumina-profile P on each run for each profile P, paired
+#      (-real-fastq2): real vs real (alternate halves) and real vs the
+#      profile's generated reads for read 1, read 2 and pairs; the
+#      calibration (null, GC and quality controls, pair set included) for
+#      the first profile on its run; each profile's generated reads for its
+#      own run are kept (generated-P);
 #   3. run_e2e_tests -real-only -real-fastq-b for every pair of runs: real
 #      run A vs real run B, the realistic target;
 #   4. illumina_stats.py (fastq, and sam on minimap2 -ax sr alignments to
-#      REFERENCE) and heldout_compare.py basequal on every run and on the
-#      model's reads;
+#      REFERENCE) and heldout_compare.py basequal on every run and on every
+#      profile's reads;
 #   5. heldout_compare.py writes the tables to RESULTS: classifier_matrix,
-#      classifier_spread, calibration_stats, cycle_delta, runs (ENA
-#      metadata, alphabet, md5 of the streamed reads) and run.tsv; and for
-#      each read set its small tables under RESULTS/sets/NAME.
+#      classifier_spread, profile_matrix, profile_matching,
+#      calibration_stats, cycle_delta, runs (ENA metadata, alphabet, md5 of
+#      the streamed reads) and run.tsv; and for each read set its small
+#      tables under RESULTS/sets/NAME.
 #
 # Environment (defaults in brackets):
-#   RUNS    ["DRR276626 ERR15600747 DRR394916 DRR260182"]; the first is the
-#           run the model was fitted to
-#   PAIRS   [200000]  THREADS [8]  SEED [1]
+#   RUNS     ["DRR276626 DRR394916 ERR15600747 DRR260182 SRR30646135
+#            ERR12737258"]; the runs of PROFILES and the held-out runs
+#   PROFILES ["novaseq6000-drr276626=DRR276626 novaseq6000-drr394916=DRR394916
+#            novaseq6000-err15600747=ERR15600747"]: each profile and the run
+#            it was fitted to; runs without a profile are held out
+#   PAIRS    [200000]  THREADS [8]  SEED [1]
 #   RESULTS [scripts/acceptance/calibrate/illumina/results/heldout]
 #   MMI     [WORK/reference.mmi, built with minimap2 -x sr -d]
 #   WORK    [a new temporary directory, removed at exit unless KEEP_WORK=1;
@@ -49,8 +56,17 @@ for tool in go curl gzip minimap2 samtools python3; do
 done
 [[ -f go.mod ]] || die "run from the repository root"
 
-read -r -a runs <<<"${RUNS:-DRR276626 ERR15600747 DRR394916 DRR260182}"
+read -r -a runs <<<"${RUNS:-DRR276626 DRR394916 ERR15600747 DRR260182 SRR30646135 ERR12737258}"
 [[ ${#runs[@]} -ge 2 ]] || die "RUNS needs at least two runs"
+read -r -a profiles <<<"${PROFILES:-novaseq6000-drr276626=DRR276626 novaseq6000-drr394916=DRR394916 novaseq6000-err15600747=ERR15600747}"
+[[ ${#profiles[@]} -ge 1 ]] || die "PROFILES needs at least one profile"
+prof_names=()
+for pr in "${profiles[@]}"; do
+	[[ "$pr" == *=* ]] || die "PROFILES entry $pr is not PROFILE=RUN"
+	[[ " ${runs[*]} " == *" ${pr#*=} "* ]] || die "the run of profile $pr is not in RUNS"
+	prof_names+=("${pr%%=*}")
+done
+prof_list="$(IFS=,; echo "${profiles[*]}")"
 pairs="${PAIRS:-200000}"
 threads="${THREADS:-8}"
 seed="${SEED:-1}"
@@ -58,7 +74,7 @@ results="${RESULTS:-scripts/acceptance/calibrate/illumina/results/heldout}"
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 stats="$here/calibrate/illumina/illumina_stats.py"
 compare="$here/calibrate/illumina/heldout_compare.py"
-fitted="${runs[0]}"
+first_profile="${prof_names[0]}"
 
 work="${WORK:-}"
 made_work=""
@@ -156,16 +172,22 @@ harness() {
 		die "run_e2e_tests $name failed; see $work/e2e/$name.txt"
 }
 run_args=()
-for acc in "${runs[@]}"; do
-	auth=false
-	gen=()
-	if [[ "$acc" == "$fitted" ]]; then
-		auth=true
-		gen=(-write-generated "$work/generated")
-	fi
-	harness "$acc" -authenticity="$auth" ${gen[@]+"${gen[@]}"} \
-		-real-fastq "$work/reads/${acc}_1.fastq" -real-fastq2 "$work/reads/${acc}_2.fastq"
-	run_args+=("$acc=$work/e2e/$acc/e2e_results.json")
+for pr in "${profiles[@]}"; do
+	p="${pr%%=*}"
+	own="${pr#*=}"
+	for acc in "${runs[@]}"; do
+		auth=false
+		gen=()
+		if [[ "$acc" == "$own" ]]; then
+			gen=(-write-generated "$work/generated-$p")
+			if [[ "$p" == "$first_profile" ]]; then
+				auth=true
+			fi
+		fi
+		harness "${p}_$acc" -illumina-profile "$p" -authenticity="$auth" ${gen[@]+"${gen[@]}"} \
+			-real-fastq "$work/reads/${acc}_1.fastq" -real-fastq2 "$work/reads/${acc}_2.fastq"
+		run_args+=("$p@$acc=$work/e2e/${p}_$acc/e2e_results.json")
+	done
 done
 cross_args=()
 for ((i = 0; i < ${#runs[@]}; i++)); do
@@ -178,14 +200,19 @@ for ((i = 0; i < ${#runs[@]}; i++)); do
 		cross_args+=("$a:$b=$work/e2e/${a}_vs_$b/e2e_results.json")
 	done
 done
-python3 -I "$compare" classifiers "$results" "${run_args[@]}" -- "${cross_args[@]}"
-cp "$work/e2e/$fitted.txt" "$results/run_e2e_tests_$fitted.txt"
+for pr in "${profiles[@]}"; do
+	p="${pr%%=*}"
+	cp "$work/e2e/${p}_${pr#*=}.txt" "$results/run_e2e_tests_${p}_${pr#*=}.txt"
+done
 
-# 4. Calibration statistics of every run and of the model's reads.
-model=generated
-mv "$work/generated/illumina_novaseq_6000_1.fastq" "$work/reads/${model}_1.fastq"
-mv "$work/generated/illumina_novaseq_6000_2.fastq" "$work/reads/${model}_2.fastq"
-for name in "$model" "${runs[@]}"; do
+# 4. Calibration statistics of every run and of every profile's reads.
+models=()
+for p in "${prof_names[@]}"; do
+	mv "$work/generated-$p/illumina_novaseq_6000_1.fastq" "$work/reads/generated-${p}_1.fastq"
+	mv "$work/generated-$p/illumina_novaseq_6000_2.fastq" "$work/reads/generated-${p}_2.fastq"
+	models+=("generated-$p")
+done
+for name in "${models[@]}" "${runs[@]}"; do
 	echo "Measuring $name ..."
 	out="$work/stats/$name"
 	mkdir -p "$out"
@@ -200,14 +227,15 @@ for name in "$model" "${runs[@]}"; do
 done
 
 # 5. Tables.
-python3 -I "$compare" calibration "$results" "$model" "$fitted" "$work/stats" "${runs[@]}"
+python3 -I "$compare" classifiers "$results" "$work/stats" "$prof_list" -- "${run_args[@]}" -- "${cross_args[@]}"
+python3 -I "$compare" calibration "$results" "$work/stats" "$prof_list" "${models[@]}" "${runs[@]}"
 {
 	printf 'key\tvalue\n'
 	printf 'runs\t%s\n' "${runs[*]}"
-	printf 'fitted_run\t%s\n' "$fitted"
+	printf 'profiles\t%s\n' "${profiles[*]}"
 	printf 'pairs_per_run\t%s\n' "$pairs"
 	printf 'seed\t%s\n' "$seed"
-	printf 'model_reads\trun_e2e_tests -platforms novaseq -reference -real-fastq %s (paired, binned model, default insert sizes), %s pairs\n' "$fitted" "$pairs"
+	printf 'model_reads\trun_e2e_tests -platforms novaseq -reference -illumina-profile P -real-fastq RUN (paired, binned model, the profile'"'"'s insert sizes), %s pairs; generated-P against the run of P\n' "$pairs"
 	printf 'reference\t%s\n' "$(basename "$ref")"
 	printf 'reference_sequences\t%s\n' "$(wc -l <"$ref.fai" | tr -d ' ')"
 	printf 'aligner\tminimap2 %s (-ax sr --MD)\n' "$(minimap2 --version)"
@@ -220,3 +248,4 @@ python3 -I "$compare" calibration "$results" "$model" "$fitted" "$work/stats" "$
 
 echo "Wrote $results"
 column -t -s $'\t' "$results/classifier_spread.tsv"
+column -t -s $'\t' "$results/profile_matching.tsv"

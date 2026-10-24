@@ -1,0 +1,52 @@
+E2E measurements: 1 platform(s), base seed 1, 33.1s
+Generated bases: reference /Users/scttfrdmn/.xtmp/ps-36/ref/hg38.primary.fa
+Illumina profile: novaseq6000-err15600747
+
+READS (computed from the generated FASTQ)
+----------------------------------------------------------------------------------------------------
+Platform                   Reads       Bases   MeanLen  MinLen  MaxLen     N50   MeanQ     GC
+----------------------------------------------------------------------------------------------------
+illumina_novaseq_6000       1000      150000     150.0     150     150     150   34.74 0.4098
+
+REAL VERSUS GENERATED (/Users/scttfrdmn/.xtmp/ps-36/heldout-work/reads/ERR15600747_1.fastq + /Users/scttfrdmn/.xtmp/ps-36/heldout-work/reads/ERR15600747_2.fastq; generated from reference /Users/scttfrdmn/.xtmp/ps-36/ref/hg38.primary.fa)
+----------------------------------------------------------------------------------------------------
+illumina_novaseq_6000: 200000 real pairs (mean Q 34.57, GC 0.4207), 200000 generated (mean Q 34.56, GC 0.4098, 150 bp)
+  read 2: real mean Q 34.31, GC 0.4254; generated mean Q 34.31, GC 0.4102
+  Read Features  Classifier                Holdout       Real vs real        Holdout  Real vs generated
+  1    sequence  multinomial naive Bayes    100000   0.5008 ±  0.0063  PASS   200000   0.5283 ±  0.0045
+  1    quality   logistic regression        100000   0.5017 ±  0.0063  PASS   200000   0.5421 ±  0.0045
+  1    combined  stacked NB score + LR      100000   0.4995 ±  0.0063  PASS   200000   0.5414 ±  0.0045
+  2    sequence  multinomial naive Bayes    100000   0.4989 ±  0.0063  PASS   200000   0.5353 ±  0.0045
+  2    quality   logistic regression        100000   0.4982 ±  0.0063  PASS   200000   0.5766 ±  0.0045
+  2    combined  stacked NB score + LR      100000   0.4974 ±  0.0063  PASS   200000   0.5705 ±  0.0045
+  pair pair      logistic regression        100000   0.5003 ±  0.0063  PASS   200000   0.5829 ±  0.0045
+  Features separating real (a) from generated (b), by effect size (b−a)/SD on the training reads:
+    1    sequence  GGGG                               real    0.00432  generated    0.00308  d  -0.106
+    1    sequence  TCGA                               real    0.00077  generated    0.00057  d  -0.076
+    1    sequence  GGGT                               real    0.00323  generated    0.00290  d  -0.065
+    1    sequence  CGCG                               real    0.00039  generated    0.00026  d  -0.065
+    1    sequence  GCGT                               real    0.00075  generated    0.00060  d  -0.065
+    1    quality   mean_qual_T                        real   34.26723  generated   34.35721  d  +0.033
+    1    quality   mean_qual_A                        real   34.38451  generated   34.45722  d  +0.028
+    1    quality   mean_qual_C                        real   34.78936  generated   34.84239  d  +0.018
+    1    quality   mean_qual_G                        real   34.73140  generated   34.68586  d  -0.015
+    1    quality   lowq_longest_run(Q<20)             real    1.51265  generated    1.53100  d  +0.013
+    2    sequence  GGGG                               real    0.00771  generated    0.00309  d  -0.142
+    2    sequence  GGGT                               real    0.00363  generated    0.00290  d  -0.128
+    2    sequence  GGTG                               real    0.00465  generated    0.00378  d  -0.127
+    2    sequence  GTGG                               real    0.00488  generated    0.00402  d  -0.124
+    2    sequence  CGGG                               real    0.00147  generated    0.00102  d  -0.117
+    2    quality   lowq_tail_run(Q<20)                real    0.17612  generated    0.21180  d  +0.042
+    2    quality   mean_qual_A                        real   34.00086  generated   34.14586  d  +0.040
+    2    quality   mean_qual_T                        real   34.11432  generated   34.25784  d  +0.040
+    2    quality   mean_qual_C                        real   34.36408  generated   34.48532  d  +0.032
+    2    quality   lowq_longest_run(Q<20)             real    1.59921  generated    1.63390  d  +0.018
+    pair pair      r2:lowq_tail_run(Q<20)             real    0.17612  generated    0.21180  d  +0.042
+    pair pair      r2:mean_qual_A                     real   34.00086  generated   34.14586  d  +0.040
+    pair pair      r2:mean_qual_T                     real   34.11432  generated   34.25784  d  +0.040
+    pair pair      r1:mean_qual_T                     real   34.26723  generated   34.35721  d  +0.033
+    pair pair      r2:mean_qual_C                     real   34.36408  generated   34.48532  d  +0.032
+
+Failures: 0
+wrote /Users/scttfrdmn/.xtmp/ps-36/heldout-work/e2e/novaseq6000-err15600747_ERR15600747/e2e_results.json
+wrote /Users/scttfrdmn/.xtmp/ps-36/heldout-work/e2e/novaseq6000-err15600747_ERR15600747/e2e_summary.csv

@@ -1,0 +1,52 @@
+E2E measurements: 1 platform(s), base seed 1, 38.3s
+Generated bases: reference /Users/scttfrdmn/.xtmp/ps-36/ref/hg38.primary.fa
+Illumina profile: novaseq6000-drr394916
+
+READS (computed from the generated FASTQ)
+----------------------------------------------------------------------------------------------------
+Platform                   Reads       Bases   MeanLen  MinLen  MaxLen     N50   MeanQ     GC
+----------------------------------------------------------------------------------------------------
+illumina_novaseq_6000       1000      150000     150.0     150     150     150   35.40 0.4132
+
+REAL VERSUS GENERATED (/Users/scttfrdmn/.xtmp/ps-36/heldout-work/reads/DRR394916_1.fastq + /Users/scttfrdmn/.xtmp/ps-36/heldout-work/reads/DRR394916_2.fastq; generated from reference /Users/scttfrdmn/.xtmp/ps-36/ref/hg38.primary.fa)
+----------------------------------------------------------------------------------------------------
+illumina_novaseq_6000: 200000 real pairs (mean Q 35.29, GC 0.4072), 200000 generated (mean Q 35.29, GC 0.4090, 151 bp)
+  read 2: real mean Q 34.60, GC 0.4097; generated mean Q 34.61, GC 0.4088
+  Read Features  Classifier                Holdout       Real vs real        Holdout  Real vs generated
+  1    sequence  multinomial naive Bayes    100000   0.4996 ±  0.0063  PASS   200000   0.5112 ±  0.0045
+  1    quality   logistic regression        100000   0.4995 ±  0.0063  PASS   200000   0.5299 ±  0.0045
+  1    combined  stacked NB score + LR      100000   0.4995 ±  0.0063  PASS   200000   0.5361 ±  0.0045
+  2    sequence  multinomial naive Bayes    100000   0.5026 ±  0.0063  PASS   200000   0.5195 ±  0.0045
+  2    quality   logistic regression        100000   0.4985 ±  0.0063  PASS   200000   0.5628 ±  0.0045
+  2    combined  stacked NB score + LR      100000   0.4980 ±  0.0063  PASS   200000   0.5638 ±  0.0045
+  pair pair      logistic regression        100000   0.4989 ±  0.0063  PASS   200000   0.5695 ±  0.0045
+  Features separating real (a) from generated (b), by effect size (b−a)/SD on the training reads:
+    1    sequence  TCGA                               real    0.00099  generated    0.00058  d  -0.120
+    1    sequence  GAAT                               real    0.00574  generated    0.00475  d  -0.107
+    1    sequence  ATTC                               real    0.00569  generated    0.00475  d  -0.103
+    1    sequence  TGGA                               real    0.00576  generated    0.00502  d  -0.086
+    1    sequence  CGAA                               real    0.00087  generated    0.00063  d  -0.082
+    1    quality   mean_qual_C                        real   35.50451  generated   35.56369  d  +0.023
+    1    quality   mean_qual_T                        real   35.05031  generated   35.10460  d  +0.022
+    1    quality   mean_qual_A                        real   35.14632  generated   35.18470  d  +0.017
+    1    quality   qual_change_frac                   real    0.15123  generated    0.15241  d  +0.008
+    1    quality   lowq_longest_run(Q<20)             real    1.23368  generated    1.24573  d  +0.008
+    2    sequence  TCGA                               real    0.00101  generated    0.00060  d  -0.123
+    2    sequence  GGGG                               real    0.00680  generated    0.00307  d  -0.105
+    2    sequence  ATTC                               real    0.00563  generated    0.00475  d  -0.097
+    2    sequence  GAAT                               real    0.00563  generated    0.00476  d  -0.095
+    2    sequence  TTCG                               real    0.00089  generated    0.00064  d  -0.086
+    2    quality   mean_qual_T                        real   34.31306  generated   34.45180  d  +0.043
+    2    quality   mean_qual_C                        real   34.82323  generated   34.95055  d  +0.038
+    2    quality   mean_qual_A                        real   34.29892  generated   34.36982  d  +0.023
+    2    quality   mean_qual_block_10/10              real   33.16900  generated   33.25223  d  +0.018
+    2    quality   mean_qual_G                        real   34.71194  generated   34.77485  d  +0.018
+    pair pair      r2:mean_qual_T                     real   34.31306  generated   34.45180  d  +0.043
+    pair pair      pair_block_mean_corr               real    0.15032  generated    0.13672  d  -0.039
+    pair pair      r2:mean_qual_C                     real   34.82323  generated   34.95055  d  +0.038
+    pair pair      r2:mean_qual_A                     real   34.29892  generated   34.36982  d  +0.023
+    pair pair      r1:mean_qual_C                     real   35.50451  generated   35.56369  d  +0.023
+
+Failures: 0
+wrote /Users/scttfrdmn/.xtmp/ps-36/heldout-work/e2e/novaseq6000-drr394916_DRR394916/e2e_results.json
+wrote /Users/scttfrdmn/.xtmp/ps-36/heldout-work/e2e/novaseq6000-drr394916_DRR394916/e2e_summary.csv

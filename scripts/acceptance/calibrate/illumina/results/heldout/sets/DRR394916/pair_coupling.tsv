@@ -8,3 +8,5 @@ frac_r2_poor	0.43984
 frac_both_poor	0.22019
 frac_both_poor_if_independent	0.13284
 both_poor_ratio	1.65755
+lowq30_count_correlation	0.50921
+block_mean_correlation	0.149458
