@@ -16,15 +16,16 @@ import (
 func TestSanitizeConfig(t *testing.T) {
 	c := types.SequencerConfig{
 		SampleName: "S", OutputDir: "/home/me/out", Workers: 8, Seed: 3,
+		VariantsPath: "/home/me/calls.vcf.gz", VariantsRegion: "chr5:1-900",
 		Fingerprinting: types.FingerprintConfig{Enable: true, KeyFile: "/secret/k", SteganographyLayers: []string{"quality_scores"}},
 		Enterprise: types.EnterpriseConfig{CustomerID: "c", LicenseKey: "LIC-123",
 			Fingerprinting: types.FingerprintConfig{KeyFile: "/secret/k2"}},
 	}
 	s := SanitizeConfig(c)
-	if s.OutputDir != "" || s.Workers != 0 || s.Fingerprinting.KeyFile != "" || s.Enterprise.Fingerprinting.KeyFile != "" || s.Enterprise.LicenseKey != "" {
+	if s.OutputDir != "" || s.Workers != 0 || s.Fingerprinting.KeyFile != "" || s.Enterprise.Fingerprinting.KeyFile != "" || s.Enterprise.LicenseKey != "" || s.VariantsPath != "" {
 		t.Errorf("not sanitized: %+v", s)
 	}
-	if s.SampleName != "S" || s.Seed != 3 || !s.Fingerprinting.Enable || s.Enterprise.CustomerID != "c" {
+	if s.SampleName != "S" || s.Seed != 3 || !s.Fingerprinting.Enable || s.Enterprise.CustomerID != "c" || s.VariantsRegion != "chr5:1-900" {
 		t.Errorf("settings lost: %+v", s)
 	}
 	s.Fingerprinting.SteganographyLayers[0] = "x"

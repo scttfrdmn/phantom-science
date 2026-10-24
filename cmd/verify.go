@@ -26,7 +26,9 @@ Candidates come from:
 --config is the global sequencer-config flag; it must describe the run as
 generated (generate flags such as --platform or --reference change it, which
 is why the manifest, holding the effective configuration, is preferred).
-The key comes from --key-file or PHANTOM_FINGERPRINT_KEY. Each file gets one
+A run generated with --variants is regenerated with the same VCF: pass it
+with --variants (the manifest records it by sha256, not by path). The key
+comes from --key-file or PHANTOM_FINGERPRINT_KEY. Each file gets one
 verdict: the candidate it matches, with the reads checked and matched and the
 matches expected by chance. --decoy also regenerates the first candidate with
 a random seed to measure the background (useful for HMM-model or
@@ -57,6 +59,7 @@ fingerprint, or cannot be read.`,
 		opts.MaxFiles, _ = f.GetInt("max-files")
 		opts.MaxRegenReads, _ = f.GetInt64("max-regen-reads")
 		opts.Decoy, _ = f.GetBool("decoy")
+		opts.Variants, _ = f.GetStringArray("variants")
 		cmd.SilenceUsage = true
 		return cli.VerifyFiles(os.Stdout, args, opts)
 	},
@@ -75,4 +78,5 @@ func init() {
 	f.Int("max-files", 0, "Regenerate at most this many files per candidate (0: all)")
 	f.Int64("max-regen-reads", 0, "Regenerate at most this many reads per candidate (0: all)")
 	f.Bool("decoy", false, "Also match against the first candidate regenerated with a random seed (measured background)")
+	f.StringArray("variants", nil, "VCF a candidate run planted variants from (generate --variants); matched to a manifest by sha256 (repeatable)")
 }

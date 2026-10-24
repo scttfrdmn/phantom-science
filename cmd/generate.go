@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -44,15 +43,21 @@ writes a <name>.truth.tsv per batch (read name, contig, 0-based fragment start, 
 fragment length), listed in the manifest with role "truth". --reference cannot be
 combined with an HMM model.
 
---variants injects known variants at their allele frequencies (AF= from INFO; default 0.5).
-With --reference, variants with a CHROM/POS are applied in reference coordinates to every
-fragment that covers them; a variant whose REF does not match the reference is skipped
-and counted in one warning (--strict-ref makes it an error). Without --reference,
+--variants (variants_path) plants known variants at their allele frequencies (AF= from
+INFO; default 0.5), in file and --stdout output alike: each read (paired-end: each
+fragment, so both mates) draws ALT with probability AF. With --reference, variants with a
+CHROM/POS are applied in reference coordinates to every fragment that covers them; a
+variant whose REF does not match the reference is skipped and counted in one warning
+(--strict-ref makes it an error, before anything is written). Without --reference,
 variants with a CHROM/POS are written at their exact coordinates: reads are placed in
---region chr:start-end (1-based, inclusive), or, without --region, in the span of the
-variants plus one read length on each side (all variants must then be on one chromosome);
-read bases are then generated per read, not copied from a reference genome, so an aligner
-will not place the reads at these coordinates in a real reference.
+--region chr:start-end (1-based, inclusive; variants_region), or, without --region, in the
+span of the variants plus one read length on each side (all variants must then be on one
+chromosome); read bases are then generated per read, not copied from a reference genome,
+so an aligner will not place the reads at these coordinates in a real reference.
+File output also writes a <name>.variants.tsv per batch (read name, CHROM, POS, ID, REF,
+ALT, the allele the read or fragment carries, its offset), listed in the manifest with
+role "truth"; the manifest records the VCF by name, size and sha256, and "verify
+--manifest" needs the same VCF (--variants) to regenerate the run.
 --sample-id appends RG:Z:<id> to every read header; bwa mem -C copies this into the SAM RG tag.
 
 --seed makes a run reproducible: the same seed and config give byte-identical output.
@@ -83,9 +88,9 @@ func init() {
 	generateCmd.SilenceUsage = true
 	f := generateCmd.Flags()
 	f.Bool("stdout", false, "Stream FASTQ reads to stdout instead of writing files")
-	f.String("variants", "", "VCF file of variants to inject (plain or .gz); requires --stdout")
+	f.String("variants", "", "VCF file of variants to plant at their AF (plain or .gz; variants_path)")
 	f.String("sample-id", "", "Sample ID; appends RG:Z:<id> to each read header (use with BWA -C)")
-	f.String("region", "", "With --reference: sample reads only from chr:start-end (1-based, inclusive) or a whole contig. Without: place reads in chr:start-end for positioned variants (requires --stdout)")
+	f.String("region", "", "With --reference: sample reads only from chr:start-end (1-based, inclusive) or a whole contig. Without: place reads in chr:start-end for positioned variants (variants_region)")
 	f.String("reference", "", "Sample reads from this uncompressed reference FASTA (reference_path)")
 	f.Bool("strict-ref", false, "With --reference, fail when a --variants REF does not match the reference (default: skip and warn)")
 	// --config here shadows the persistent root flag so it shows in the subcommand help.
@@ -130,9 +135,6 @@ func runGenerate(cmd *cobra.Command, out io.Writer) error {
 	variantsFile, _ := flags.GetString("variants")
 	sampleID, _ := flags.GetString("sample-id")
 	regionFlag, _ := flags.GetString("region")
-	if !stdoutMode && variantsFile != "" {
-		return fmt.Errorf("--variants requires --stdout")
-	}
 
 	// Persistent flags inherited from rootCmd.
 	hmmModelPath, _ := cmd.InheritedFlags().GetString("hmm-model-path")
@@ -157,15 +159,19 @@ func runGenerate(cmd *cobra.Command, out io.Writer) error {
 	if err := applyGenerateFlags(cmd, config); err != nil {
 		return err
 	}
-	// With a reference, --region restricts sampling (file or stream output);
-	// without one it places reads for positioned variants (stream only).
-	withReference := config.ReferencePath != ""
+	if variantsFile != "" {
+		config.VariantsPath = variantsFile
+	}
+	// With a reference, --region restricts sampling; without one it places
+	// reads for positioned variants.
 	if regionFlag != "" {
 		switch {
-		case withReference:
+		case config.ReferencePath != "":
 			config.ReferenceRegion = regionFlag
-		case !stdoutMode:
-			return fmt.Errorf("--region requires --stdout, or --reference to sample from a region")
+		case !stdoutMode && config.VariantsPath == "":
+			return fmt.Errorf("--region without --reference places reads for positioned --variants: pass --variants, or --reference to sample from a region")
+		default:
+			config.VariantsRegion = regionFlag
 		}
 	}
 
@@ -177,24 +183,9 @@ func runGenerate(cmd *cobra.Command, out io.Writer) error {
 	}
 	config.ResolveFingerprinting(phantomConfig)
 
-	var variants []genomics.VariantRecord
-	if variantsFile != "" {
-		variants, err = loadVariantsVCF(variantsFile)
-		if err != nil {
-			return fmt.Errorf("loading variants from %s: %w", variantsFile, err)
-		}
-		fmt.Fprintf(os.Stderr, "   [generate] loaded %d variants from %s\n", len(variants), variantsFile)
-	}
-	var region *genomics.GenomicRegion
-	if stdoutMode && !withReference {
-		if region, err = resolveStreamRegion(variants, regionFlag, config.ReadLength); err != nil {
-			return err
-		}
-		if region != nil {
-			reportUnplacedVariants(variants, region)
-		}
-	}
-
+	// The engine loads the variants (variants_path) and resolves where reads
+	// are placed; a bad VCF, region or --strict-ref mismatch fails before any
+	// output is written.
 	engine := genomics.NewEngine(*config)
 	defer engine.Close()
 	engine.SetToolVersion(Version)
@@ -224,7 +215,7 @@ func runGenerate(cmd *cobra.Command, out io.Writer) error {
 		return nil
 	}
 
-	opts := genomics.GenerateOpts{Variants: variants, SampleID: sampleID, RefRegion: region}
+	opts := genomics.GenerateOpts{SampleID: sampleID}
 	w := bufio.NewWriterSize(out, 1<<20) // 1 MB output buffer
 	if err := engine.GenerateToWriter(w, opts); err != nil {
 		return err
@@ -337,163 +328,4 @@ func parseBaseCount(s string) (int64, error) {
 		return 0, fmt.Errorf("invalid base count %q: want a positive number with an optional K, M, G or T suffix", s)
 	}
 	return int64(v * float64(mult)), nil
-}
-
-// parseRegion parses chr:start-end (1-based, inclusive; commas allowed) into
-// a 0-based half-open region.
-func parseRegion(s string) (*genomics.GenomicRegion, error) {
-	bad := fmt.Errorf("invalid --region %q: want chr:start-end (1-based, inclusive)", s)
-	i := strings.LastIndexByte(s, ':')
-	if i <= 0 {
-		return nil, bad
-	}
-	startStr, endStr, ok := strings.Cut(strings.ReplaceAll(s[i+1:], ",", ""), "-")
-	if !ok {
-		return nil, bad
-	}
-	start, err1 := strconv.ParseInt(startStr, 10, 64)
-	end, err2 := strconv.ParseInt(endStr, 10, 64)
-	if err1 != nil || err2 != nil || start < 1 || end < start {
-		return nil, bad
-	}
-	return &genomics.GenomicRegion{Chromosome: s[:i], Start: start - 1, End: end}, nil
-}
-
-// resolveStreamRegion returns the region reads are placed in for --stdout:
-// the --region flag when given; otherwise, when variants carry positions, the
-// span of the positioned variants extended by one read length on each side
-// (clamped at 0); otherwise nil (position-blind injection).
-func resolveStreamRegion(variants []genomics.VariantRecord, regionFlag string, readLength int) (*genomics.GenomicRegion, error) {
-	if regionFlag != "" {
-		region, err := parseRegion(regionFlag)
-		if err != nil {
-			return nil, err
-		}
-		if region.End-region.Start <= int64(readLength) {
-			return nil, fmt.Errorf("--region %s is %d bases; it must be longer than the read length %d", regionFlag, region.End-region.Start, readLength)
-		}
-		return region, nil
-	}
-	var region *genomics.GenomicRegion
-	chroms := map[string]bool{}
-	for _, v := range variants {
-		if v.Chromosome == "" || v.Position <= 0 {
-			continue
-		}
-		chroms[v.Chromosome] = true
-		start, end := v.Position-1, v.Position-1+int64(len(v.Ref))
-		if region == nil {
-			region = &genomics.GenomicRegion{Chromosome: v.Chromosome, Start: start, End: end}
-			continue
-		}
-		region.Start = min(region.Start, start)
-		region.End = max(region.End, end)
-	}
-	if len(chroms) > 1 {
-		names := make([]string, 0, len(chroms))
-		for c := range chroms {
-			names = append(names, c)
-		}
-		sort.Strings(names)
-		return nil, fmt.Errorf("variants are on %d chromosomes (%s): pass --region chr:start-end to choose where reads are placed", len(names), strings.Join(names, ", "))
-	}
-	if region != nil {
-		region.Start = max(0, region.Start-int64(readLength))
-		region.End += int64(readLength)
-	}
-	return region, nil
-}
-
-// reportUnplacedVariants warns on stderr about variants that region-mode
-// injection cannot place: those without a position or on another chromosome.
-func reportUnplacedVariants(variants []genomics.VariantRecord, region *genomics.GenomicRegion) {
-	unpositioned, elsewhere := 0, 0
-	for _, v := range variants {
-		switch {
-		case v.Chromosome == "" || v.Position <= 0:
-			unpositioned++
-		case strings.TrimPrefix(v.Chromosome, "chr") != strings.TrimPrefix(region.Chromosome, "chr"):
-			elsewhere++
-		}
-	}
-	fmt.Fprintf(os.Stderr, "   [generate] placing reads in %s:%d-%d\n", region.Chromosome, region.Start+1, region.End)
-	if unpositioned > 0 {
-		fmt.Fprintf(os.Stderr, "   [warn] %d variants without CHROM/POS are ignored in region mode\n", unpositioned)
-	}
-	if elsewhere > 0 {
-		fmt.Fprintf(os.Stderr, "   [warn] %d variants on chromosomes other than %s are ignored\n", elsewhere, region.Chromosome)
-	}
-}
-
-// loadVariantsVCF reads REF/ALT from a VCF file (plain or .gz) and returns
-// VariantRecords. If AF= is present in the INFO field it is used as the
-// injection frequency; otherwise 0.5 (heterozygous default) is used.
-func loadVariantsVCF(path string) ([]genomics.VariantRecord, error) {
-	f, err := os.Open(path) // #nosec G304 -- path from CLI flag
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-
-	sc, gzClose, err := openVCFScanner(f, path)
-	if err != nil {
-		return nil, err
-	}
-	if gzClose != nil {
-		defer gzClose()
-	}
-
-	var records []genomics.VariantRecord
-	for sc.Scan() {
-		line := sc.Text()
-		if strings.HasPrefix(line, "#") {
-			continue
-		}
-		fields := strings.Split(line, "\t")
-		if len(fields) < 5 {
-			continue
-		}
-		chrom := fields[0]
-		var pos int64
-		if _, err := fmt.Sscanf(fields[1], "%d", &pos); err != nil {
-			pos = 0 // unparseable position → fall back to position-blind
-		}
-		ref := fields[3]
-		alt := fields[4]
-		if ref == "." || alt == "." || ref == "" || alt == "" {
-			continue
-		}
-		// Use only the first ALT for multi-allelic sites.
-		if idx := strings.IndexByte(alt, ','); idx >= 0 {
-			alt = alt[:idx]
-		}
-		freq := 0.5 // heterozygous default
-		if len(fields) >= 8 {
-			freq = parseAFFromInfo(fields[7], freq)
-		}
-		records = append(records, genomics.VariantRecord{
-			Ref: ref, Alt: alt, Freq: freq,
-			Chromosome: chrom, Position: pos,
-		})
-	}
-	return records, sc.Err()
-}
-
-// parseAFFromInfo extracts the AF=<value> field from a VCF INFO column.
-// Returns defaultFreq when AF is absent or unparseable.
-func parseAFFromInfo(info string, defaultFreq float64) float64 {
-	for _, field := range strings.Split(info, ";") {
-		if !strings.HasPrefix(field, "AF=") {
-			continue
-		}
-		val := field[3:]
-		if idx := strings.IndexByte(val, ','); idx >= 0 {
-			val = val[:idx] // first value for multi-allelic
-		}
-		var f float64
-		if _, err := fmt.Sscanf(val, "%f", &f); err == nil && f >= 0 && f <= 1 {
-			return f
-		}
-	}
-	return defaultFreq
 }

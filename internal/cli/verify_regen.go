@@ -51,6 +51,9 @@ type candidate struct {
 	salt, seed        uint64
 	config            types.SequencerConfig
 	files             []genomics.RunFile // nil: the configured plan
+	// variants is the VCF a manifest records the run planted variants
+	// from; nil for none (or a --config candidate, whose config names it).
+	variants *manifest.Input
 }
 
 // candidateResult is the outcome of matching against one candidate.
@@ -66,6 +69,9 @@ type candidateResult struct {
 func verifyByRegeneration(w io.Writer, paths []string, opts VerifyOptions) error {
 	cands, err := loadCandidates(opts)
 	if err != nil {
+		return err
+	}
+	if err := resolveCandidateVariants(cands, opts.Variants); err != nil {
 		return err
 	}
 	var key []byte
@@ -146,6 +152,7 @@ func matchCandidate(m *fingerprinting.Matcher, c *candidate, seed uint64, regen 
 	cfg.Enterprise.Fingerprinting = types.FingerprintConfig{}
 	cfg.OutputDir, cfg.Workers = "", 0
 	regen.Files = c.files
+	regen.Variants = c.variants
 	start := time.Now()
 	m.Reset()
 	e := genomics.NewEngineLog(cfg, io.Discard)
@@ -291,6 +298,43 @@ func loadCandidates(opts VerifyOptions) ([]*candidate, error) {
 	return cands, nil
 }
 
+// resolveCandidateVariants points each candidate whose manifest records a
+// VCF at the file among paths with the same size and SHA-256, so the run is
+// regenerated with its variants; a candidate without one fails, rather than
+// being regenerated without its variants and reported as not matching.
+func resolveCandidateVariants(cands []*candidate, paths []string) error {
+	type vcf struct {
+		path string
+		in   manifest.Input
+	}
+	var have []vcf
+	for _, p := range paths {
+		n, sum, err := manifest.HashFile(p)
+		if err != nil {
+			return fmt.Errorf("--variants: %w", err)
+		}
+		have = append(have, vcf{p, manifest.Input{Name: filepath.Base(p), Bytes: n, SHA256: sum}})
+	}
+	for _, c := range cands {
+		want := c.variants
+		if want == nil {
+			continue
+		}
+		found := ""
+		for _, h := range have {
+			if h.in.SHA256 == want.SHA256 && h.in.Bytes == want.Bytes {
+				found = h.path
+				break
+			}
+		}
+		if found == "" {
+			return fmt.Errorf("%s: the run planted variants from %s (%d bytes, sha256 %s): pass that VCF with --variants", c.label, want.Name, want.Bytes, want.SHA256)
+		}
+		c.config.VariantsPath = found
+	}
+	return nil
+}
+
 // candidateLabel names a keyed-seed candidate in reports.
 func candidateLabel(customer, dataset string, salt uint64) string {
 	return fmt.Sprintf("customer=%s dataset=%s salt=%d", customer, dataset, salt)
@@ -305,7 +349,7 @@ func manifestCandidate(path string) (*candidate, error) {
 	if m.Signal != nil {
 		return nil, fmt.Errorf("%s: a signal run's BLOW5 output cannot be verified by read regeneration", path)
 	}
-	c := &candidate{config: m.Config}
+	c := &candidate{config: m.Config, variants: m.Variants}
 	switch fp := m.Fingerprint; {
 	case fp != nil && fp.Scheme == fingerprinting.KeyedSeedScheme:
 		c.keyed, c.customer, c.dataset, c.salt = true, fp.Customer, fp.Dataset, fp.Salt

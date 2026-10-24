@@ -73,6 +73,10 @@ type Manifest struct {
 	// Fingerprint describes the run's keyed-seed fingerprint; nil for an
 	// unfingerprinted run.
 	Fingerprint *Fingerprint `json:"fingerprint,omitempty"`
+	// Variants is the VCF the run planted variants from (variants_path /
+	// --variants), by base name, size and SHA-256; its path is not
+	// recorded. Regenerating the run needs this file.
+	Variants *Input `json:"variants,omitempty"`
 	// Encrypted is read from manifests of phantom-science 0.9.0 and earlier
 	// (encrypted quality-score fingerprints); it is no longer written.
 	Encrypted bool       `json:"fingerprint_encrypted,omitempty"`
@@ -189,10 +193,12 @@ func New(toolVersion string, seed uint64, runStart time.Time, config types.Seque
 
 // SanitizeConfig returns c without key material, local output locations or
 // settings that do not affect the output: fingerprint key file paths, the
-// licence key, OutputDir and Workers are cleared.
+// licence key, OutputDir, Workers and the VariantsPath (the manifest records
+// the VCF by name, size and SHA-256 instead) are cleared.
 func SanitizeConfig(c types.SequencerConfig) types.SequencerConfig {
 	c.OutputDir = ""
 	c.Workers = 0
+	c.VariantsPath = ""
 	c.Fingerprinting.KeyFile = ""
 	c.Enterprise.Fingerprinting.KeyFile = ""
 	c.Enterprise.LicenseKey = ""

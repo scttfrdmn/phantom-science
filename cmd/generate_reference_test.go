@@ -128,8 +128,7 @@ func TestGenerate_ReferenceRegionFiles(t *testing.T) {
 }
 
 // With --reference, a VCF REF that does not match fails with --strict-ref;
-// --reference with an HMM model is a configuration error; without
-// --reference, --region still needs --stdout.
+// --reference with an HMM model is a configuration error.
 func TestGenerate_ReferenceErrors(t *testing.T) {
 	ref, seqs := writeCmdReference(t)
 	vcf := filepath.Join(t.TempDir(), "v.vcf")
@@ -189,6 +188,92 @@ func TestGenerate_ReferenceErrors(t *testing.T) {
 		}
 		if _, err := os.Stat(out); !os.IsNotExist(err) {
 			t.Errorf("output directory created before the reference error: %v", err)
+		}
+	})
+}
+
+// generate --variants in file mode (#32): with --reference the alleles are
+// planted at their AF (AF 1: every fragment carrying the site has ALT), a
+// variants table per batch lists them, the manifest records the VCF by
+// name and sha256 (not its path), --strict-ref fails before writing, and
+// variants_path in the config works like --variants.
+func TestGenerate_FileModeVariants(t *testing.T) {
+	ref, seqs := writeCmdReference(t)
+	vcf := filepath.Join(t.TempDir(), "calls.vcf")
+	next := map[string]string{"A": "C", "C": "G", "G": "T", "T": "A"}
+	good := seqs["chr2"][2999:3000]
+	body := "##fileformat=VCFv4.2\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n" +
+		"chr2\t3000\tsnv1\t" + good + "\t" + next[good] + "\t.\t.\tAF=1\n"
+	if err := os.WriteFile(vcf, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	run := func(t *testing.T, flags map[string]string) string {
+		out := filepath.Join(t.TempDir(), "out")
+		flags["output"], flags["reference"], flags["region"], flags["illumina-errors"], flags["seed"] = out, ref, "chr2:2001-4000", "none", "3"
+		setGenerateFlags(t, flags)
+		if err := runGenerate(generateCmd, io.Discard); err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	check := func(t *testing.T, out string) []byte {
+		m, err := manifest.Read(filepath.Join(out, manifest.FileName))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := m.VerifyDir(out); err != nil {
+			t.Fatal(err)
+		}
+		n, sum, _ := manifest.HashFile(vcf)
+		if m.Variants == nil || m.Variants.Name != "calls.vcf" || m.Variants.Bytes != n || m.Variants.SHA256 != sum || m.Config.VariantsPath != "" {
+			t.Errorf("manifest variants %+v, config variants_path %q", m.Variants, m.Config.VariantsPath)
+		}
+		var all []byte
+		alt := 0
+		for _, o := range m.Outputs {
+			if !strings.HasSuffix(o.Path, ".variants.tsv") {
+				continue
+			}
+			data, err := os.ReadFile(filepath.Join(out, o.Path))
+			if err != nil {
+				t.Fatal(err)
+			}
+			all = append(all, data...)
+			for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n")[1:] {
+				f := strings.Split(line, "\t")
+				if f[4] != "snv1" || f[7] != "ALT" {
+					t.Fatalf("variants line %q: want snv1 ALT", line)
+				}
+				alt++
+			}
+		}
+		if alt < 20 {
+			t.Errorf("only %d fragments carry the AF 1 SNV", alt)
+		}
+		return all
+	}
+	var byFlag, byConfig []byte
+	t.Run("flag", func(t *testing.T) {
+		byFlag = check(t, run(t, map[string]string{"config": writePairedConfig(t, ""), "variants": vcf}))
+	})
+	t.Run("config", func(t *testing.T) {
+		byConfig = check(t, run(t, map[string]string{"config": writePairedConfig(t, fmt.Sprintf(`,"variants_path":%q`, vcf))}))
+	})
+	if len(byFlag) == 0 || !bytes.Equal(byFlag, byConfig) {
+		t.Error("variants_path in the config and --variants plant different alleles")
+	}
+	t.Run("strict-ref", func(t *testing.T) {
+		bad := filepath.Join(t.TempDir(), "bad.vcf")
+		if err := os.WriteFile(bad, []byte(strings.Replace(body, "\t"+good+"\t", "\t"+next[good]+"\t", 1)), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		out := filepath.Join(t.TempDir(), "out")
+		setGenerateFlags(t, map[string]string{"config": writePairedConfig(t, ""), "reference": ref, "variants": bad, "strict-ref": "true", "output": out})
+		if err := runGenerate(generateCmd, io.Discard); err == nil || !strings.Contains(err.Error(), "chr2:3000") {
+			t.Fatalf("err = %v", err)
+		}
+		if _, err := os.Stat(out); !os.IsNotExist(err) {
+			t.Errorf("--strict-ref wrote output: %v", err)
 		}
 	})
 }

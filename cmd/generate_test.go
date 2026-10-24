@@ -58,13 +58,13 @@ func TestGenerateCommand_NewFlags(t *testing.T) {
 }
 
 func TestParseRegion(t *testing.T) {
-	r, err := parseRegion("chr7:1,001-2,000")
+	r, err := genomics.ParseRegion("chr7:1,001-2,000")
 	if err != nil || r.Chromosome != "chr7" || r.Start != 1000 || r.End != 2000 {
 		t.Errorf("parseRegion = %+v, %v", r, err)
 	}
 	for _, bad := range []string{"chr7", "chr7:10", "chr7:0-5", "chr7:9-5", ":1-5", "chr7:a-b"} {
-		if _, err := parseRegion(bad); err == nil {
-			t.Errorf("parseRegion(%q) should fail", bad)
+		if _, err := genomics.ParseRegion(bad); err == nil {
+			t.Errorf("genomics.ParseRegion(%q) should fail", bad)
 		}
 	}
 }
@@ -88,25 +88,25 @@ func TestResolveStreamRegion(t *testing.T) {
 		{Chromosome: "chr1", Position: 700, Ref: "ACG", Alt: "A"},
 		{Ref: "C", Alt: "G"}, // position-blind: ignored for the span
 	}
-	r, err := resolveStreamRegion(vs, "", 100)
+	r, err := genomics.ResolveVariantRegion(vs, "", 100)
 	if err != nil || r == nil || r.Chromosome != "chr1" || r.Start != 399 || r.End != 802 {
 		t.Errorf("span region = %+v, %v; want chr1 [399, 802)", r, err)
 	}
-	r, _ = resolveStreamRegion(vs[:1], "", 1000)
+	r, _ = genomics.ResolveVariantRegion(vs[:1], "", 1000)
 	if r.Start != 0 {
 		t.Errorf("region start not clamped at 0: %+v", r)
 	}
-	if r, err := resolveStreamRegion(vs[2:], "", 100); r != nil || err != nil {
+	if r, err := genomics.ResolveVariantRegion(vs[2:], "", 100); r != nil || err != nil {
 		t.Errorf("position-blind variants: got %+v, %v; want nil", r, err)
 	}
 	multi := append(append([]genomics.VariantRecord(nil), vs...), genomics.VariantRecord{Chromosome: "chr2", Position: 5, Ref: "A", Alt: "C"})
-	if _, err := resolveStreamRegion(multi, "", 100); err == nil || !strings.Contains(err.Error(), "--region") {
+	if _, err := genomics.ResolveVariantRegion(multi, "", 100); err == nil || !strings.Contains(err.Error(), "--region") {
 		t.Errorf("multiple chromosomes: err = %v, want a --region hint", err)
 	}
-	if r, err := resolveStreamRegion(multi, "chr2:1-500", 100); err != nil || r.Chromosome != "chr2" || r.Start != 0 || r.End != 500 {
+	if r, err := genomics.ResolveVariantRegion(multi, "chr2:1-500", 100); err != nil || r.Chromosome != "chr2" || r.Start != 0 || r.End != 500 {
 		t.Errorf("--region: %+v, %v", r, err)
 	}
-	if _, err := resolveStreamRegion(nil, "chr2:1-50", 100); err == nil {
+	if _, err := genomics.ResolveVariantRegion(nil, "chr2:1-50", 100); err == nil {
 		t.Error("--region shorter than a read should fail")
 	}
 }
@@ -284,13 +284,26 @@ func TestGenerate_IlluminaProfileFlag(t *testing.T) {
 	}
 }
 
-func TestGenerate_StdoutOnlyFlags(t *testing.T) {
-	for _, flag := range []string{"variants", "region"} {
-		setGenerateFlags(t, map[string]string{"config": writeGenerateConfig(t, 50, 5), flag: "x"})
-		if err := runGenerate(generateCmd, io.Discard); err == nil || !strings.Contains(err.Error(), "--stdout") {
-			t.Errorf("--%s without --stdout: err = %v", flag, err)
+// File output accepts --variants (#32); a missing VCF fails before any
+// output is written, and --region without --reference needs --variants.
+func TestGenerate_FileModeVariantFlags(t *testing.T) {
+	cfg := writeGenerateConfig(t, 50, 5)
+	out := filepath.Join(filepath.Dir(cfg), "out")
+	t.Run("missing VCF", func(t *testing.T) {
+		setGenerateFlags(t, map[string]string{"config": cfg, "variants": filepath.Join(t.TempDir(), "missing.vcf")})
+		if err := runGenerate(generateCmd, io.Discard); err == nil || !strings.Contains(err.Error(), "loading variants") {
+			t.Errorf("--variants with a missing VCF: err = %v", err)
 		}
-	}
+		if _, err := os.Stat(out); !os.IsNotExist(err) {
+			t.Errorf("output directory created despite the error: %v", err)
+		}
+	})
+	t.Run("region without variants", func(t *testing.T) {
+		setGenerateFlags(t, map[string]string{"config": cfg, "region": "chr1:1-500"})
+		if err := runGenerate(generateCmd, io.Discard); err == nil || !strings.Contains(err.Error(), "--variants") {
+			t.Errorf("--region without --reference or --variants: err = %v", err)
+		}
+	})
 }
 
 func TestGenerateCommand(t *testing.T) {
@@ -348,9 +361,9 @@ func TestParseAFFromInfo(t *testing.T) {
 		{"AF=bad", 0.5, 0.5},     // unparseable → default
 	}
 	for _, tc := range tests {
-		got := parseAFFromInfo(tc.info, tc.defFreq)
+		got := genomics.ParseAF(tc.info, tc.defFreq)
 		if got != tc.want {
-			t.Errorf("parseAFFromInfo(%q) = %v, want %v", tc.info, got, tc.want)
+			t.Errorf("genomics.ParseAF(%q) = %v, want %v", tc.info, got, tc.want)
 		}
 	}
 }
@@ -358,7 +371,7 @@ func TestParseAFFromInfo(t *testing.T) {
 // TestLoadVariantsVCF verifies variant loading from a synthetic VCF.
 func TestLoadVariantsVCF(t *testing.T) {
 	vcf := makeSyntheticVCF(t, 5)
-	variants, err := loadVariantsVCF(vcf)
+	variants, err := genomics.LoadVariantsVCF(vcf)
 	if err != nil {
 		t.Fatalf("loadVariantsVCF: %v", err)
 	}
@@ -378,7 +391,7 @@ func TestLoadVariantsVCF(t *testing.T) {
 // TestLoadVariantsVCF_Empty verifies an empty VCF returns zero records without error.
 func TestLoadVariantsVCF_Empty(t *testing.T) {
 	vcf := makeSyntheticVCF(t, 0)
-	variants, err := loadVariantsVCF(vcf)
+	variants, err := genomics.LoadVariantsVCF(vcf)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -390,7 +403,7 @@ func TestLoadVariantsVCF_Empty(t *testing.T) {
 // TestLoadVariantsVCF_WithAF verifies that AF= in INFO is parsed correctly.
 func TestLoadVariantsVCF_WithAF(t *testing.T) {
 	vcfPath := makeTempVCFWithAF(t)
-	variants, err := loadVariantsVCF(vcfPath)
+	variants, err := genomics.LoadVariantsVCF(vcfPath)
 	if err != nil {
 		t.Fatalf("loadVariantsVCF: %v", err)
 	}

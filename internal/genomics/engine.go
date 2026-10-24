@@ -67,8 +67,20 @@ type Engine struct {
 	rawRand *rand.Rand
 
 	// overlapSkips counts positioned variants skipped because they overlap
-	// a variant already applied to the same read.
+	// a variant already applied to the same read (in the run's engine; see
+	// countOverlapSkips).
 	overlapSkips atomic.Int64
+
+	// variants are the variants of variants_path, shared read-only by every
+	// stream, and variantsInput the VCF as the manifest records it;
+	// varRegion is the region reads are placed in without a reference, and
+	// refVars the checked positioned variants with one. varErr records
+	// variant settings that cannot be used. See engine_variants.go.
+	variants      []VariantRecord
+	variantsInput *manifest.Input
+	varRegion     *GenomicRegion
+	refVars       *refVariants
+	varErr        error
 
 	// Files written by Generate and GenerateFASTQFile, in order.
 	filesMu sync.Mutex
@@ -144,6 +156,7 @@ func NewEngineLog(config types.SequencerConfig, logw io.Writer) *Engine {
 			fmt.Fprintf(e.logw, "   [info] Loaded HMM model from %s\n", modelPath)
 		}
 	}
+	e.loadVariants()
 	return e
 }
 
@@ -208,9 +221,11 @@ func (e *Engine) Generate() error {
 	}
 
 	before := len(e.GeneratedFiles())
+	skips := e.SkippedVariantOverlaps()
 	if err := e.generateRun(); err != nil {
 		return err
 	}
+	e.reportOverlapSkips(skips)
 	fmt.Printf("   ✅ Generated %d FASTQ files in %s\n", len(e.GeneratedFiles())-before, c.OutputDir)
 	return nil
 }
@@ -276,8 +291,9 @@ type fileJob struct {
 	tally              func(bases int) // told each written read's length
 	abort              *atomic.Bool    // stops the file with errAborted when set
 	// truth, when set, is the truth table written alongside (reference
-	// mode, mate 1).
-	truth string
+	// mode, mate 1); variants, when set, the variants table (variants_path,
+	// mate 1).
+	truth, variants string
 	// plain writes the records uncompressed whatever the output
 	// compression (regeneration, which discards them).
 	plain bool
@@ -294,33 +310,44 @@ func (e *Engine) generateFASTQFile(j fileJob) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	var truth *os.File
-	if j.truth != "" {
-		if truth, err = security.SecureFileCreate(j.truth, e.config.OutputDir); err != nil {
-			file.Close()      // #nosec G104 -- the create error is returned
-			os.Remove(j.path) // #nosec G104
-			return "", err
-		}
-	}
+	// side are the tables written alongside: the truth and variants
+	// tables, when set.
+	side := []struct {
+		path string
+		f    *os.File
+	}{{path: j.truth}, {path: j.variants}}
 	fail := func(err error) (string, error) {
 		file.Close()      // #nosec G104 -- the write error is returned
 		os.Remove(j.path) // #nosec G104 -- best effort cleanup of a partial file
-		if truth != nil {
-			truth.Close() // #nosec G104
-		}
-		if j.truth != "" {
-			os.Remove(j.truth) // #nosec G104
+		for _, t := range side {
+			if t.f != nil {
+				t.f.Close() // #nosec G104
+			}
+			if t.path != "" {
+				os.Remove(t.path) // #nosec G104
+			}
 		}
 		return "", err
 	}
-	if err := e.writeFileStream(file, truth, j); err != nil {
+	for i := range side {
+		if side[i].path == "" {
+			continue
+		}
+		if side[i].f, err = security.SecureFileCreate(side[i].path, e.config.OutputDir); err != nil {
+			return fail(err)
+		}
+	}
+	if err := e.writeFileStream(file, side[0].f, side[1].f, j); err != nil {
 		return fail(err)
 	}
-	if truth != nil {
-		err := truth.Close()
-		truth = nil
+	for i := range side {
+		if side[i].f == nil {
+			continue
+		}
+		err := side[i].f.Close()
+		side[i].f = nil
 		if err != nil {
-			return fail(fmt.Errorf("closing %s: %w", filepath.Base(j.truth), err))
+			return fail(fmt.Errorf("closing %s: %w", filepath.Base(side[i].path), err))
 		}
 	}
 	if err := file.Close(); err != nil {
@@ -344,13 +371,24 @@ func (e *Engine) SkippedVariantOverlaps() int64 {
 	return e.overlapSkips.Load()
 }
 
+// reportOverlapSkips warns about the overlap skips counted since before.
+func (e *Engine) reportOverlapSkips(before int64) {
+	if n := e.SkippedVariantOverlaps() - before; n > 0 {
+		fmt.Fprintf(e.logw, "   [warn] %d variant applications skipped: the variant overlapped another variant in the same read\n", n)
+	}
+}
+
 // writeFileStream writes one file's batch of FASTQ records (one mate) to w,
-// and, when truth is not nil, the batch's truth table to it. The file gets
-// its own HMM model instance, seeded from its stream.
-func (e *Engine) writeFileStream(w io.Writer, truth *os.File, j fileJob) error {
-	p, err := e.newPipeline(GenerateOpts{}, j.obs)
+// and, when truth (variants) is not nil, the batch's truth (variants) table
+// to it. The file gets its own HMM model instance, seeded from its stream,
+// and the engine's configured variants.
+func (e *Engine) writeFileStream(w io.Writer, truth, variants *os.File, j fileJob) error {
+	p, err := e.newPipeline(e.configuredOpts(), j.obs)
 	if err != nil {
 		return err
+	}
+	if e.ref != nil {
+		p.refVars = e.refVars
 	}
 	p.tally, p.abort = j.tally, j.abort
 	if p.model, err = e.streamModel(); err != nil {
@@ -375,6 +413,11 @@ func (e *Engine) writeFileStream(w io.Writer, truth *os.File, j fileJob) error {
 		p.truth = bufio.NewWriterSize(truth, 64*1024)
 		p.truth.WriteString(truthHeader) // #nosec G104 -- bufio errors are sticky and surface at Flush
 	}
+	if variants != nil {
+		p.planted = &plantLog{}
+		p.variants = bufio.NewWriterSize(variants, 64*1024)
+		p.variants.WriteString(variantsHeader) // #nosec G104 -- bufio errors are sticky and surface at Flush
+	}
 	var serial int64
 	spec := batchSpec{batch: j.batch, reads: j.reads, mates: []int{j.mate}, file: j.path, shared: shared}
 	if _, err := p.writeBatch(bw, r, spec, &serial); err != nil {
@@ -386,6 +429,11 @@ func (e *Engine) writeFileStream(w io.Writer, truth *os.File, j fileJob) error {
 	if p.truth != nil {
 		if err := p.truth.Flush(); err != nil {
 			return fmt.Errorf("writing truth table: %w", err)
+		}
+	}
+	if p.variants != nil {
+		if err := p.variants.Flush(); err != nil {
+			return fmt.Errorf("writing variants table: %w", err)
 		}
 	}
 	return ww.Close()
@@ -422,6 +470,7 @@ func (e *Engine) generateWith(r *rand.Rand, n int) ([]byte, []byte, error) {
 // VariantRecord holds a single variant for controlled injection into synthetic reads.
 // Ref and Alt must be non-empty ACGT strings. Freq is the injection probability in [0,1].
 type VariantRecord struct {
+	ID         string // VCF ID; "" for none
 	Ref        string
 	Alt        string
 	Freq       float64
@@ -440,7 +489,10 @@ type GenomicRegion struct {
 
 // GenerateOpts holds optional parameters for GenerateToWriter.
 type GenerateOpts struct {
-	// Variants are injected into each read with probability Freq.
+	// Variants are injected into each read with probability Freq. With
+	// Variants and RefRegion both unset, the engine's configured variants
+	// (variants_path, variants_region) are used; setting them as well as
+	// variants_path is an error.
 	Variants []VariantRecord
 	// SampleID, when non-empty, appends "\tRG:Z:<id>" to every read header
 	// comment (before any read-ID labels).
@@ -481,8 +533,15 @@ func (e *Engine) GenerateToWriter(w io.Writer, opts GenerateOpts) error {
 	if err != nil {
 		return err
 	}
-	refVars, err := e.referenceVariants(opts.Variants)
-	if err != nil {
+	configured := opts.Variants == nil && opts.RefRegion == nil
+	if !configured && e.config.VariantsPath != "" {
+		closeObserver(obs) // #nosec G104 -- the option error is returned
+		return fmt.Errorf("variants_path %s is configured: do not also pass GenerateOpts.Variants or RefRegion", e.config.VariantsPath)
+	}
+	refVars := e.refVars
+	if configured {
+		opts.Variants, opts.RefRegion = e.variants, e.varRegion
+	} else if refVars, err = e.referenceVariants(opts.Variants); err != nil {
 		closeObserver(obs) // #nosec G104 -- the variant error is returned
 		return err
 	}
@@ -491,10 +550,10 @@ func (e *Engine) GenerateToWriter(w io.Writer, opts GenerateOpts) error {
 		closeObserver(obs) // #nosec G104 -- the generation error is returned
 		return err
 	}
-	if n := e.SkippedVariantOverlaps() - before; n > 0 {
-		fmt.Fprintf(e.logw, "   [warn] %d variant applications skipped: the variant overlapped another variant in the same read\n", n)
+	e.reportOverlapSkips(before)
+	if !configured {
+		refVars.report(e) // configured variants are reported when loaded
 	}
-	refVars.report(e)
 	return closeObserver(obs)
 }
 

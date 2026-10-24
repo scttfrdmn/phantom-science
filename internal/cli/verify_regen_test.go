@@ -282,3 +282,37 @@ func TestVerifyRegeneration_UnfingerprintedManifest(t *testing.T) {
 		t.Errorf("%v\n%s", err, out)
 	}
 }
+
+// A keyed run generated with --variants (#32) is attributed when verify is
+// given the same VCF: every read is reproduced exactly. Without the VCF, or
+// with another one, verify fails naming the VCF the manifest records,
+// rather than regenerating the run without its variants.
+func TestVerifyRegeneration_Variants(t *testing.T) {
+	t.Setenv(fingerprinting.KeyEnvVar, "")
+	keyFile := regenKeyFile(t, regenKey)
+	dir := t.TempDir()
+	writeVCF := func(name, body string) string {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte("##fileformat=VCFv4.2\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n"+body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	vcf := writeVCF("calls.vcf", "chr5\t1000\t.\tA\tAGGG\t.\t.\tAF=0.5\nchr5\t1100\t.\tC\tT\t.\t.\tAF=0.5\n")
+	other := writeVCF("other.vcf", "chr5\t1000\t.\tA\tAGGG\t.\t.\tAF=0.4\nchr5\t1100\t.\tC\tT\t.\t.\tAF=0.5\n")
+	c := illuminaRun(t.TempDir())
+	c.VariantsPath = vcf
+	c.VariantsRegion = "chr5:1-3000" // wide enough for the paired fragments
+	files, man := keyedRun(t, c, keyFile, "ACME", "study_v", 5)
+
+	out, err := verifyOut(t, files[:2], VerifyOptions{KeyFile: keyFile, Manifests: []string{man}, Variants: []string{other, vcf}})
+	if err != nil || strings.Count(out, "✅") != 2 || !strings.Contains(out, "200 of 200 reads (200 exact") {
+		t.Errorf("with the VCF: %v\n%s", err, out)
+	}
+	for name, vs := range map[string][]string{"no VCF": nil, "another VCF": {other}} {
+		out, err := verifyOut(t, files[:1], VerifyOptions{KeyFile: keyFile, Manifests: []string{man}, Variants: vs})
+		if err == nil || !strings.Contains(err.Error(), "calls.vcf") || !strings.Contains(err.Error(), "--variants") {
+			t.Errorf("%s: err = %v\n%s", name, err, out)
+		}
+	}
+}

@@ -49,6 +49,10 @@ type VerifyOptions struct {
 	// reports its matches, a measured background for sequence that is not
 	// uniform-random (an HMM model or a reference genome).
 	Decoy bool
+	// Variants are VCF files a candidate run may have planted variants
+	// from: a manifest that records one (by SHA-256) is regenerated with
+	// the matching file, and fails without it.
+	Variants []string
 }
 
 // VerifyFiles checks each FASTQ file in paths and reports one line per file

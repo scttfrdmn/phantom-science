@@ -103,6 +103,24 @@ type SequencerConfig struct {
 	// in one warning. Applies with ReferencePath.
 	StrictRef bool `json:"strict_ref,omitempty" yaml:"strict_ref,omitempty"`
 
+	// VariantsPath is a VCF (plain, or gzip/bgzip compressed as .gz) of
+	// variants planted in the reads, each allele drawn with the variant's
+	// INFO AF (default 0.5) (#32). With ReferencePath, variants with
+	// CHROM/POS are applied in reference coordinates and their REF is
+	// checked (StrictRef); without one, they place reads in
+	// VariantsRegion. File output records the planted alleles in a
+	// <name>.variants.tsv per batch, and the manifest records the VCF by
+	// name, size and SHA-256 (not this path).
+	VariantsPath string `json:"variants_path,omitempty" yaml:"variants_path,omitempty"`
+
+	// VariantsRegion is, without ReferencePath, the region reads are placed
+	// in for positioned variants: "contig:start-end", 1-based inclusive.
+	// Empty: the span of the positioned variants plus one read length on
+	// each side (the variants must then be on one contig). Read bases are
+	// generated, not copied from a reference. With ReferencePath, use
+	// ReferenceRegion.
+	VariantsRegion string `json:"variants_region,omitempty" yaml:"variants_region,omitempty"`
+
 	// Platform selects the read model and output format: "illumina" (the
 	// default when empty) or "ont" (Oxford Nanopore: MinKNOW-style headers and
 	// a sequencing_summary.txt).

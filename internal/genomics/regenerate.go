@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/scttfrdmn/phantom-science/internal/genomics/manifest"
 	"github.com/scttfrdmn/phantom-science/internal/genomics/seqread"
 )
 
@@ -38,6 +39,12 @@ type RegenOptions struct {
 	// MaxReads stops after this many reads (each mate counted); 0 for no
 	// limit.
 	MaxReads int64
+	// Variants is the VCF the run planted variants from (the manifest's
+	// variants). When set, Regenerate fails unless the engine was configured
+	// with that file (variants_path, matched by size and SHA-256): without
+	// it the run's reads cannot be reproduced. When nil, the engine's
+	// configuration is used as it is.
+	Variants *manifest.Input
 }
 
 // errRegenDone stops regeneration at a limit.
@@ -75,6 +82,15 @@ func (e *Engine) Regenerate(opts RegenOptions, observe func(f RunFile, seq []byt
 	if err := e.checkExtensions(); err != nil {
 		return 0, err
 	}
+	if want := opts.Variants; want != nil {
+		got := e.variantsInput
+		switch {
+		case got == nil:
+			return 0, fmt.Errorf("the run planted variants from %s (sha256 %s): configure that VCF (variants_path / --variants) to regenerate it", want.Name, want.SHA256)
+		case got.SHA256 != want.SHA256 || got.Bytes != want.Bytes:
+			return 0, fmt.Errorf("the run planted variants from %s (sha256 %s), not %s (sha256 %s)", want.Name, want.SHA256, got.Name, got.SHA256)
+		}
+	}
 	n := max(e.config.FlowCells, 1)
 	engines := make([]*Engine, 0, n)
 	seen := map[string]bool{}
@@ -102,7 +118,7 @@ func (e *Engine) Regenerate(opts RegenOptions, observe func(f RunFile, seq []byt
 		fc := engines[f.FlowCell-1]
 		obs := &regenObserver{file: f, observe: observe, reads: &reads, bases: &bases, max: opts.MaxReads}
 		job := fileJob{path: fc.outputPath(f.Batch, f.Mate), batch: f.Batch, mate: f.Mate, reads: f.Reads, obs: obs, plain: true}
-		err = fc.writeFileStream(io.Discard, nil, job)
+		err = fc.writeFileStream(io.Discard, nil, nil, job)
 		files++
 		if errors.Is(err, errRegenDone) {
 			return true, bases, nil

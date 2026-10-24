@@ -119,6 +119,9 @@ func (e *Engine) checkExtensions() error {
 	if e.refErr != nil {
 		return e.refErr
 	}
+	if e.varErr != nil {
+		return e.varErr
+	}
 	if err := e.checkScale(); err != nil {
 		return err
 	}
@@ -182,6 +185,11 @@ type readPipeline struct {
 	// deletion length.
 	blind      []VariantRecord
 	blindSlack int
+	// planted, when set, collects the alleles written into the read (pair)
+	// being generated, and variants receives them as variants-table lines
+	// (file output with variants; see engine_variants.go).
+	planted  *plantLog
+	variants *bufio.Writer
 
 	pending []seqread.Record // the mates of the read being written
 }
@@ -283,6 +291,7 @@ func (p *readPipeline) writeBatch(bw *bufio.Writer, r *rand.Rand, s batchSpec, s
 		if p.abort != nil && p.abort.Load() {
 			return false, errAborted
 		}
+		p.planted.reset()
 		length := p.sampleLength(s.shared)
 		// frag is the pair's fragment, or for single-end reads from a
 		// FragmentSampler the read itself; nil for other single-end reads.
@@ -346,6 +355,9 @@ func (p *readPipeline) writeBatch(bw *bufio.Writer, r *rand.Rand, s batchSpec, s
 		if p.truth != nil && frag != nil {
 			writeTruth(p.truth, &p.pending[0], p.origin)
 		}
+		if p.variants != nil {
+			writePlanted(p.variants, &p.pending[0], p.planted)
+		}
 		if p.tally != nil {
 			p.tally(bases)
 		}
@@ -366,7 +378,7 @@ func joinComment(comment, fields string) string {
 func (p *readPipeline) start(r *rand.Rand, n int) (int64, error) {
 	span := p.region.End - p.region.Start - int64(n)
 	if span <= 0 {
-		return 0, fmt.Errorf("region [%s:%d-%d) too small for a read or fragment of %d bases",
+		return 0, fmt.Errorf("region [%s:%d-%d) too small for a read or fragment of %d bases (pass a wider --region / variants_region)",
 			p.region.Chromosome, p.region.Start, p.region.End, n)
 	}
 	return p.region.Start + r.Int64N(span), nil
@@ -475,12 +487,12 @@ func (p *readPipeline) bases(r *rand.Rand, length int, start int64, trim bool, q
 	switch {
 	case len(local) > 0:
 		var skipped int
-		seq, qual, skipped = injectAtPosition(r, seq, qual, start, local)
+		seq, qual, skipped = injectAtPositionLog(r, seq, qual, start, local, p.planted)
 		if skipped > 0 {
-			e.overlapSkips.Add(int64(skipped))
+			e.countOverlapSkips(skipped)
 		}
 	case len(p.blind) > 0:
-		seq, qual = injectVariants(r, seq, qual, p.blind)
+		seq, qual = injectVariantsLog(r, seq, qual, p.blind, p.planted)
 	}
 	if trim {
 		if len(seq) < length { // cannot happen with correct slack; never pad with N
@@ -497,6 +509,7 @@ func (p *readPipeline) bases(r *rand.Rand, length int, start int64, trim bool, q
 		if qual != nil {
 			qual = qual[:length]
 		}
+		p.planted.trim(length)
 	}
 	return seq, qual, nil
 }
@@ -541,7 +554,14 @@ func (p *readPipeline) writeRecord(bw *bufio.Writer, rec *seqread.Record) error 
 // qual (may be nil) stays aligned with seq; the read length changes by the
 // indel size, and the pipeline trims fixed-length reads afterwards.
 func injectVariants(r *rand.Rand, seq, qual []byte, variants []VariantRecord) ([]byte, []byte) {
-	for _, v := range variants {
+	return injectVariantsLog(r, seq, qual, variants, nil)
+}
+
+// injectVariantsLog is injectVariants recording the applied alleles in log
+// (nil for none).
+func injectVariantsLog(r *rand.Rand, seq, qual []byte, variants []VariantRecord, log *plantLog) ([]byte, []byte) {
+	for i := range variants {
+		v := &variants[i]
 		if len(v.Ref) == 0 || len(v.Alt) == 0 {
 			continue
 		}
@@ -553,6 +573,7 @@ func injectVariants(r *rand.Rand, seq, qual []byte, variants []VariantRecord) ([
 			continue
 		}
 		seq, qual = seqread.Splice(seq, qual, idx, len(v.Ref), []byte(v.Alt))
+		log.splice(v, true, idx, len(v.Ref), len(v.Alt))
 	}
 	return seq, qual
 }
@@ -565,10 +586,17 @@ func injectVariants(r *rand.Rand, seq, qual []byte, variants []VariantRecord) ([
 // the read are ignored; a variant whose reference span overlaps one already
 // applied is skipped and counted. qual (may be nil) stays aligned with seq.
 func injectAtPosition(r *rand.Rand, seq, qual []byte, readStart int64, variants []VariantRecord) ([]byte, []byte, int) {
+	return injectAtPositionLog(r, seq, qual, readStart, variants, nil)
+}
+
+// injectAtPositionLog is injectAtPosition recording the drawn alleles (REF or
+// ALT) in log (nil for none).
+func injectAtPositionLog(r *rand.Rand, seq, qual []byte, readStart int64, variants []VariantRecord, log *plantLog) ([]byte, []byte, int) {
 	window := int64(len(seq))
 	limit := window // reference offset where the applied variant furthest left starts
 	skipped := 0
-	for _, v := range variants {
+	for i := range variants {
+		v := &variants[i]
 		if v.Position <= 0 || len(v.Ref) == 0 || len(v.Alt) == 0 {
 			continue
 		}
@@ -581,11 +609,12 @@ func injectAtPosition(r *rand.Rand, seq, qual []byte, readStart int64, variants 
 			skipped++
 			continue
 		}
-		allele := v.Ref
+		allele, alt := v.Ref, false
 		if r.Float64() < v.Freq {
-			allele = v.Alt
+			allele, alt = v.Alt, true
 		}
 		seq, qual = seqread.Splice(seq, qual, int(off), len(v.Ref), []byte(allele))
+		log.splice(v, alt, int(off), len(v.Ref), len(allele))
 		limit = off
 	}
 	return seq, qual, skipped
@@ -816,6 +845,7 @@ func (e *Engine) generateRun() (err error) {
 		m.Fingerprint = fp
 	}
 	m.Destination = dest.uri()
+	m.Variants = e.variantsInput
 	n := max(e.config.FlowCells, 1)
 	seen := map[string]bool{}
 	for k := 1; k <= n; k++ {
@@ -881,6 +911,7 @@ func (e *Engine) newFlowCellEngine(k, n int, seen map[string]bool) (*Engine, str
 		config: c, parent: e, logw: e.logw, seed: e.seed, fpErr: e.fpErr,
 		hmmModel: e.hmmModel, modelPath: e.modelPath, modelErr: e.modelErr, toolVersion: e.toolVersion,
 		customerID: e.customerID, fragments: e.fragments, ref: e.ref, refErr: e.refErr, refMaxRead: e.refMaxRead,
+		variants: e.variants, variantsInput: e.variantsInput, varRegion: e.varRegion, refVars: e.refVars, varErr: e.varErr,
 	}
 	rel := ""
 	if n > 1 {
@@ -932,6 +963,7 @@ type unitResult struct {
 	unit    int
 	files   []unitFile
 	truth   *unitFile // the truth table (reference mode); nil for none
+	vtab    *unitFile // the variants table (variants_path); nil for none
 	pairs   []int64   // total bases of each read (pair)
 	part    string    // sequencing-summary part file; "" for none
 	elapsed time.Duration
@@ -957,11 +989,19 @@ func (e *Engine) generateUnit(unit, reads int, abort *atomic.Bool) unitResult {
 		if i == 0 && e.ref != nil {
 			job.truth = truthPath(job.path)
 		}
+		if i == 0 && e.variantsInput != nil {
+			job.variants = variantsPath(job.path)
+		}
 		final, err := e.generateFASTQFile(job)
 		if err == nil && job.truth != "" {
 			t := unitFile{path: job.truth, reads: int64(len(lens))}
 			t.bytes, t.sha256, err = manifest.HashFile(job.truth)
 			res.truth = &t
+		}
+		if err == nil && job.variants != "" {
+			t := unitFile{path: job.variants}
+			t.bytes, t.sha256, err = manifest.HashFile(job.variants)
+			res.vtab = &t
 		}
 		if err == nil {
 			f := unitFile{path: final, reads: int64(len(lens))}
@@ -999,8 +1039,10 @@ func discardUnit(r unitResult) {
 	for _, f := range r.files {
 		os.Remove(f.path) // #nosec G104 -- best effort; the spool is removed at the end
 	}
-	if r.truth != nil {
-		os.Remove(r.truth.path) // #nosec G104
+	for _, t := range []*unitFile{r.truth, r.vtab} {
+		if t != nil {
+			os.Remove(t.path) // #nosec G104
+		}
 	}
 	if r.part != "" {
 		os.Remove(r.part) // #nosec G104
@@ -1143,7 +1185,10 @@ func (e *Engine) commitUnit(fc *Engine, r unitResult, k int, rel string, dest de
 		e.files = append(e.files, final)
 		e.filesMu.Unlock()
 	}
-	if t := r.truth; t != nil {
+	for _, t := range []*unitFile{r.truth, r.vtab} {
+		if t == nil {
+			continue
+		}
 		relPath := joinRel(rel, filepath.Base(t.path))
 		_, key, err := dest.commit(t.path, relPath, fc.objectTags(t.bytes, r.elapsed))
 		if err != nil {

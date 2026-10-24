@@ -52,6 +52,11 @@ type SequencerConfigV1 struct {
 	ReferenceRegion string `yaml:"reference_region,omitempty" json:"reference_region,omitempty"`
 	StrictRef       bool   `yaml:"strict_ref,omitempty" json:"strict_ref,omitempty"`
 
+	// VariantsPath and VariantsRegion plant VCF variants, as the same keys
+	// of JSON configs.
+	VariantsPath   string `yaml:"variants_path,omitempty" json:"variants_path,omitempty"`
+	VariantsRegion string `yaml:"variants_region,omitempty" json:"variants_region,omitempty"`
+
 	// Illumina is the Illumina read model (qualities, errors, insert size),
 	// with the same keys as the illumina section of JSON configs.
 	Illumina IlluminaSpec `yaml:"illumina,omitempty" json:"illumina,omitzero"`
@@ -325,6 +330,8 @@ func (old *SequencerConfig) ToV1() *SequencerConfigV1 {
 		ReferencePath:   old.ReferencePath,
 		ReferenceRegion: old.ReferenceRegion,
 		StrictRef:       old.StrictRef,
+		VariantsPath:    old.VariantsPath,
+		VariantsRegion:  old.VariantsRegion,
 	}
 }
 
@@ -364,5 +371,7 @@ func (v1 *SequencerConfigV1) ToLegacy() *SequencerConfig {
 		ReferencePath:          v1.ReferencePath,
 		ReferenceRegion:        v1.ReferenceRegion,
 		StrictRef:              v1.StrictRef,
+		VariantsPath:           v1.VariantsPath,
+		VariantsRegion:         v1.VariantsRegion,
 	}
 }

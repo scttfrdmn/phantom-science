@@ -323,15 +323,17 @@ func (p *readPipeline) applyReferenceVariants(r *rand.Rand, pv *posVariants, o o
 			}
 		}
 	}
-	out, _, skipped := injectAtPosition(r, fwd, nil, o.start, local)
+	out, _, skipped := injectAtPositionLog(r, fwd, nil, o.start, local, p.planted)
 	if skipped > 0 {
-		p.e.overlapSkips.Add(int64(skipped))
+		p.e.countOverlapSkips(skipped)
 	}
 	if trim {
 		if len(out) < n {
 			out = plain
+			p.planted.reset() // the fragment is used without its variants
 		}
 		out = out[:n]
+		p.planted.trim(n)
 	}
 	if o.minus {
 		return seqread.ReverseComplement(out)
