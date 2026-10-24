@@ -59,9 +59,43 @@ novaseq -reads 200000 -real-fastq` on the first 200,000 R1 reads of NovaSeq
 | quality (LR) | 0.502 | 0.498 | 0.580 | 0.586 | **0.524** |
 | combined | 0.502 | 0.499 | 0.951 | 0.586 | **0.527** |
 
-Read 2 (paired `generate --reference` output against real `DRR276626_2`,
-measured with the same classifiers outside `run_e2e_tests`, which generates
-single-end reads): quality 0.607 → 0.543, combined 0.594 → 0.539.
+Read 2 and pairs (`run_e2e_tests -real-fastq2`, paired `-reference`
+output against real `DRR276626_2`): read-2 quality 0.543, combined 0.538;
+the `pair` feature set (both mates' quality features and how they go
+together) 0.593, with a pair-set null of 0.500.
+
+**These numbers are realism for the fitted run only.** The model was fitted
+to DRR276626 and measured against it. Measured against three held-out
+NovaSeq 6000 runs from other centres and library preps
+(`scripts/acceptance/illumina_heldout.sh`; ERR15600747, SureSelect QXT;
+DRR394916, TruSeq PCR-free; DRR260182, TruSeq Nano; 200,000 pairs each,
+measured 2026-10-23), compared with how far the real runs are from each
+other (all six pairs of the four runs):
+
+| Feature set | Generated vs held-out runs (min / median / max) | Real run vs real run (min / median / max) |
+|---|---|---|
+| read-1 sequence | 0.512 / 0.514 / 0.532 | 0.509 / 0.520 / 0.531 |
+| read-1 quality | 0.619 / 0.672 / 0.762 | 0.573 / 0.646 / 0.767 |
+| read-2 quality | 0.664 / 0.722 / 0.727 | 0.553 / 0.630 / 0.729 |
+| pair | 0.718 / 0.770 / 0.807 | 0.618 / 0.677 / 0.780 |
+
+Real-versus-real within each run (alternate halves) was 0.497–0.503 in all
+28 comparisons.
+
+- **Sequence** meets the realistic target: generated reads are as close to
+  each run as real runs are to each other.
+- **Qualities** behave like a copy of DRR276626. Generated reads are as far
+  from each held-out run as DRR276626 itself is (read-1 quality 0.762 vs
+  0.767, 0.672 vs 0.677, 0.619 vs 0.627). Real runs differ a great deal
+  (0.57–0.77), and DRR276626 is the best of the four: mean Q 36.2 against
+  34.6–35.6.
+- **Pairs** are where the model is worse than DRR276626 on every run
+  (+0.03 to +0.04): real mates' low-quality counts are correlated (0.28–0.53
+  across the four runs) and the model's mates are independent.
+
+Results: `scripts/acceptance/calibrate/illumina/results/heldout/`
+(`classifier_spread.tsv`, `classifier_matrix.tsv`,
+`calibration_stats.tsv`).
 
 In the same runs the GC control scored 0.973–0.994 and the quality control
 1.000.

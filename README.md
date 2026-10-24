@@ -29,7 +29,7 @@ on `main` but not in a tagged release yet.
   `scripts/acceptance/illumina_calibrate.sh`):
   - qualities in the four values NovaSeq 6000 writes (Q2, Q11, Q25, Q37),
     from per-read quality classes and per-cycle fractions; generated reads
-    match the real per-cycle fractions within 0.002 on average, and the mean
+    match the fitted run's per-cycle fractions within 0.002 on average, and the mean
     quality (R1 36.23 and R2 36.08 against 36.22 and 36.08);
   - qualities that depend on the read's bases (since 0.12.0): each read
     class's low-bin probabilities follow the 4-base context, as in the real
@@ -38,9 +38,14 @@ on `main` but not in a tagged release yet.
     3.2e-4; Q25 0.07–0.25%; Q11 2.9–8.3%) with the measured substitution
     spectrum (C→A and G→T dominate); Q2 bases are `N`.
 
-  Indels are not modelled (measured 7e-5 per base), the calibration comes
-  from one tile of one run, and it is not validated beyond 151 cycles or for
-  other instruments (MiSeq writes unbinned qualities; NovaSeq X uses other
+  The calibration comes from one tile of one high-quality run. Against three
+  held-out NovaSeq 6000 runs (`scripts/acceptance/illumina_heldout.sh`) the
+  qualities are as far from each run as that fitted run is (mean Q 34.6–35.6
+  on the held-out runs against 36.2), mates' qualities are independent while
+  real mates' are correlated (0.28–0.53), and the default insert size is one
+  library's (held-out medians 290–559). Indels are not modelled (measured
+  5–7e-5 per base on all four runs). It is not validated beyond 151 cycles
+  or for other instruments (MiSeq writes unbinned qualities; NovaSeq X uses other
   values). `illumina.quality_model: linear`
   restores the old ramp (`base_quality` minus `quality_decay` per base, no
   errors). The `sequencer_model`, `flow_cell_type` and `q30_percentage` config
@@ -463,9 +468,13 @@ TUI: `generate` writes as fast as it can, and `batch_interval` has no effect.
   well each feature set separates real reads from generated ones, with a
   real-versus-real null and the most separating features; `-reference
   FASTA [-region]` generates the compared reads from a genome. On NovaSeq
-  6000 run DRR276626 against hg38: sequence 0.519, quality 0.524 (chance
+  6000 run DRR276626, the run the model was fitted to, against hg38:
+  sequence 0.519, quality 0.524; against three held-out runs, quality
+  0.62–0.76, about as far as those runs are from each other (chance
   0.5; see [docs/SCIENTIFIC_VALIDATION.md](docs/SCIENTIFIC_VALIDATION.md)).
-  `-report` writes `e2e_results.json` and `e2e_summary.csv`.
+  `-real-fastq2` adds read 2 and a `pair` feature set; `-real-fastq-b`
+  compares two real runs, the realistic target. `-report` writes
+  `e2e_results.json` and `e2e_summary.csv`.
 - `CGO_ENABLED=0 go run ./cmd/run_workflow_tests` runs a minimal
   read-counting pipeline in Cromwell, Nextflow and Snakemake when they are
   installed and checks the reported count against the reads written. Missing

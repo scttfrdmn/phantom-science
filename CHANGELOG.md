@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `run_e2e_tests -real-fastq2` compares read 2 and read pairs with generated pairs (#35).
+  - A new `pair` feature set combines both mates' quality features with how their qualities go together.
+  - `-real-fastq-b`/`-real-fastq2-b` compare two real runs; `-real-only` and `-write-generated` are new.
+- `scripts/acceptance/illumina_heldout.sh` measures the Illumina model against three held-out NovaSeq 6000 runs (ERR15600747, DRR394916, DRR260182) and against how far real runs are from each other (#35).
+
+### Changed
+- Realism claims are qualified (#35). The 0.12.0 quality-classifier figures (0.524 R1, 0.543 R2) apply to DRR276626, the run the model was fitted to.
+  - Against three held-out runs, generated qualities are as far from each run as DRR276626 is: read-1 quality 0.62–0.76, against 0.57–0.77 between real runs. Sequence is within the real-run spread.
+  - Known gaps: mates' qualities are independent, while real ones correlate 0.28–0.53; the quality level is one high-quality run's; the insert default is one library's.
+
 ## [0.12.0] - 2026-10-21
 
 ### Added
