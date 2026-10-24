@@ -21,6 +21,14 @@ Run with `python3 -I` (no third-party packages). Subcommands:
       levels fixed (pair_classes.tsv), and the measured coupling of the
       mates' qualities (pair_summary.tsv, #35).
 
+  structure OUTDIR R1.fastq R2.fastq
+      How the qualities are arranged along the reads (#36): transitions of
+      order 1 and 2, by cycle block and by read stratum (the reads' count
+      of Q11 and Q25 bases), run and segment lengths, isolated dips, the
+      kinds of quality change, the excess of low calls at lag k within a
+      stratum, each stratum's per-cycle profile and the spread of the
+      classifier's block-mean features (structure.tsv).
+
   sam OUTDIR < name-grouped SAM (minimap2 output, with --MD)
       Substitution rate per quality and per cycle (primary alignments with
       MAPQ >= 30; mismatches from MD, indels and soft-clipped bases
@@ -736,6 +744,246 @@ def sam_stats(outdir, stream):
     write_tsv(os.path.join(outdir, "sam_summary.tsv"), ["key", "value"], summary)
 
 
+# ---------------------------------------------------------------- structure
+
+# Reads are grouped by their number of Q11 and Q25 bases (STRATA, [lo, hi)),
+# a stand-in for the read class that both real and generated reads have.
+STRATA = [(0, 1), (1, 5), (5, 10), (10, 20), (20, 40), (40, 80), (80, 10**6)]
+LAGS = [1, 2, 3, 4, 5, 6, 8, 10, 15, 20, 30, 50]
+# Run (and non-Q37 segment) length bins, [lo, hi).
+RUN_BINS = [1, 2, 3, 4, 5, 10, 20, 40, 80, 10**6]
+# Cycle blocks of the per-stratum low-call profile (0-based [lo, hi); the
+# last two are the cycles before the final one and the final cycle).
+SHAPE_BLOCKS = [(0, 1), (1, 3), (3, 10), (10, 30), (30, 60), (60, 90), (90, 120), (120, 140)]
+TRANS_BLOCK = 30  # cycle blocks of the transition table
+QUAL_BLOCKS = 10  # the classifier's equal cycle blocks (internal/testing)
+BINS = "#,:F"  # Q2, Q11, Q25, Q37
+
+
+def stratum(n):
+    for i, (lo, hi) in enumerate(STRATA):
+        if lo <= n < hi:
+            return i
+    return len(STRATA) - 1
+
+
+def bin_label(lo, hi):
+    return f"{lo}-{hi - 1}" if hi < 10**6 else f">={lo}"
+
+
+def structure_stats(outdir, paths):
+    """How the qualities of a read set are arranged along the read (#36).
+
+    Writes structure.tsv, one row per statistic: section, mate, key, value.
+    Sections:
+      trans1      P(q[c+1] | q[c]) pooled over cycles (key from>to);
+      trans2      P(q[c+2] | q[c], q[c+1]) (key q0q1>q2), for q0, q1 below Q37
+                  or Q37 (second order: is the chain order 1?);
+      trans_block P(q[c+1] | q[c]) per block of TRANS_BLOCK cycles (key
+                  from>to@first-last), low bins only;
+      trans_stratum P(q[c+1] | q[c]) within the reads of each stratum (reads
+                  with n Q11 + Q25 bases, STRATA; key from>to@n), low bins;
+      runs        maximal runs of one bin per read, by length (key bin@len);
+      segments    maximal runs of bins below Q37 per read, by length, the
+                  share of them ending at the last cycle and their median
+                  start cycle;
+      dips        isolated low calls per read: Q37, x, Q37 (key x);
+      changes     quality changes per read by type (key from>to), and the
+                  mean fraction of adjacent cycles that differ
+                  (qual_change_frac, the classifier's feature);
+      changes_per_low  changes per Q11 or Q25 base within each stratum;
+      lag_excess  within each stratum, P(low at c+k | low at c) / P(low at
+                  c+k) for low = Q11 or Q25 (key n@k): 1 for cycles that are
+                  independent given the stratum;
+      shape       within each stratum, the low-call fraction of cycle blocks
+                  relative to the stratum's mean (key n@first-last): a
+                  common shape for every stratum means the read classes
+                  share one per-cycle curve;
+      strata      the share of reads in each stratum;
+      block_sd    the standard deviation over reads of the mean quality of
+                  each of QUAL_BLOCKS equal cycle blocks, and of the
+                  longest and the final run below Q20 (classifier features).
+    """
+    rows = []
+    for mate, path in enumerate(paths, start=1):
+        reads = 0
+        t1 = {}
+        t2 = {}
+        tb = {}
+        ts = {}
+        runs = {}
+        seg_len = {}
+        seg_end = {}
+        seg_start = {}
+        dips = {",": 0, ":": 0}
+        changes = {}
+        change_frac = 0.0
+        ch_low = {}  # stratum -> [changes, lows]
+        nstrat = [0] * len(STRATA)
+        # lag excess: per stratum, per lag: [pairs both low, lows at c with c+k < L]
+        lag_pairs = {}
+        lag_from = {}
+        low_by_cycle = {}  # stratum -> per-cycle low counts
+        bsum = [0.0] * QUAL_BLOCKS
+        bsq = [0.0] * QUAL_BLOCKS
+        longest = [0.0, 0.0]
+        tail = [0.0, 0.0]
+        maxlen = 0
+        for _, q in fastq_records(path):
+            reads += 1
+            L = len(q)
+            maxlen = max(maxlen, L)
+            lows = [c for c, ch in enumerate(q) if ch == "," or ch == ":"]
+            n = len(lows)
+            s = stratum(n)
+            nstrat[s] += 1
+            lc = low_by_cycle.setdefault(s, [])
+            while len(lc) < L:
+                lc.append(0)
+            for c in lows:
+                lc[c] += 1
+            for a, b in zip(q, q[1:]):
+                k = a + b
+                t1[k] = t1.get(k, 0) + 1
+            for c in range(L - 1):
+                if q[c] in ",:":
+                    k = (c // TRANS_BLOCK, q[c], q[c + 1])
+                    tb[k] = tb.get(k, 0) + 1
+                    k = (s, q[c], q[c + 1])
+                    ts[k] = ts.get(k, 0) + 1
+            for a, b, c3 in zip(q, q[1:], q[2:]):
+                k = a + b + c3
+                t2[k] = t2.get(k, 0) + 1
+            nch = 0
+            for ch, g in itertools.groupby(q):
+                k = (ch, sum(1 for _ in g))
+                runs[k] = runs.get(k, 0) + 1
+            c = 0
+            while c < L:
+                if q[c] != "F":
+                    e = c
+                    while e < L and q[e] != "F":
+                        e += 1
+                    ln = e - c
+                    seg_len[ln] = seg_len.get(ln, 0) + 1
+                    if e == L:
+                        seg_end[ln] = seg_end.get(ln, 0) + 1
+                    seg_start.setdefault(ln, []).append(c)
+                    c = e
+                else:
+                    c += 1
+            for a, b, c3 in zip(q, q[1:], q[2:]):
+                if a == "F" and c3 == "F" and b in dips:
+                    dips[b] += 1
+            for a, b in zip(q, q[1:]):
+                if a != b:
+                    nch += 1
+                    k = a + b
+                    changes[k] = changes.get(k, 0) + 1
+            if L > 1:
+                change_frac += nch / (L - 1)
+            v = ch_low.setdefault(s, [0, 0])
+            v[0] += nch
+            v[1] += n
+            ls = set(lows)
+            for k in LAGS:
+                kk = (s, k)
+                lag_from[kk] = lag_from.get(kk, 0) + sum(1 for c in lows if c + k < L)
+                lag_pairs[kk] = lag_pairs.get(kk, 0) + sum(1 for c in lows if c + k in ls)
+            for b in range(QUAL_BLOCKS):
+                lo, hi = b * L // QUAL_BLOCKS, (b + 1) * L // QUAL_BLOCKS
+                m = sum(ord(ch) - 33 for ch in q[lo:hi]) / max(hi - lo, 1)
+                bsum[b] += m
+                bsq[b] += m * m
+            run = best = 0
+            for ch in q:
+                if ord(ch) - 33 < 20:
+                    run += 1
+                    best = max(best, run)
+                else:
+                    run = 0
+            longest[0] += best
+            longest[1] += best * best
+            tail[0] += run
+            tail[1] += run * run
+        m = str(mate)
+
+        def add(section, key, value):
+            rows.append([section, m, key, fmt(value)])
+
+        for a in BINS:
+            tot = sum(t1.get(a + b, 0) for b in BINS)
+            for b in BINS:
+                if tot:
+                    add("trans1", f"Q{ord(a) - 33}>Q{ord(b) - 33}", t1.get(a + b, 0) / tot)
+        for a in ",:F":
+            for b in ",:F":
+                tot = sum(t2.get(a + b + x, 0) for x in BINS)
+                for x in ",:F":
+                    if tot:
+                        add("trans2", f"Q{ord(a) - 33}Q{ord(b) - 33}>Q{ord(x) - 33}", t2.get(a + b + x, 0) / tot)
+        for blk in sorted({k[0] for k in tb}):
+            lo, hi = blk * TRANS_BLOCK + 1, min((blk + 1) * TRANS_BLOCK, maxlen - 1)
+            for a in ",:":
+                tot = sum(tb.get((blk, a, b), 0) for b in BINS)
+                for b in ",:F":
+                    if tot:
+                        add("trans_block", f"Q{ord(a) - 33}>Q{ord(b) - 33}@{lo}-{hi}", tb.get((blk, a, b), 0) / tot)
+        for si, (lo, hi) in enumerate(STRATA):
+            for a in ",:":
+                tot = sum(ts.get((si, a, b), 0) for b in BINS)
+                for b in ",:F":
+                    if tot:
+                        add("trans_stratum", f"Q{ord(a) - 33}>Q{ord(b) - 33}@{bin_label(lo, hi)}", ts.get((si, a, b), 0) / tot)
+        for ch in BINS:
+            for lo, hi in zip(RUN_BINS, RUN_BINS[1:]):
+                nr = sum(v for (c2, ln), v in runs.items() if c2 == ch and lo <= ln < hi)
+                add("runs", f"Q{ord(ch) - 33}@{bin_label(lo, hi)}", nr / reads)
+        for lo, hi in zip(RUN_BINS, RUN_BINS[1:]):
+            ns = sum(v for ln, v in seg_len.items() if lo <= ln < hi)
+            add("segments", f"per_read@{bin_label(lo, hi)}", ns / reads)
+            if ns:
+                add("segments", f"ending_at_last_cycle@{bin_label(lo, hi)}", sum(v for ln, v in seg_end.items() if lo <= ln < hi) / ns)
+                starts = sorted(x for ln, xs in seg_start.items() if lo <= ln < hi for x in xs)
+                add("segments", f"median_start_cycle@{bin_label(lo, hi)}", starts[len(starts) // 2] + 1)
+        add("segments", "per_read", sum(seg_len.values()) / reads)
+        for ch, v in dips.items():
+            add("dips", f"Q{ord(ch) - 33}", v / reads)
+        for a in BINS:
+            for b in BINS:
+                if a != b:
+                    add("changes", f"Q{ord(a) - 33}>Q{ord(b) - 33}", changes.get(a + b, 0) / reads)
+        add("changes", "qual_change_frac", change_frac / reads)
+        for si, (lo, hi) in enumerate(STRATA):
+            v = ch_low.get(si)
+            if v and v[1]:
+                add("changes_per_low", bin_label(lo, hi), v[0] / v[1])
+            add("strata", bin_label(lo, hi), nstrat[si] / reads)
+            lc = low_by_cycle.get(si)
+            if not lc or not sum(lc):
+                continue
+            L = len(lc)
+            mean = sum(lc) / L
+            for k in LAGS:
+                # P(low at c+k | low at c) / P(low at c', c' >= k)
+                frm = lag_from.get((si, k), 0)
+                later = sum(lc[k:]) / (nstrat[si] * (L - k))
+                if frm and later:
+                    add("lag_excess", f"{bin_label(lo, hi)}@{k}", lag_pairs[(si, k)] / frm / later)
+            blocks = SHAPE_BLOCKS + [(SHAPE_BLOCKS[-1][1], L - 1), (L - 1, L)]
+            for a, b in blocks:
+                if b > a:
+                    add("shape", f"{bin_label(lo, hi)}@{a + 1}-{b}", sum(lc[a:b]) / (b - a) / mean)
+        for b in range(QUAL_BLOCKS):
+            mu = bsum[b] / reads
+            add("block_sd", f"mean_qual_block_{b + 1}/{QUAL_BLOCKS}", math.sqrt(max(bsq[b] / reads - mu * mu, 0)))
+        for name, v in (("lowq_longest_run", longest), ("lowq_tail_run", tail)):
+            mu = v[0] / reads
+            add("block_sd", f"{name}_mean", mu)
+            add("block_sd", f"{name}_sd", math.sqrt(max(v[1] / reads - mu * mu, 0)))
+    write_tsv(os.path.join(outdir, "structure.tsv"), ["section", "mate", "key", "value"], rows)
+
+
 def main(argv):
     if len(argv) < 3:
         raise SystemExit(__doc__)
@@ -749,6 +997,8 @@ def main(argv):
         pair_stats(outdir, argv[3:5], argv[5])
     elif cmd == "sam" and len(argv) == 3:
         sam_stats(outdir, sys.stdin)
+    elif cmd == "structure" and len(argv) == 5:
+        structure_stats(outdir, argv[3:5])
     else:
         raise SystemExit(__doc__)
 

@@ -24,7 +24,8 @@
 #      after) per 10-cycle block, and within each read class against the
 #      calls expected without a context effect; class posteriors by read GC
 #      and longest homopolymer (#35); the joint read classes of the two
-#      mates of a pair and the measured mate coupling (#35);
+#      mates of a pair and the measured mate coupling (#35); the quality
+#      structure along the reads (#36, RESULTS/structure.tsv);
 #   5. the model fit, written to RESULTS/fit.tsv and to GO_OUT (gofmt'd,
 #      the run's Profile), with the measured quality by base and context in
 #      RESULTS/context_summary.tsv.
@@ -153,6 +154,8 @@ echo "Measuring qualities by sequence context ..."
 python3 -I "$stats" context "$results" "$r1" "$r2" "$results/fit.tsv"
 echo "Measuring how the mates' read classes go together ..."
 python3 -I "$stats" pairs "$results" "$r1" "$r2" "$results/fit.tsv"
+echo "Measuring the quality structure ..."
+python3 -I "$stats" structure "$results" "$r1" "$r2"
 echo "Fitting the model ..."
 python3 -I "$fit" "$results" "$go_out"
 if command -v gofmt >/dev/null 2>&1; then
