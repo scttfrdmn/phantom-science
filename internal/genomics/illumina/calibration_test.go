@@ -13,11 +13,42 @@ import (
 	"testing"
 )
 
-// These tests compare the model with the measurements of real NovaSeq 6000
-// reads (ENA DRR276626, 200,000 pairs of 2×151) committed by
-// scripts/acceptance/illumina_calibrate.sh. The raw reads are not needed.
+// These tests compare each profile with the measurements of the real
+// NovaSeq 6000 reads it was fitted to (200,000 pairs of its run) committed
+// by scripts/acceptance/illumina_calibrate.sh. The raw reads are not
+// needed.
 
-var resultsDir = filepath.Join("..", "..", "..", "scripts", "acceptance", "calibrate", "illumina", "results")
+var resultsRoot = filepath.Join("..", "..", "..", "scripts", "acceptance", "calibrate", "illumina", "results")
+
+// resultsDir holds the measured tables of cur, the profile under test
+// (forProfiles).
+var (
+	resultsDir = resultsRoot
+	cur        = &profileDRR276626
+)
+
+// profileResults returns the directory of the measured tables of p.
+func profileResults(p *Profile) string {
+	if p == &profileDRR276626 {
+		return resultsRoot
+	}
+	return filepath.Join(resultsRoot, "profiles", p.Run.Accession)
+}
+
+// forProfiles runs f for every profile as a subtest named after it, with
+// resultsDir, cur and the measured read cells (loadReadCells) of that
+// profile.
+func forProfiles(t *testing.T, f func(t *testing.T, p *Profile)) {
+	t.Helper()
+	defer func() { resultsDir, cur = resultsRoot, &profileDRR276626 }()
+	for _, p := range profiles {
+		t.Run(p.Name, func(t *testing.T) {
+			resultsDir, cur = profileResults(p), p
+			loadReadCells(t)
+			f(t, p)
+		})
+	}
+}
 
 // readTSV returns the rows of a results table as maps from column name.
 func readTSV(t *testing.T, name string) []map[string]string {
@@ -53,6 +84,16 @@ func num(t *testing.T, s string) float64 {
 	return v
 }
 
+// count is num for a count column that a table may lack (no Q2 calls in a
+// run): 0 when s is empty.
+func count(t *testing.T, s string) float64 {
+	t.Helper()
+	if s == "" {
+		return 0
+	}
+	return num(t, s)
+}
+
 // realMate holds the measured statistics of one mate.
 type realMate struct {
 	perCycle   [][4]float64 // bin fractions per cycle
@@ -68,14 +109,14 @@ func loadReal(t *testing.T) [2]realMate {
 		n := num(t, r["bases"])
 		var f [4]float64
 		for b, q := range Bins {
-			f[b] = num(t, r["Q"+strconv.Itoa(int(q))]) / n
+			f[b] = count(t, r["Q"+strconv.Itoa(int(q))]) / n
 		}
 		m[i].perCycle = append(m[i].perCycle, f)
 	}
-	counts := [2][]float64{make([]float64, 152), make([]float64, 152)}
+	counts := [2][]float64{make([]float64, 302), make([]float64, 302)}
 	for _, r := range readTSV(t, "read_composition.tsv") {
 		i := int(num(t, r["mate"])) - 1
-		k := int(num(t, r["n_Q2"]) + num(t, r["n_Q11"]) + num(t, r["n_Q25"]))
+		k := int(count(t, r["n_Q2"]) + count(t, r["n_Q11"]) + count(t, r["n_Q25"]))
 		counts[i][k] += num(t, r["reads"])
 	}
 	for i := range m {
@@ -122,24 +163,38 @@ func loadReal(t *testing.T) [2]realMate {
 	return m
 }
 
-// Generated reads have the measured per-cycle bin frequencies (mean |Δ|
-// over cycles < 0.0025 per bin, every cycle within 0.015: the smooth curve
-// does not follow single-cycle features such as read 2 cycles 148-149,
-// about 0.01 worse than their neighbours), the measured
-// distribution of low-quality bases per read (CDF within 0.02), the
-// measured adjacent-cycle repeat rates of Q11 and Q25 (within 0.01), mean
-// quality (within 0.05) and ≥ Q30 fraction (within 0.003); read 2 is worse
-// than read 1, as measured.
+// Generated reads have the measured per-cycle bin frequencies of the
+// profile's run (mean |Δ| over cycles < 0.0025 per bin, every cycle within
+// 0.015: the smooth curve does not follow single-cycle features such as
+// DRR276626 read 2 cycles 148-149, about 0.01 worse than their
+// neighbours), the measured distribution of low-quality bases per read
+// (CDF within 0.02), the measured adjacent-cycle repeat rates of Q11 and
+// Q25 (within 0.01), mean quality (within 0.05) and ≥ Q30 fraction (within
+// 0.003); read 2 is worse than read 1, as measured.
 func TestCalibration_QualitiesMatchNovaSeq(t *testing.T) {
+	forProfiles(t, testQualitiesMatch)
+}
+
+// cycleTol returns the tolerances of the per-cycle fractions of profile p
+// (mean |Δ| over cycles, largest |Δ|): the other runs have more
+// single-cycle structure than the smooth curves follow (DRR394916 read 2
+// cycle 149, ERR15600747 read 2 cycle 147).
+func cycleTol(p *Profile) (mean, worst float64) {
+	if p == &profileDRR276626 {
+		return 0.0025, 0.015
+	}
+	return 0.0035, 0.02
+}
+
+func testQualitiesMatch(t *testing.T, pr *Profile) {
 	real := loadReal(t)
-	loadReadCells(t)
 	const reads = 100000
 	var genMean [2]float64
-	for i, p := range []QualityParams{Read1, Read2} {
+	for i, p := range []QualityParams{pr.Read1, pr.Read2} {
 		rm := real[i]
 		n := len(rm.perCycle)
-		if n != 151 {
-			t.Fatalf("read %d: %d measured cycles, want 151", i+1, n)
+		if n != pr.Run.ReadLength {
+			t.Fatalf("read %d: %d measured cycles, want %d", i+1, n, pr.Run.ReadLength)
 		}
 		s := generate(p, uint64(10+i), reads, n, func(r *rand.Rand, n int) []byte { return humanBasesMate(r, n, i) })
 		for b := 1; b < 4; b++ {
@@ -153,7 +208,7 @@ func TestCalibration_QualitiesMatchNovaSeq(t *testing.T) {
 			}
 			mean := sum / float64(n)
 			t.Logf("read %d Q%d: mean |Δ| %.5f, max %.5f at cycle %d", i+1, Bins[b], mean, worst, at)
-			if mean > 0.0025 || worst > 0.015 {
+			if tm, tw := cycleTol(pr); mean > tm || worst > tw {
 				t.Errorf("read %d Q%d per-cycle fractions: mean |Δ| %.5f, max %.5f at cycle %d", i+1, Bins[b], mean, worst, at)
 			}
 		}
@@ -196,10 +251,14 @@ func TestCalibration_QualitiesMatchNovaSeq(t *testing.T) {
 // The substitution model reproduces the measured rates: per bin and block
 // of 30 cycles, the mismatch rate against GRCh38 less the sample's variant
 // rate is within 15 % of Rate (and within 5 % over all cycles); the Q37 rate
-// is the mate-overlap rate. The final cycle (151) is logged, not checked:
-// its Q25 rate is about 1.3 times the curve's, which the model does not
-// reproduce.
+// is the mate-overlap rate. The final cycle (151 or 150) is logged, not
+// checked: its Q25 rate is about 1.3 times the curve's, which the model
+// does not reproduce.
 func TestCalibration_ErrorRatesMatchNovaSeq(t *testing.T) {
+	forProfiles(t, func(t *testing.T, pr *Profile) { testErrorRatesMatch(t, pr.Errors, pr.Run.ReadLength) })
+}
+
+func testErrorRatesMatch(t *testing.T, e ErrorParams, n int) {
 	variant := math.NaN()
 	for _, r := range readTSV(t, "fit.tsv") {
 		if r["param"] == "variant_rate" {
@@ -218,8 +277,12 @@ func TestCalibration_ErrorRatesMatchNovaSeq(t *testing.T) {
 			continue
 		}
 		a, k := num(t, r["aligned"]), num(t, r["mismatches"])
-		m := NovaSeqErrors.Rate(byte(q), c-1) * a
-		for _, x := range []*acc{getAcc(blocks, [2]int{q, min(c-1, 150) / 30}), getAcc(all, q)} {
+		m := e.Rate(byte(q), c-1) * a
+		b := (c - 1) / 30
+		if c >= n {
+			b = 5 // the final cycle, logged only
+		}
+		for _, x := range []*acc{getAcc(blocks, [2]int{q, b}), getAcc(all, q)} {
 			x.aligned += a
 			x.mism += k
 			x.model += m
@@ -243,8 +306,8 @@ func TestCalibration_ErrorRatesMatchNovaSeq(t *testing.T) {
 	}
 	for _, r := range readTSV(t, "errors_quality.tsv") {
 		if r["mate"] == "both" && r["phred"] == "37" {
-			if got := num(t, r["overlap_rate"]); math.Abs(got-NovaSeqErrors.High) > 1e-6 {
-				t.Errorf("Q37 rate %v, measured overlap rate %v", NovaSeqErrors.High, got)
+			if got := num(t, r["overlap_rate"]); math.Abs(got-e.High) > 1e-6 {
+				t.Errorf("Q37 rate %v, measured overlap rate %v", e.High, got)
 			}
 		}
 	}

@@ -1,0 +1,9 @@
+key	value
+name	novaseq6000-drr276626
+accession	DRR276626
+study	PRJDB11215
+instrument	Illumina NovaSeq 6000
+center	SAGA_U
+library	not recorded (nominal insert 626)
+pairs	200000
+results	scripts/acceptance/calibrate/illumina/results

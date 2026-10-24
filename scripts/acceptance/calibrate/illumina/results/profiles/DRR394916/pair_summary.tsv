@@ -1,0 +1,8 @@
+key	value
+pairs	200000
+distinct_count_tuples	76710
+loglik_independent	-2279615.044
+loglik_coupled	-2243159.907
+em_iterations	300
+lowq30_count_correlation	0.50921
+lowq20_count_correlation	0.416769

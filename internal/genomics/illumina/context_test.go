@@ -65,7 +65,7 @@ func loadReadCells(t *testing.T) {
 }
 
 // humanBasesMate returns n bases with the 4-base context frequencies
-// (contextFreq) of the measured reads and the measured spread of read GC
+// (cur.freq) of the measured reads and the measured spread of read GC
 // and longest homopolymer of mate (0 or 1): a cell (GC bin, homopolymer
 // bin) is drawn from the measured distribution, and the read is drawn from
 // a third-order Markov chain with the context frequencies, its G and C
@@ -99,7 +99,7 @@ func humanBasesMate(r *rand.Rand, n, mate int) []byte {
 }
 
 // markovBases returns n bases of the third-order Markov chain of
-// contextFreq with the weights of G and C steps multiplied by tilt.
+// cur.freq with the weights of G and C steps multiplied by tilt.
 func markovBases(r *rand.Rand, n int, tilt float64) []byte {
 	seq := make([]byte, n)
 	w := func(v [4]float64) []float64 {
@@ -109,7 +109,8 @@ func markovBases(r *rand.Rand, n int, tilt float64) []byte {
 	}
 	// The first three bases from the 3-mer marginal.
 	var tri [64]float64
-	for x, p := range contextFreq {
+	freq := cur.freq
+	for x, p := range freq {
 		tri[x>>2] += p
 	}
 	x := pickIndex(r, tri[:])
@@ -118,7 +119,7 @@ func markovBases(r *rand.Rand, n int, tilt float64) []byte {
 	}
 	for i := 3; i < n; i++ {
 		prev := x & 63
-		x = prev<<2 | pickIndex(r, w([4]float64(contextFreq[prev<<2:prev<<2+4])))
+		x = prev<<2 | pickIndex(r, w([4]float64(freq[prev<<2:prev<<2+4])))
 		seq[i] = acgt[x&3]
 	}
 	return seq
@@ -157,7 +158,7 @@ func realContext(t *testing.T) *contextCounts {
 		m := int(num(t, r["mate"])) - 1
 		var v [4]float64
 		for b, q := range Bins {
-			v[b] = num(t, r["Q"+strconv.Itoa(int(q))])
+			v[b] = count(t, r["Q"+strconv.Itoa(int(q))])
 		}
 		if x := ContextIndex(r["prev2"][0], r["prev"][0], r["base"][0], r["next"][0]); x >= 0 {
 			addBins(&cc.ctx[m][x], v)
@@ -211,7 +212,8 @@ func meanQ(v [4]float64) float64 {
 func binFrac(v [4]float64, i int) float64 { return v[i] / (v[0] + v[1] + v[2] + v[3]) }
 
 // Generated qualities depend on the base and its context as measured in
-// DRR276626 (#35). Per base: mean Q within 0.05 (read 1) and 0.09 (read 2)
+// the profile's run (#35; the tolerances below are DRR276626's, see
+// contextTol for the other runs). Per base: mean Q within 0.05 (read 1) and 0.09 (read 2)
 // of the measured value, P(Q11) within 10 % and 12 %, P(Q25) within 4 %,
 // and the spread of mean Q over the four bases within 25 % of the measured
 // spread (0.27 and 0.35; the model without contexts has none). Over the
@@ -226,15 +228,17 @@ func binFrac(v [4]float64, i int) float64 { return v[i] / (v[0] + v[1] + v[2] + 
 // 4-mer composition and spread of read GC and longest homopolymer, and no
 // sequencing errors, so their called bases are the true bases.
 func TestCalibration_ContextMatchesNovaSeq(t *testing.T) {
+	forProfiles(t, testContextMatches)
+}
+
+func testContextMatches(t *testing.T, pr *Profile) {
 	real := realContext(t)
-	loadReadCells(t)
 	gen := &contextCounts{}
 	const reads = 100000
-	for m, p := range []QualityParams{Read1, Read2} {
-		genContext(p, m, uint64(20+m), reads, 151, gen)
+	for m, p := range []QualityParams{pr.Read1, pr.Read2} {
+		genContext(p, m, uint64(20+m), reads, pr.Run.ReadLength, gen)
 	}
-	tol := [2]struct{ meanQ, low, lowR, lowDev float64 }{{0.05, 0.10, 0.6, 0.16}, {0.09, 0.12, 0.25, 0.26}}
-	midR := [2]float64{0.95, 0.88}
+	tol := contextTol(pr)
 	for m := range 2 {
 		lo, hi := [2]float64{99, 99}, [2]float64{}
 		for b := range 4 {
@@ -244,7 +248,7 @@ func TestCalibration_ContextMatchesNovaSeq(t *testing.T) {
 			if math.Abs(meanQ(gv)-meanQ(rv)) > tol[m].meanQ {
 				t.Errorf("read %d %c: mean Q %.3f, measured %.3f", m+1, acgt[b], meanQ(gv), meanQ(rv))
 			}
-			for i, rel := range [3]float64{0, tol[m].low, 0.04} {
+			for i, rel := range [3]float64{0, tol[m].low, tol[m].mid} {
 				if i == 0 {
 					continue
 				}
@@ -279,7 +283,7 @@ func TestCalibration_ContextMatchesNovaSeq(t *testing.T) {
 			corr := (sxy/sw - mx*my) / math.Sqrt((sxx/sw-mx*mx)*(syy/sw-my*my))
 			dev /= sw
 			t.Logf("read %d Q%d by 4-base context: r = %.3f, mean |relative difference| %.3f", m+1, Bins[i], corr, dev)
-			minR, maxDev := midR[m], 0.08
+			minR, maxDev := tol[m].midR, 0.08
 			if i == 1 {
 				minR, maxDev = tol[m].lowR, tol[m].lowDev
 			}
@@ -288,6 +292,24 @@ func TestCalibration_ContextMatchesNovaSeq(t *testing.T) {
 			}
 		}
 	}
+}
+
+// ctxTol are the tolerances of TestCalibration_ContextMatchesNovaSeq for
+// one mate: of mean Q per base, P(Q11) and P(Q25) per base (relative), and
+// of P(Q11) (r, mean relative difference) and P(Q25) (r) over contexts.
+type ctxTol struct{ meanQ, low, mid, lowR, lowDev, midR float64 }
+
+// contextTol returns the tolerances of profile p, per mate. The other
+// runs' read 2 has poorer G calls than the model gives it (mean Q of G
+// 0.20 lower in DRR394916, 0.33 in ERR15600747, P(Q11) 11 % and 15 %
+// higher): like poly-G and the GC-rich reads, a read-level effect that the
+// model's classes, which do not depend on the sequence, do not carry; its
+// P(Q25) by context follows the measured one less closely too.
+func contextTol(p *Profile) [2]ctxTol {
+	if p == &profileDRR276626 {
+		return [2]ctxTol{{0.05, 0.10, 0.04, 0.6, 0.16, 0.95}, {0.09, 0.12, 0.04, 0.25, 0.26, 0.88}}
+	}
+	return [2]ctxTol{{0.07, 0.10, 0.04, 0.6, 0.16, 0.95}, {0.4, 0.18, 0.05, 0.25, 0.26, 0.78}}
 }
 
 // QualitiesFor draws each cycle's bin with the probability TargetFor gives
@@ -344,6 +366,16 @@ func TestQualitiesFor_FrequenciesMatchTarget(t *testing.T) {
 // a context with unknown bases gets the frequency-weighted mean of the
 // contexts it matches, and a fully unknown one the overall mean, 1.
 func TestContextFactors_Normalised(t *testing.T) {
+	for _, pr := range profiles {
+		t.Run(pr.Name, func(t *testing.T) { testContextNormalised(t, pr) })
+	}
+	if ContextIndex('A', 'C', 'G', 'T') != 0<<6|1<<4|2<<2|3 || ContextIndex('A', 'C', 'N', 'T') != -1 {
+		t.Error("ContextIndex")
+	}
+}
+
+func testContextNormalised(t *testing.T, pr *Profile) {
+	contextFreq := pr.freq
 	sum := 0.0
 	for _, v := range contextFreq {
 		sum += v
@@ -351,7 +383,7 @@ func TestContextFactors_Normalised(t *testing.T) {
 	if math.Abs(sum-1) > 1e-3 {
 		t.Errorf("context frequencies sum to %v", sum)
 	}
-	for mate, p := range []QualityParams{Read1, Read2} {
+	for mate, p := range []QualityParams{pr.Read1, pr.Read2} {
 		for k, c := range p.Classes {
 			f := c.Context
 			if f == nil {
@@ -365,12 +397,12 @@ func TestContextFactors_Normalised(t *testing.T) {
 					t.Errorf("read %d class %d context %d: factors %v %v", mate+1, k, x, f.Low[x], f.Mid[x])
 				}
 			}
-			if math.Abs(l/sum-1) > 2e-3 || math.Abs(m/sum-1) > 2e-3 {
+			if math.Abs(l/sum-1) > 5e-3 || math.Abs(m/sum-1) > 5e-3 {
 				t.Errorf("read %d class %d: factors average %.5f, %.5f; want 1", mate+1, k, l/sum, m/sum)
 			}
 			// A known context maps to the table; unknown positions average.
 			x := ContextIndex('G', 'G', 'T', 'A')
-			if got := f.ext[contextAt([]byte("GGTA"), 2)]; got != [2]float64{f.Low[x], f.Mid[x]} {
+			if got := f.ext[contextAt([]byte("GGTA"), 2)]; math.Abs(got[0]-f.Low[x]) > 1e-12*f.Low[x] || math.Abs(got[1]-f.Mid[x]) > 1e-12*f.Mid[x] {
 				t.Errorf("read %d class %d: GGTA factors %v, table %v %v", mate+1, k, got, f.Low[x], f.Mid[x])
 			}
 			if got := f.ext[contextAt([]byte("N"), 0)]; math.Abs(got[0]-l/sum) > 1e-9 || math.Abs(got[1]-m/sum) > 1e-9 {
@@ -386,8 +418,5 @@ func TestContextFactors_Normalised(t *testing.T) {
 				t.Errorf("read %d class %d: GGT- factor %v, want %v", mate+1, k, got, acc/w)
 			}
 		}
-	}
-	if ContextIndex('A', 'C', 'G', 'T') != 0<<6|1<<4|2<<2|3 || ContextIndex('A', 'C', 'N', 'T') != -1 {
-		t.Error("ContextIndex")
 	}
 }

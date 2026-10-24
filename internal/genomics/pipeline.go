@@ -214,7 +214,11 @@ func (e *Engine) newPipeline(opts GenerateOpts, obs ReadObserver) (*readPipeline
 		return nil, err
 	}
 	if e.config.PairedEnd {
-		if p.inserts, err = illumina.NewInsertSampler(e.illuminaSpec().InsertSize); err != nil {
+		spec, err := e.insertSizes()
+		if err != nil {
+			return nil, err
+		}
+		if p.inserts, err = illumina.NewInsertSampler(spec); err != nil {
 			return nil, err
 		}
 	}

@@ -25,6 +25,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/scttfrdmn/phantom-science/internal/genomics/illumina"
 	"github.com/scttfrdmn/phantom-science/internal/testing"
 )
 
@@ -52,7 +53,10 @@ type CommandLineArgs struct {
 	// writeGenerated, when set, is the directory the generated reads of the
 	// real comparison are written to as FASTQ.
 	writeGenerated string
-	help           bool
+	// illuminaProfile is the Illumina run profile of the generated reads
+	// (illumina.profile; empty: the default).
+	illuminaProfile string
+	help            bool
 }
 
 func main() {
@@ -132,6 +136,8 @@ func parseCommandLineArgs() *CommandLineArgs {
 		"With real reads, skip the comparison with generated reads: only real versus real and the cross-run comparison")
 	flag.StringVar(&args.writeGenerated, "write-generated", "",
 		"Directory to write the generated reads of the real comparison to (<platform>_1.fastq, and _2.fastq for pairs)")
+	flag.StringVar(&args.illuminaProfile, "illumina-profile", "",
+		"Illumina run profile of the generated reads: "+strings.Join(illumina.ProfileNames(), ", ")+" (default "+illumina.DefaultProfile+")")
 	flag.BoolVar(&args.help, "help", false, "Show this help message")
 	flag.Parse()
 	return args
@@ -548,9 +554,12 @@ type Report struct {
 	ReadsPerSet int       `json:"reads_per_set"`
 	Paired      bool      `json:"paired,omitempty"`
 	Bases       Bases     `json:"bases"`
-	RealFASTQ   string    `json:"real_fastq,omitempty"`
-	RealFASTQ2  string    `json:"real_fastq2,omitempty"`
-	RealError   string    `json:"real_fastq_error,omitempty"`
+	// IlluminaProfile is the Illumina run profile of the generated reads
+	// (empty: the default).
+	IlluminaProfile string `json:"illumina_profile,omitempty"`
+	RealFASTQ       string `json:"real_fastq,omitempty"`
+	RealFASTQ2      string `json:"real_fastq2,omitempty"`
+	RealError       string `json:"real_fastq_error,omitempty"`
 	// RealFASTQB, RealFASTQB2 and CrossRun are the second real run and its
 	// comparison with the first (-real-fastq-b).
 	RealFASTQB  string            `json:"real_fastq_b,omitempty"`
@@ -607,7 +616,7 @@ func loadReal(path, path2 string, n int) (*testing.SyntheticData, error) {
 func runAll(f *testing.E2EFramework, platforms []testing.SequencingPlatform, args *CommandLineArgs) *Report {
 	start := time.Now()
 	report := &Report{StartedAt: start, Seed: args.seed, Quick: args.quick, ReadsPerSet: args.readsPerSet(),
-		Paired: args.pairedRun(), Bases: basesOf(args), RealFASTQ: args.realFASTQ, RealFASTQ2: args.realFASTQ2,
+		Paired: args.pairedRun(), Bases: basesOf(args), IlluminaProfile: args.illuminaProfile, RealFASTQ: args.realFASTQ, RealFASTQ2: args.realFASTQ2,
 		RealFASTQB: args.realFASTQB, RealFASTQB2: args.realFASTQB2}
 
 	var real *testing.SyntheticData
@@ -657,6 +666,9 @@ func runPlatform(f *testing.E2EFramework, platform testing.SequencingPlatform, r
 		c := f.CreatePlatformConfig(platform, "CEU")
 		c.Seed = seed
 		c.ReferencePath, c.ReferenceRegion = args.reference, args.region
+		if c.EnginePlatform == "illumina" {
+			c.IlluminaProfile = args.illuminaProfile
+		}
 		if reads > 0 {
 			c.Reads = reads
 		}
@@ -918,6 +930,9 @@ func printReport(w io.Writer, r *Report, args *CommandLineArgs) {
 	rule := strings.Repeat("-", 100)
 	fmt.Fprintf(w, "E2E measurements: %d platform(s), base seed %d, %.1fs\n", len(r.Platforms), r.Seed, r.WallSeconds)
 	fmt.Fprintf(w, "Generated bases: %s\n", r.Bases)
+	if r.IlluminaProfile != "" {
+		fmt.Fprintf(w, "Illumina profile: %s\n", r.IlluminaProfile)
+	}
 
 	fmt.Fprintln(w, "\nREADS (computed from the generated FASTQ)")
 	fmt.Fprintln(w, rule)

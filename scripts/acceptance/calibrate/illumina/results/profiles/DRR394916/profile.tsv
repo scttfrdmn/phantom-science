@@ -1,0 +1,9 @@
+key	value
+name	novaseq6000-drr394916
+accession	DRR394916
+study	PRJDB13883
+instrument	Illumina NovaSeq 6000
+center	NCCHD
+library	TruSeq DNA PCR Free Kit
+pairs	200000
+results	scripts/acceptance/calibrate/illumina/results/profiles/DRR394916

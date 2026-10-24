@@ -1,0 +1,10 @@
+key	value
+source	local files DRR394916_1.fastq, DRR394916_2.fastq (stated to be DRR394916)
+reads_per_mate	200000
+reads_md5	c7676887d9c4de2b4a37736318084451,4df7119fc82eb558af41a8e76c63af77
+reference	hg38.primary.fa
+reference_sequences	24
+aligner	minimap2 2.31-r1302 (-ax sr --MD)
+samtools	samtools 1.24
+python	Python 3.15.0
+date	2026-10-24

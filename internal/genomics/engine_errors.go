@@ -31,7 +31,8 @@ package genomics
 //     tier, ONT reads get the linear decay and no errors.
 //   - Illumina, quality_model "binned" (the default): qualities in the
 //     NovaSeq 6000 bins (Q2/Q11/Q25/Q37) from package illumina, fitted to
-//     run DRR276626 and drawn given the read's bases (each cycle's Q11 and
+//     a real run (illumina.profile, default run DRR276626, #35) and drawn
+//     given the read's bases (each cycle's Q11 and
 //     Q25 probabilities depend on its 4-base context, #35; the two reads of
 //     a pair draw their quality classes together, #35), and with errors
 //     "quality" (the default for binned)
@@ -82,7 +83,8 @@ func (e *Engine) illuminaSpec() types.IlluminaSpec {
 }
 
 // checkIllumina validates the illumina section: it must be valid, and is
-// only accepted on the Illumina platform.
+// only accepted on the Illumina platform; a profile must exist and needs
+// the binned quality model.
 func (e *Engine) checkIllumina() error {
 	if e.isONT() {
 		if e.config.Illumina != (types.IlluminaSpec{}) {
@@ -90,7 +92,34 @@ func (e *Engine) checkIllumina() error {
 		}
 		return nil
 	}
-	return e.config.Illumina.Validate()
+	if err := e.config.Illumina.Validate(); err != nil {
+		return err
+	}
+	if e.config.Illumina.Profile != "" && e.illuminaSpec().QualityModel != types.IlluminaQualityBinned {
+		return fmt.Errorf("illumina profile %q needs quality_model binned, not %s", e.config.Illumina.Profile, e.illuminaSpec().QualityModel)
+	}
+	_, err := e.illuminaProfile()
+	return err
+}
+
+// illuminaProfile returns the configured Illumina run profile (the default
+// when none is set).
+func (e *Engine) illuminaProfile() (*illumina.Profile, error) {
+	return illumina.LookupProfile(e.config.Illumina.Profile)
+}
+
+// insertSizes returns the insert-size distribution of paired-end reads:
+// illumina.insert_size when set, else the profile's measured one (the
+// default profile's is the types default), with defaults applied.
+func (e *Engine) insertSizes() (types.InsertSizeSpec, error) {
+	if e.config.Illumina.InsertSize != (types.InsertSizeSpec{}) || !e.binnedQualities() {
+		return e.illuminaSpec().InsertSize, nil
+	}
+	prof, err := e.illuminaProfile()
+	if err != nil {
+		return types.InsertSizeSpec{}, err
+	}
+	return prof.InsertSize, nil
 }
 
 // binnedQualities reports whether reads get Illumina binned qualities.
@@ -109,7 +138,11 @@ func (e *Engine) qualityModel() (func(r *rand.Rand, seq []byte, n, mate, class i
 		return func(r *rand.Rand, _ []byte, n, _, _ int) []byte { return m.Qualities(r, n) }, nil
 	}
 	if e.binnedQualities() {
-		r1, r2 := illumina.ParamsFor(1), illumina.ParamsFor(2)
+		prof, err := e.illuminaProfile()
+		if err != nil {
+			return nil, err
+		}
+		r1, r2 := prof.Read1, prof.Read2
 		return func(r *rand.Rand, seq []byte, n, mate, class int) []byte {
 			q := r1
 			if mate == 2 {
@@ -142,10 +175,14 @@ func (e *Engine) qualityModel() (func(r *rand.Rand, seq []byte, n, mate, class i
 // the mates' qualities are drawn independently (single-end reads, models
 // other than binned Illumina qualities). It draws one value from r.
 func (e *Engine) pairClasses() func(r *rand.Rand) [2]int {
-	if !e.config.PairedEnd || !e.binnedQualities() || !illumina.NovaSeqPairs.Coupled() {
+	if !e.config.PairedEnd || !e.binnedQualities() {
 		return nil
 	}
-	pp := illumina.NovaSeqPairs
+	prof, err := e.illuminaProfile()
+	if err != nil || !prof.Pairs.Coupled() {
+		return nil // an unknown profile fails in qualityModel
+	}
+	pp := prof.Pairs
 	return func(r *rand.Rand) [2]int {
 		k1, k2 := pp.Classes(r.Float64())
 		return [2]int{k1, k2}
@@ -155,7 +192,8 @@ func (e *Engine) pairClasses() func(r *rand.Rand) [2]int {
 // errorModel returns the sequencing-error model, or nil for none: the ONT
 // tier model when a tier is set (qualities are kept as baselines and
 // penalised at and next to errors, see package errmodel), else, on
-// Illumina with errors "quality", quality-matched substitutions.
+// Illumina with errors "quality", quality-matched substitutions (the
+// profile's, for binned qualities).
 func (e *Engine) errorModel() (func(r *rand.Rand, seq, qual []byte) ([]byte, []byte), error) {
 	m, err := e.tierModel()
 	if err != nil {
@@ -165,7 +203,14 @@ func (e *Engine) errorModel() (func(r *rand.Rand, seq, qual []byte) ([]byte, []b
 		return m.ApplyQualities, nil
 	}
 	if !e.isONT() && e.illuminaSpec().Errors == types.IlluminaErrorsQuality {
-		return illumina.ApplyErrors, nil
+		if !e.binnedQualities() {
+			return illumina.ApplyErrors, nil
+		}
+		prof, err := e.illuminaProfile()
+		if err != nil {
+			return nil, err
+		}
+		return prof.Errors.Apply, nil
 	}
 	return nil, nil
 }

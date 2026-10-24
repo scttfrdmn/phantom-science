@@ -26,9 +26,15 @@ func binIndex(q byte) int {
 }
 
 // The class weights sum to 1 and the weighted class factors average to 1,
-// so the class mixture has the mean per-cycle fractions.
+// so the class mixture has the mean per-cycle fractions (every profile).
 func TestQualityParams_ClassesNormalised(t *testing.T) {
-	for mate, p := range []QualityParams{Read1, Read2} {
+	for _, pr := range profiles {
+		testClassesNormalised(t, pr)
+	}
+}
+
+func testClassesNormalised(t *testing.T, pr *Profile) {
+	for mate, p := range []QualityParams{pr.Read1, pr.Read2} {
 		var w, low, mid float64
 		for _, k := range p.Classes {
 			w += k.Weight
@@ -37,11 +43,11 @@ func TestQualityParams_ClassesNormalised(t *testing.T) {
 		}
 		for name, v := range map[string]float64{"weights": w, "Q11 factors": low, "Q25 factors": mid} {
 			if math.Abs(v-1) > 1e-4 {
-				t.Errorf("read %d: %s sum to %.6f, want 1", mate+1, name, v)
+				t.Errorf("%s read %d: %s sum to %.6f, want 1", pr.Name, mate+1, name, v)
 			}
 		}
 		if len(p.Low) != len(p.Knots) || len(p.Mid) != len(p.Knots) {
-			t.Errorf("read %d: %d knots, %d/%d values", mate+1, len(p.Knots), len(p.Low), len(p.Mid))
+			t.Errorf("%s read %d: %d knots, %d/%d values", pr.Name, mate+1, len(p.Knots), len(p.Low), len(p.Mid))
 		}
 	}
 }
@@ -221,9 +227,15 @@ func TestApplyErrors_RateAndSpectrum(t *testing.T) {
 }
 
 // The base factors average to 1 over the human base composition and each
-// row of the substitution matrix is a distribution over the other bases.
+// row of the substitution matrix is a distribution over the other bases
+// (every profile).
 func TestErrorParams_Normalised(t *testing.T) {
-	e := NovaSeqErrors
+	for _, pr := range profiles {
+		testErrorsNormalised(t, pr.Name, pr.Errors)
+	}
+}
+
+func testErrorsNormalised(t *testing.T, name string, e ErrorParams) {
 	comp := [4]float64{0.295, 0.205, 0.205, 0.295}
 	m := 0.0
 	for x, f := range e.BaseFactor {
@@ -231,16 +243,16 @@ func TestErrorParams_Normalised(t *testing.T) {
 		s := 0.0
 		for y, w := range e.Matrix[x] {
 			if y == x && w != 0 {
-				t.Errorf("Matrix[%c][%c] = %v, want 0", acgt[x], acgt[y], w)
+				t.Errorf("%s: Matrix[%c][%c] = %v, want 0", name, acgt[x], acgt[y], w)
 			}
 			s += w
 		}
 		if math.Abs(s-1) > 1e-4 {
-			t.Errorf("Matrix row %c sums to %v", acgt[x], s)
+			t.Errorf("%s: Matrix row %c sums to %v", name, acgt[x], s)
 		}
 	}
 	if math.Abs(m-1) > 1e-4 {
-		t.Errorf("base factors average to %v over the human composition", m)
+		t.Errorf("%s: base factors average to %v over the human composition", name, m)
 	}
 }
 

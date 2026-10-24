@@ -1,0 +1,9 @@
+key	value
+name	novaseq6000-err15600747
+accession	ERR15600747
+study	PRJEB97783
+instrument	Illumina NovaSeq 6000
+center	European Bioinformatics Institute;SOTON
+library	Peripheral blood mononuclear cell samples via venipuncture Qiagne DNeasy column extraction Agilent SureSelect QXT whole genome library preparation kit
+pairs	200000
+results	scripts/acceptance/calibrate/illumina/results/profiles/ERR15600747

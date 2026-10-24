@@ -1,0 +1,10 @@
+key	value
+source	local files ERR15600747_1.fastq, ERR15600747_2.fastq (stated to be ERR15600747)
+reads_per_mate	200000
+reads_md5	7992b99621cde9121271dc1e2ad43db5,89d645ed8d00d83b5967baf45830af5c
+reference	hg38.primary.fa
+reference_sequences	24
+aligner	minimap2 2.31-r1302 (-ax sr --MD)
+samtools	samtools 1.24
+python	Python 3.15.0
+date	2026-10-24

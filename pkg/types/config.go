@@ -219,9 +219,11 @@ const (
 	InsertSizeLognormal   = "lognormal"
 	// The default insert size is lognormal with the mean and SD measured on
 	// proper pairs of NovaSeq 6000 run DRR276626 aligned to GRCh38 (454.5 ±
-	// 99.8, right-skewed; scripts/acceptance/illumina_calibrate.sh). Insert
-	// size is a property of the library preparation, not the instrument: set
-	// illumina.insert_size for other libraries.
+	// 99.8, right-skewed; scripts/acceptance/illumina_calibrate.sh), the run
+	// of the default profile. Insert size is a property of the library
+	// preparation, not the instrument: another illumina.profile brings its
+	// run's insert sizes, and illumina.insert_size sets them for other
+	// libraries.
 	DefaultInsertSizeMean  = 455.0
 	DefaultInsertSizeSD    = 100.0
 	maxInsertSizeParameter = 1 << 20
@@ -231,10 +233,17 @@ const (
 type IlluminaSpec struct {
 	// QualityModel is "binned" (the default when empty): qualities in the
 	// four values NovaSeq 6000 writes (Q2, Q11, Q25, Q37), from a model
-	// fitted to NovaSeq 6000 run DRR276626 (package illumina); Q2 marks a
-	// no-call. "linear" keeps the earlier model, BaseQuality −
+	// fitted to a real NovaSeq 6000 run (Profile; package illumina); Q2
+	// marks a no-call. "linear" keeps the earlier model, BaseQuality −
 	// cycle·QualityDecay, and the earlier output.
 	QualityModel string `json:"quality_model,omitempty" yaml:"quality_model,omitempty"`
+	// Profile selects the run the binned model is fitted to (#35), e.g.
+	// "novaseq6000-drr276626" (the default when empty),
+	// "novaseq6000-drr394916" or "novaseq6000-err15600747": its qualities,
+	// mate coupling, substitution errors and, unless InsertSize is set,
+	// insert sizes. Names are checked by the engine
+	// (illumina.ProfileNames); it needs quality_model binned.
+	Profile string `json:"profile,omitempty" yaml:"profile,omitempty"`
 	// Errors is "quality" or "none". "quality" substitutes bases at the
 	// measured rate of their quality and cycle and writes Q2 bases as N
 	// (with the linear model, at 10^(−Q/10)); "none" leaves bases
@@ -242,6 +251,8 @@ type IlluminaSpec struct {
 	// for the linear one.
 	Errors string `json:"errors,omitempty" yaml:"errors,omitempty"`
 	// InsertSize is the fragment-length distribution of paired-end reads.
+	// Unset, the binned model uses its profile's measured distribution (the
+	// default profile's is the WithDefaults default).
 	InsertSize InsertSizeSpec `json:"insert_size,omitzero" yaml:"insert_size,omitempty"`
 }
 

@@ -1,13 +1,19 @@
 #!/usr/bin/env bash
 # Calibration (#27): measure real NovaSeq 6000 reads and fit the Illumina
-# quality and error model of internal/genomics/illumina to them.
+# quality and error model of internal/genomics/illumina to them: one run
+# profile (#35, illumina.profile) per run.
 #
 # Usage:
 #   scripts/acceptance/illumina_calibrate.sh REFERENCE.fa [READS_1.fastq READS_2.fastq]
 #
 # REFERENCE is GRCh38 (hg38), FASTA; minimap2 indexes it on the fly (about
-# 4 minutes and 10 GB of memory). Without read files the first PAIRS read
-# pairs of ENA run ACCESSION are downloaded. Steps:
+# 4 minutes and 10 GB of memory) unless MMI names a prebuilt index
+# (minimap2 -x sr -d). Without read files the first PAIRS read pairs of ENA
+# run ACCESSION are downloaded. The run's ENA metadata (instrument, centre,
+# library protocol, study) describe the profile (RESULTS/profile.tsv); a
+# run that is not an Illumina NovaSeq 6000 run, or whose first 10,000
+# quality lines use other characters than the binned '#', ',', ':', 'F'
+# (SRA-Lite runs have '?' and '$'), is rejected. Steps:
 #   1. quality alphabet, per-cycle quality frequencies, transitions, run
 #      lengths, per-read composition and N calls of both mates;
 #   2. minimap2 -ax sr alignment; substitution rate per quality and cycle,
@@ -19,17 +25,22 @@
 #      calls expected without a context effect; class posteriors by read GC
 #      and longest homopolymer (#35); the joint read classes of the two
 #      mates of a pair and the measured mate coupling (#35);
-#   5. the model fit, written to RESULTS/fit.tsv and to GO_OUT (gofmt'd),
-#      with the measured quality by base and context in
+#   5. the model fit, written to RESULTS/fit.tsv and to GO_OUT (gofmt'd,
+#      the run's Profile), with the measured quality by base and context in
 #      RESULTS/context_summary.tsv.
 #
-# Environment (defaults in brackets):
+# Environment (defaults in brackets; acc is ACCESSION in lower case):
 #   ACCESSION [DRR276626]  PAIRS [200000]  THREADS [8]
-#   RESULTS   [scripts/acceptance/calibrate/illumina/results]
-#   GO_OUT    [internal/genomics/illumina/calibration.go]
+#   PROFILE   [novaseq6000-acc], the profile's name
+#   RESULTS   [scripts/acceptance/calibrate/illumina/results for DRR276626,
+#             else scripts/acceptance/calibrate/illumina/results/profiles/ACCESSION]
+#   GO_OUT    [internal/genomics/illumina/profile_acc.go]
+#   MMI       [none: index REFERENCE on the fly]
 #   WORK      [a new temporary directory, removed at exit unless KEEP_WORK=1]
-# Run from the repository root. Needs curl and gzip (download only),
-# minimap2, samtools and python3 (standard library only).
+# A new profile must be added to the profiles list in
+# internal/genomics/illumina/profiles.go. Run from the repository root.
+# Needs curl and gzip (ENA metadata and download), minimap2, samtools and
+# python3 (standard library only).
 set -euo pipefail
 
 die() { echo "illumina_calibrate.sh: $*" >&2; exit 1; }
@@ -37,15 +48,22 @@ die() { echo "illumina_calibrate.sh: $*" >&2; exit 1; }
 [[ $# -eq 1 || $# -eq 3 ]] || die "usage: $0 REFERENCE.fa [READS_1.fastq READS_2.fastq]"
 ref="$1"
 [[ -s "$ref" ]] || die "reference $ref not found"
-for tool in minimap2 samtools python3; do
+for tool in curl gzip minimap2 samtools python3; do
 	command -v "$tool" >/dev/null 2>&1 || die "$tool not found on PATH"
 done
 
 accession="${ACCESSION:-DRR276626}"
+acc="$(tr '[:upper:]' '[:lower:]' <<<"$accession")"
 pairs="${PAIRS:-200000}"
 threads="${THREADS:-8}"
-results="${RESULTS:-scripts/acceptance/calibrate/illumina/results}"
-go_out="${GO_OUT:-internal/genomics/illumina/calibration.go}"
+profile="${PROFILE:-novaseq6000-$acc}"
+default_results=scripts/acceptance/calibrate/illumina/results
+if [[ "$accession" != DRR276626 ]]; then
+	default_results="$default_results/profiles/$accession"
+fi
+results="${RESULTS:-$default_results}"
+go_out="${GO_OUT:-internal/genomics/illumina/profile_$acc.go}"
+target="${MMI:-$ref}"
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 stats="$here/calibrate/illumina/illumina_stats.py"
 fit="$here/calibrate/illumina/fit_illumina.py"
@@ -65,7 +83,21 @@ cleanup() {
 trap cleanup EXIT
 
 ena_api="https://www.ebi.ac.uk/ena/portal/api/filereport"
-fields="run_accession,instrument_model,library_layout,library_strategy,nominal_length,read_count,base_count,fastq_ftp,study_title"
+fields="run_accession,instrument_model,library_layout,library_strategy,nominal_length,read_count,base_count,fastq_ftp,study_title,study_accession,center_name,library_construction_protocol"
+report="$work/ena.tsv"
+curl -fsS "$ena_api?accession=$accession&result=read_run&fields=$fields&format=tsv" -o "$report" ||
+	die "ENA file report for $accession failed"
+# meta FIELD: the value of FIELD in the ENA report.
+meta() { awk -F'\t' -v k="$1" 'NR == 1 { for (i = 1; i <= NF; i++) c[$i] = i } NR == 2 { print $c[k] }' "$report"; }
+[[ "$(meta instrument_model)" == "Illumina NovaSeq 6000" ]] || die "$accession is $(meta instrument_model), not Illumina NovaSeq 6000"
+[[ "$(meta library_layout)" == PAIRED ]] || die "$accession is not paired"
+library="$(meta library_construction_protocol)"
+if [[ -z "$library" ]]; then
+	library="not recorded"
+	if [[ -n "$(meta nominal_length)" ]]; then
+		library="$library (nominal insert $(meta nominal_length))"
+	fi
+fi
 
 if [[ $# -eq 3 ]]; then
 	r1="$2"
@@ -73,13 +105,7 @@ if [[ $# -eq 3 ]]; then
 	[[ -s "$r1" && -s "$r2" ]] || die "read files $r1 / $r2 missing or empty"
 	source="local files $(basename "$r1"), $(basename "$r2") (stated to be $accession)"
 else
-	for tool in curl gzip; do
-		command -v "$tool" >/dev/null 2>&1 || die "$tool not found on PATH"
-	done
-	report="$work/ena.tsv"
-	curl -fsS "$ena_api?accession=$accession&result=read_run&fields=$fields&format=tsv" -o "$report" ||
-		die "ENA file report for $accession failed"
-	urls="$(awk -F'\t' 'NR == 2 { print $8 }' "$report")"
+	urls="$(meta fastq_ftp)"
 	[[ "$urls" == *";"* ]] || die "$accession has no paired FASTQ files at ENA"
 	r1="$work/${accession}_1.fastq"
 	r2="$work/${accession}_2.fastq"
@@ -93,14 +119,29 @@ else
 		{ curl -fsS "$url" | gzip -dc | head -n "$lines" >"$out"; } || true
 		[[ "$(wc -l <"$out" | tr -d ' ')" -eq "$lines" ]] || die "download of $url gave fewer than $pairs reads"
 	done
-	source="ENA $accession, first $pairs read pairs ($(awk -F'\t' 'NR == 2 { print $2 ", " $3 " " $4 ", nominal insert " $5 }' "$report"))"
+	source="ENA $accession, first $pairs read pairs ($(meta instrument_model), $(meta library_layout) $(meta library_strategy), nominal insert $(meta nominal_length))"
 fi
+for r in "$r1" "$r2"; do
+	a="$(awk 'NR % 4 == 0 && NR <= 40000' "$r" | fold -w1 | sort -u | tr -d '\n')"
+	[[ "$a" =~ ^[#,:F]+$ ]] || die "$r: quality alphabet '$a' is not NovaSeq binned qualities (#,:F); SRA-Lite?"
+done
+{
+	printf 'key\tvalue\n'
+	printf 'name\t%s\n' "$profile"
+	printf 'accession\t%s\n' "$accession"
+	printf 'study\t%s\n' "$(meta study_accession)"
+	printf 'instrument\t%s\n' "$(meta instrument_model)"
+	printf 'center\t%s\n' "$(meta center_name)"
+	printf 'library\t%s\n' "$library"
+	printf 'pairs\t%s\n' "$(($(wc -l <"$r1") / 4))"
+	printf 'results\t%s\n' "$results"
+} >"$results/profile.tsv"
 
 echo "Measuring qualities ..."
 python3 -I "$stats" fastq "$results" "$r1" "$r2"
 
-echo "Aligning to $ref with minimap2 -ax sr (indexing on the fly) ..."
-minimap2 -ax sr --MD -t "$threads" "$ref" "$r1" "$r2" 2>"$work/minimap2.log" |
+echo "Aligning to $target with minimap2 -ax sr ..."
+minimap2 -ax sr --MD -t "$threads" "$target" "$r1" "$r2" 2>"$work/minimap2.log" |
 	samtools view -b -o "$work/aln.bam" -
 echo "Measuring errors and insert sizes ..."
 samtools view "$work/aln.bam" | python3 -I "$stats" sam "$results"

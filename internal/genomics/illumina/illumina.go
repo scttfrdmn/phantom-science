@@ -3,13 +3,41 @@
 // (fragment) sizes. Every function draws only from the *rand.Rand it is
 // given, so output is a pure function of the caller's seed.
 //
-// The default parameters (calibration.go) are fitted to real data: the
-// first 200,000 read pairs (2×151) of ENA run DRR276626, Illumina NovaSeq
-// 6000, human whole-genome sequencing, aligned to GRCh38 with minimap2.
+// The parameters are fitted to real data, one Profile per run (#35): the
+// first 200,000 read pairs of an ENA run, Illumina NovaSeq 6000, human
+// whole-genome sequencing, aligned to GRCh38 with minimap2.
 // scripts/acceptance/illumina_calibrate.sh downloads the reads, measures
-// them and regenerates calibration.go; the measured tables are committed in
-// scripts/acceptance/calibrate/illumina/results and the tests compare the
-// model with them.
+// them and writes the run's profile_<accession>.go; the measured tables are
+// committed in scripts/acceptance/calibrate/illumina/results (DRR276626)
+// and results/profiles/<accession>, and the tests compare each profile
+// with its run.
+//
+// # Run profiles
+//
+// NovaSeq 6000 runs differ in their qualities more than the model's
+// sequence-level effects: the quality level, the share of Q11, how often
+// the quality changes between cycles and the Q37 error rate are properties
+// of the run (results/heldout/calibration_stats.tsv), and the insert size
+// is the library's. So the whole model (per-cycle curves, read classes and
+// their mate coupling, stickiness, context factors, substitution model and
+// insert sizes) is fitted to each run by the same pipeline, and selected by
+// name (illumina.profile):
+//
+//   - novaseq6000-drr276626 (the default; the model of earlier releases):
+//     DRR276626, SAGA_U, library not recorded, 2×151; mean Q 36.22 / 36.08
+//     (read 1 / read 2), 95.4 % / 94.7 % at Q30 or more, Q11 1.6 % / 2.0 %,
+//     insert median 446;
+//   - novaseq6000-drr394916: DRR394916, NCCHD, TruSeq DNA PCR-Free, 2×151;
+//     mean Q 35.29 / 34.60, 90.3 % / 86.9 %, Q11 4.0 % / 6.0 %, insert
+//     median 559;
+//   - novaseq6000-err15600747: ERR15600747, EBI / Southampton, Agilent
+//     SureSelect QXT, 2×150; mean Q 34.57 / 34.31, 86.5 % / 85.5 %, Q11
+//     5.8 % / 6.8 %, insert median 361.
+//
+// The insert size belongs to the profile because a profile reproduces one
+// run, and the run's library is part of it; illumina.insert_size overrides
+// it. The figures in the rest of this documentation are the default
+// profile's.
 //
 // # Qualities
 //
@@ -98,8 +126,10 @@
 // bases have one rate, 3.2·10⁻⁴ (Phred 35, not 37). Q25 and Q11 bases get
 // worse along the read: e(c) = late − (late − early)·exp(−(c−1)/τ), Q11
 // from 2.9 % at cycle 1 to 8.3 % at cycle 150 (Phred Q11 is 7.9 %), Q25
-// from 0.07 % to 0.25 % (Phred Q25 is 0.32 %). The rate also depends on the
-// base: C and T are miscalled more often than A and G (BaseFactor), and the
+// from 0.07 % to 0.25 % (Phred Q25 is 0.32 %); in DRR394916 and
+// ERR15600747 Q25 rises ever faster (τ < 0), from 0.13 % and 0.07 % to
+// 0.72 % and 0.85 %. The rate also depends on the base: C and T are
+// miscalled more often than A and G (BaseFactor), and the
 // substituted base follows the measured spectrum (Matrix: C→A, G→T, T→A,
 // T→G and A→C dominate; C→T and T→C are rare), both measured from Q11
 // mismatches, of which about 99 % are sequencing errors, and applied to
@@ -109,9 +139,13 @@
 //
 // # Limitations
 //
-// The reads come from one tile of one lane of one run and one library;
-// other runs, instruments (NovaSeq X uses other bins) and read lengths are
-// not measured. Beyond 151 cycles the curves are extrapolated. The context
+// Each profile's reads come from the first tile of one lane of one run and
+// one library; other instruments (NovaSeq X uses other bins) and read
+// lengths are not measured, and a profile is a copy of its run, not a
+// model of how runs vary. Beyond 151 cycles (150 for ERR15600747) the
+// curves are extrapolated. In the lower-quality runs read 2's G calls are
+// poorer than the model makes them (mean Q of G 0.20 lower in DRR394916,
+// 0.33 in ERR15600747), a read-level effect the classes do not carry. The context
 // factors do not change with cycle (some do in the real reads: after GG on
 // read 2 the excess of Q11 is largest in the first 30 cycles). A read's
 // class does not depend on its sequence, but real reads that are GC-rich
@@ -174,7 +208,8 @@ type ContextFactors struct {
 	Low, Mid [256]float64
 	// ext[e] holds the Low and Mid factors of a context with unknown
 	// positions (past the read's ends, or not A/C/G/T), averaged over the
-	// contexts that match its known bases with weights contextFreq; e is
+	// contexts that match its known bases, weighted by the context
+	// frequencies of the measured reads (NewContextFactors); e is
 	// 125·s(−2) + 25·s(−1) + 5·s(0) + s(+1) with s = 4 for unknown. For
 	// fully known contexts it holds Low and Mid.
 	ext [625][2]float64
@@ -182,8 +217,9 @@ type ContextFactors struct {
 
 // NewContextFactors returns the factors low and mid (indexed by
 // ContextIndex) with the averages for contexts with unknown bases
-// precomputed.
-func NewContextFactors(low, mid [256]float64) *ContextFactors {
+// precomputed, weighted by the context frequencies freq of the reads they
+// were measured on.
+func NewContextFactors(freq *[256]float64, low, mid [256]float64) *ContextFactors {
 	f := &ContextFactors{Low: low, Mid: mid}
 	for e := range f.ext {
 		s := [4]int{e / 125, e / 25 % 5, e / 5 % 5, e % 5}
@@ -194,7 +230,7 @@ func NewContextFactors(low, mid [256]float64) *ContextFactors {
 				(s[2] != 4 && s[2] != d[2]) || (s[3] != 4 && s[3] != d[3]) {
 				continue
 			}
-			pi := contextFreq[x]
+			pi := freq[x]
 			l += float64(pi * low[x])
 			m += float64(pi * mid[x])
 			w += pi
@@ -266,14 +302,6 @@ type QualityParams struct {
 	StickLow, StickMid float64
 	// NoCall is P(Q2) per base.
 	NoCall float64
-}
-
-// ParamsFor returns the default quality parameters of mate (1 or 2).
-func ParamsFor(mate int) QualityParams {
-	if mate == 2 {
-		return Read2
-	}
-	return Read1
 }
 
 // curve evaluates the piecewise-linear curve vals over p.Knots at 1-based
@@ -498,7 +526,9 @@ type ErrorParams struct {
 	// High is the rate of Q37 bases.
 	High float64
 	// Q25 and Q11 rates at cycle c (1-based):
-	// late − (late − early)·exp(−(c−1)/tau).
+	// late − (late − early)·exp(−(c−1)/tau), at least 0. A negative tau
+	// is a rate that grows ever faster along the read (convex); late is
+	// then not a late-cycle rate but the asymptote towards early cycles.
 	MidEarly, MidLate, MidTau float64
 	LowEarly, LowLate, LowTau float64
 	// BaseFactor multiplies the rate of a base (A, C, G, T); it averages to
@@ -518,9 +548,9 @@ func (e ErrorParams) Rate(q byte, c int) float64 {
 	case QHigh:
 		return e.High
 	case QMid:
-		return e.MidLate - float64((e.MidLate-e.MidEarly)*detmath.Exp(-x/e.MidTau))
+		return max(0, e.MidLate-float64((e.MidLate-e.MidEarly)*detmath.Exp(-x/e.MidTau)))
 	case QLow:
-		return e.LowLate - float64((e.LowLate-e.LowEarly)*detmath.Exp(-x/e.LowTau))
+		return max(0, e.LowLate-float64((e.LowLate-e.LowEarly)*detmath.Exp(-x/e.LowTau)))
 	}
 	return ErrorProb(q)
 }

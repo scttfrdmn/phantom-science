@@ -11,9 +11,15 @@ import (
 // weights of each mate, so coupling the mates leaves each mate's class
 // mixture (and so its per-cycle fractions and mean quality) unchanged.
 func TestPairs_MarginsAreClassWeights(t *testing.T) {
-	pp := NovaSeqPairs
+	for _, pr := range profiles {
+		t.Run(pr.Name, func(t *testing.T) { testPairMargins(t, pr) })
+	}
+}
+
+func testPairMargins(t *testing.T, pr *Profile) {
+	pp, Read1, Read2 := pr.Pairs, pr.Read1, pr.Read2
 	if !pp.Coupled() {
-		t.Fatal("NovaSeqPairs is not coupled")
+		t.Fatal("the mates' classes are not coupled")
 	}
 	if len(pp.Joint) != len(Read1.Classes) {
 		t.Fatalf("%d rows, want %d (read 1 classes)", len(pp.Joint), len(Read1.Classes))
@@ -63,22 +69,27 @@ func TestPairs_ClassesFollowJoint(t *testing.T) {
 	}
 }
 
-// Pairs drawn with the joint classes have the measured coupling of
-// DRR276626's mates (#35): the correlation of their Q2 + Q11 + Q25 counts
+// Pairs drawn with the joint classes have the measured coupling of the
+// profile's run (#35): the correlation of the mates' Q2 + Q11 + Q25 counts
 // and of their Q2 + Q11 counts (Phred < 20) within 0.03 of the measured
-// (results/pair_summary.tsv), where independent mates have none; and each
-// mate keeps its mean quality (within 0.01 of the independent draw).
+// (pair_summary.tsv), where independent mates have none; and each mate
+// keeps its mean quality (within 4 standard errors of the independent
+// draw).
 func TestCalibration_MateCouplingMatchesNovaSeq(t *testing.T) {
+	forProfiles(t, testMateCoupling)
+}
+
+func testMateCoupling(t *testing.T, pr *Profile) {
 	want := map[string]float64{}
 	for _, r := range readTSV(t, "pair_summary.tsv") {
 		want[r["key"]] = num(t, r["value"])
 	}
 	loadReadCells(t)
 	const pairs = 60000
-	const n = 151
+	n := pr.Run.ReadLength
 	type set struct {
 		low30, low20 [2][]float64
-		sum          [2]float64
+		sum, sumSq   [2]float64 // of the reads' mean Q
 	}
 	draw := func(coupled bool) set {
 		var s set
@@ -86,13 +97,13 @@ func TestCalibration_MateCouplingMatchesNovaSeq(t *testing.T) {
 		for range pairs {
 			k := [2]int{-1, -1}
 			if coupled {
-				k[0], k[1] = NovaSeqPairs.Classes(r.Float64())
+				k[0], k[1] = pr.Pairs.Classes(r.Float64())
 			}
-			for m, p := range []QualityParams{Read1, Read2} {
+			for m, p := range []QualityParams{pr.Read1, pr.Read2} {
 				q := p.QualitiesForClass(r, humanBasesMate(sr, n, m), k[m])
-				var a, b float64
+				var a, b, sq float64
 				for _, v := range q {
-					s.sum[m] += float64(v)
+					sq += float64(v)
 					if v < 30 {
 						a++
 					}
@@ -100,6 +111,9 @@ func TestCalibration_MateCouplingMatchesNovaSeq(t *testing.T) {
 						b++
 					}
 				}
+				sq /= float64(n)
+				s.sum[m] += sq
+				s.sumSq[m] += sq * sq
 				s.low30[m] = append(s.low30[m], a)
 				s.low20[m] = append(s.low20[m], b)
 			}
@@ -123,9 +137,11 @@ func TestCalibration_MateCouplingMatchesNovaSeq(t *testing.T) {
 		}
 	}
 	for m := range 2 {
-		a, b := c.sum[m]/(pairs*n), ind.sum[m]/(pairs*n)
-		t.Logf("read %d: mean Q coupled %.4f, independent %.4f", m+1, a, b)
-		if math.Abs(a-b) > 0.01 {
+		a, b := c.sum[m]/pairs, ind.sum[m]/pairs
+		sd := math.Sqrt(ind.sumSq[m]/pairs - b*b) // of a read's mean Q
+		tol := 4 * sd * math.Sqrt(2.0/pairs)
+		t.Logf("read %d: mean Q coupled %.4f, independent %.4f (tolerance %.4f)", m+1, a, b, tol)
+		if math.Abs(a-b) > tol {
 			t.Errorf("read %d: mean Q %.4f with coupled classes, %.4f independent", m+1, a, b)
 		}
 	}

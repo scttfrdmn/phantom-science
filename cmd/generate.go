@@ -11,6 +11,7 @@ import (
 
 	"github.com/scttfrdmn/phantom-science/internal/cli"
 	"github.com/scttfrdmn/phantom-science/internal/genomics"
+	"github.com/scttfrdmn/phantom-science/internal/genomics/illumina"
 	"github.com/scttfrdmn/phantom-science/internal/storage/s3sink"
 	"github.com/scttfrdmn/phantom-science/pkg/types"
 	"github.com/spf13/cobra"
@@ -101,8 +102,9 @@ func init() {
 	f.String("basecaller-tier", "", "ONT basecaller tier for the error model: sup, hac or fast (platform ont only)")
 	f.String("quality-model", "", "Illumina quality model: binned (default; NovaSeq 6000 bins Q2/Q11/Q25/Q37, fitted to run DRR276626) or linear (base_quality - cycle*quality_decay)")
 	f.String("illumina-errors", "", "Illumina sequencing errors: quality (default for binned; substitutions at 10^(-Q/10), Q2 as N) or none")
-	f.Float64("insert-size-mean", 0, "Mean paired-end insert (fragment) size in bases (default 350)")
-	f.Float64("insert-size-sd", 0, "Standard deviation of the paired-end insert size (default 50)")
+	f.String("illumina-profile", "", "Illumina run profile of the binned model: "+strings.Join(illumina.ProfileNames(), ", ")+" (default "+illumina.DefaultProfile+")")
+	f.Float64("insert-size-mean", 0, "Mean paired-end insert (fragment) size in bases (default: the profile's measured insert sizes, 455 for the default profile)")
+	f.Float64("insert-size-sd", 0, "Standard deviation of the paired-end insert size (default: the profile's, 100 for the default profile)")
 	f.String("compress", "", "Output compression: none (default) or gzip")
 	addScaleFlags(f)
 	f.Int64("total-reads", 0, "Target number of reads (read pairs for paired-end) per flow cell, replacing total_batches")
@@ -263,6 +265,9 @@ func applyGenerateFlags(cmd *cobra.Command, config *types.SequencerConfig) error
 	}
 	if set("quality-model") {
 		config.Illumina.QualityModel, _ = flags.GetString("quality-model")
+	}
+	if set("illumina-profile") {
+		config.Illumina.Profile, _ = flags.GetString("illumina-profile")
 	}
 	if set("illumina-errors") {
 		config.Illumina.Errors, _ = flags.GetString("illumina-errors")

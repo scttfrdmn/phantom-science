@@ -112,6 +112,9 @@ type PlatformConfig struct {
 	// empty or "binned" (the model fitted to NovaSeq 6000 run DRR276626),
 	// or "linear" (BaseQuality − cycle·QualityDecay).
 	IlluminaQualityModel string
+	// IlluminaProfile is SequencerConfig.Illumina.Profile: the run the
+	// binned model is fitted to (empty: the default, DRR276626).
+	IlluminaProfile string
 
 	// ReferencePath and ReferenceRegion are SequencerConfig.ReferencePath
 	// and ReferenceRegion: with a reference FASTA every read is a fragment
@@ -155,7 +158,7 @@ func (c *PlatformConfig) sequencerConfig() types.SequencerConfig {
 		Population:             c.Population,
 		ErrorModel:             types.ErrorModelSpec{Tier: c.ErrorTier},
 		ReadLengthDistribution: c.ReadLengthDistribution,
-		Illumina:               types.IlluminaSpec{QualityModel: c.IlluminaQualityModel},
+		Illumina:               types.IlluminaSpec{QualityModel: c.IlluminaQualityModel, Profile: c.IlluminaProfile},
 		ReferencePath:          c.ReferencePath,
 		ReferenceRegion:        c.ReferenceRegion,
 		PairedEnd:              c.PairedEnd,
@@ -199,6 +202,7 @@ func (c *PlatformConfig) AlternativeQualityModel() *PlatformConfig {
 			out.IlluminaQualityModel = types.IlluminaQualityBinned
 		} else {
 			out.IlluminaQualityModel = types.IlluminaQualityLinear
+			out.IlluminaProfile = "" // profiles are binned models
 		}
 	}
 	return out

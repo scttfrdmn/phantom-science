@@ -2,84 +2,88 @@
 
 package illumina
 
-// Parameters fitted to the first 200,000 read pairs (2x151) of ENA run
-// DRR276626 (Illumina NovaSeq 6000, human WGS); see
+import "github.com/scttfrdmn/phantom-science/pkg/types"
+
+// profileDRR276626 is fitted to the first 200,000 read pairs (2x151) of ENA
+// run DRR276626 (Illumina NovaSeq 6000, human WGS); see
 // scripts/acceptance/illumina_calibrate.sh and the measured tables in
 // scripts/acceptance/calibrate/illumina/results.
-
-// novaSeqKnots are the cycles (1-based) of the piecewise-linear low-bin
-// curves.
-var novaSeqKnots = []int{1, 2, 3, 4, 6, 10, 15, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 135, 150}
-
-// Read1 is the quality model of read 1 (of single-end reads too).
-var Read1 = QualityParams{
-	Knots:    novaSeqKnots,
-	Low:      []float64{0.014875, 0.00918, 0.00724, 0.00631376, 0.00538122, 0.00554634, 0.00575156, 0.00586203, 0.00826547, 0.00985244, 0.0109777, 0.0124562, 0.0141916, 0.0160271, 0.0178394, 0.0189086, 0.021477, 0.0238982, 0.0256994, 0.0318118},
-	Mid:      []float64{0.023735, 0.019985, 0.0188, 0.017879, 0.016455, 0.0185815, 0.0188399, 0.0191177, 0.021487, 0.0227524, 0.0236004, 0.0256408, 0.0267817, 0.0296012, 0.0312875, 0.032474, 0.0360606, 0.0387277, 0.0411353, 0.049153},
-	FinalLow: 1.2314, FinalMid: 1.26088,
-	Classes: []ReadClass{
-		{Weight: 0.536657, Low: 0.091681, Mid: 0.336895, Context: read1Context[0]},
-		{Weight: 0.311489, Low: 0.440265, Mid: 0.997607, Context: read1Context[1]},
-		{Weight: 0.0804472, Low: 1.69391, Mid: 2.37948, Context: read1Context[2]},
-		{Weight: 0.0391483, Low: 4.87423, Mid: 4.16336, Context: read1Context[3]},
-		{Weight: 0.0225982, Low: 11.4768, Mid: 5.00155, Context: read1Context[4]},
-		{Weight: 0.00966001, Low: 23.5214, Mid: 4.24661, Context: read1Context[5]},
+var profileDRR276626 = Profile{
+	Name: "novaseq6000-drr276626",
+	Run: RunInfo{
+		Accession: "DRR276626", Study: "PRJDB11215",
+		Instrument: "Illumina NovaSeq 6000",
+		Center:     "SAGA_U",
+		Library:    "not recorded (nominal insert 626)",
+		ReadLength: 151, Pairs: 200000,
 	},
-	StickLow: 0.0785294, StickMid: 0.0193607,
-	NoCall: 1.82119e-07,
-}
-
-// Read2 is the quality model of read 2.
-var Read2 = QualityParams{
-	Knots:    novaSeqKnots,
-	Low:      []float64{0.00753, 0.00695, 0.006665, 0.00696238, 0.00732812, 0.00776743, 0.00885698, 0.00930541, 0.0112646, 0.013465, 0.0151865, 0.0166548, 0.0187135, 0.0203323, 0.0214739, 0.0246994, 0.0269775, 0.0285948, 0.0316758, 0.0374537},
-	Mid:      []float64{0.019285, 0.019605, 0.018815, 0.0198358, 0.0186708, 0.019273, 0.0196684, 0.0205527, 0.0225036, 0.024841, 0.0265475, 0.0291375, 0.0310485, 0.0329985, 0.0337744, 0.0373308, 0.0411058, 0.041853, 0.0458126, 0.0530127},
-	FinalLow: 1.19903, FinalMid: 1.26139,
-	Classes: []ReadClass{
-		{Weight: 0.538641, Low: 0.107002, Mid: 0.400821, Context: read2Context[0]},
-		{Weight: 0.326011, Low: 0.481098, Mid: 1.09174, Context: read2Context[1]},
-		{Weight: 0.0772603, Low: 1.81859, Mid: 2.48339, Context: read2Context[2]},
-		{Weight: 0.0329935, Low: 5.6757, Mid: 3.9519, Context: read2Context[3]},
-		{Weight: 0.0180916, Low: 14.2591, Mid: 4.29465, Context: read2Context[4]},
-		{Weight: 0.00700226, Low: 28.5315, Mid: 4.03151, Context: read2Context[5]},
+	Stats: RunStats{
+		MeanQ: [2]float64{36.22, 36.08}, FracQ30: [2]float64{0.954, 0.9467},
+		FracQ11: [2]float64{0.01611, 0.02032}, FracQ25: [2]float64{0.02989, 0.03296},
+		InsertMedian: 446, InsertMean: 454.468, InsertSD: 99.8247,
 	},
-	StickLow: 0.103955, StickMid: 0.0154793,
-	NoCall: 1.82119e-07,
-}
-
-// NovaSeqPairs couples the read classes of a pair's two reads:
-// Joint[k1][k2] is the share of pairs whose read 1 is in class k1 of
-// Read1 and read 2 in class k2 of Read2 (its margins are the class
-// weights).
-var NovaSeqPairs = PairParams{
-	Joint: [][]float64{
+	Read1: QualityParams{
+		Knots:    []int{1, 2, 3, 4, 6, 10, 15, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 135, 150},
+		Low:      []float64{0.014875, 0.00918, 0.00724, 0.00631376, 0.00538122, 0.00554634, 0.00575156, 0.00586203, 0.00826547, 0.00985244, 0.0109777, 0.0124562, 0.0141916, 0.0160271, 0.0178394, 0.0189086, 0.021477, 0.0238982, 0.0256994, 0.0318118},
+		Mid:      []float64{0.023735, 0.019985, 0.0188, 0.017879, 0.016455, 0.0185815, 0.0188399, 0.0191177, 0.021487, 0.0227524, 0.0236004, 0.0256408, 0.0267817, 0.0296012, 0.0312875, 0.032474, 0.0360606, 0.0387277, 0.0411353, 0.049153},
+		FinalLow: 1.2314, FinalMid: 1.26088,
+		Classes: []ReadClass{
+			{Weight: 0.536657, Low: 0.091681, Mid: 0.336895, Context: read1ContextDRR276626[0]},
+			{Weight: 0.311489, Low: 0.440265, Mid: 0.997607, Context: read1ContextDRR276626[1]},
+			{Weight: 0.0804472, Low: 1.69391, Mid: 2.37948, Context: read1ContextDRR276626[2]},
+			{Weight: 0.0391483, Low: 4.87423, Mid: 4.16336, Context: read1ContextDRR276626[3]},
+			{Weight: 0.0225982, Low: 11.4768, Mid: 5.00155, Context: read1ContextDRR276626[4]},
+			{Weight: 0.00966001, Low: 23.5214, Mid: 4.24661, Context: read1ContextDRR276626[5]},
+		},
+		StickLow: 0.0785294, StickMid: 0.0193607,
+		NoCall: 1.82119e-07,
+	},
+	Read2: QualityParams{
+		Knots:    []int{1, 2, 3, 4, 6, 10, 15, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 135, 150},
+		Low:      []float64{0.00753, 0.00695, 0.006665, 0.00696238, 0.00732812, 0.00776743, 0.00885698, 0.00930541, 0.0112646, 0.013465, 0.0151865, 0.0166548, 0.0187135, 0.0203323, 0.0214739, 0.0246994, 0.0269775, 0.0285948, 0.0316758, 0.0374537},
+		Mid:      []float64{0.019285, 0.019605, 0.018815, 0.0198358, 0.0186708, 0.019273, 0.0196684, 0.0205527, 0.0225036, 0.024841, 0.0265475, 0.0291375, 0.0310485, 0.0329985, 0.0337744, 0.0373308, 0.0411058, 0.041853, 0.0458126, 0.0530127},
+		FinalLow: 1.19903, FinalMid: 1.26139,
+		Classes: []ReadClass{
+			{Weight: 0.538641, Low: 0.107002, Mid: 0.400821, Context: read2ContextDRR276626[0]},
+			{Weight: 0.326011, Low: 0.481098, Mid: 1.09174, Context: read2ContextDRR276626[1]},
+			{Weight: 0.0772603, Low: 1.81859, Mid: 2.48339, Context: read2ContextDRR276626[2]},
+			{Weight: 0.0329935, Low: 5.6757, Mid: 3.9519, Context: read2ContextDRR276626[3]},
+			{Weight: 0.0180916, Low: 14.2591, Mid: 4.29465, Context: read2ContextDRR276626[4]},
+			{Weight: 0.00700226, Low: 28.5315, Mid: 4.03151, Context: read2ContextDRR276626[5]},
+		},
+		StickLow: 0.103955, StickMid: 0.0154793,
+		NoCall: 1.82119e-07,
+	},
+	Pairs: PairParams{Joint: [][]float64{
 		{0.381925, 0.125761, 0.01431, 0.00646301, 0.00533744, 0.00286073},
 		{0.127171, 0.151276, 0.0227579, 0.00540342, 0.00312809, 0.00175312},
 		{0.0171538, 0.0353898, 0.0210349, 0.004886, 0.0013233, 0.000659345},
 		{0.00562351, 0.00875752, 0.014069, 0.00817426, 0.00199811, 0.000525914},
 		{0.00399402, 0.00310287, 0.00416306, 0.00698041, 0.00394153, 0.000416321},
 		{0.00277351, 0.00172462, 0.000925485, 0.00108644, 0.00236313, 0.00078683},
+	}},
+	Errors: ErrorParams{
+		High:     0.000322634,
+		MidEarly: 0.00069523, MidLate: 0.00413048, MidTau: 200.0,
+		LowEarly: 0.0290239, LowLate: 0.0860024, LowTau: 50.0,
+		BaseFactor: [4]float64{0.694454, 1.34422, 0.965821, 1.09009},
+		Matrix: [4][4]float64{
+			{0, 0.625929, 0.147427, 0.226645},  // A
+			{0.887409, 0, 0.0962292, 0.016362}, // C
+			{0.059028, 0.133131, 0, 0.807841},  // G
+			{0.564899, 0.0182874, 0.416813, 0}, // T
+		},
 	},
+	// The measured insert sizes of proper pairs, lognormal, mean and SD
+	// rounded to 5.
+	InsertSize: types.InsertSizeSpec{Dist: types.InsertSizeLognormal, Mean: 455, SD: 100},
+	freq:       &contextFreqDRR276626,
 }
 
-// NovaSeqErrors is the substitution model measured against GRCh38.
-var NovaSeqErrors = ErrorParams{
-	High:     0.000322634,
-	MidEarly: 0.00069523, MidLate: 0.00413048, MidTau: 200.0,
-	LowEarly: 0.0290239, LowLate: 0.0860024, LowTau: 50.0,
-	BaseFactor: [4]float64{0.694454, 1.34422, 0.965821, 1.09009},
-	Matrix: [4][4]float64{
-		{0, 0.625929, 0.147427, 0.226645},  // A
-		{0.887409, 0, 0.0962292, 0.016362}, // C
-		{0.059028, 0.133131, 0, 0.807841},  // G
-		{0.564899, 0.0182874, 0.416813, 0}, // T
-	},
-}
-
-// contextFreq is the frequency of each 4-base context (index 64 b(-2) +
+// contextFreqDRR276626 is the frequency of each 4-base context (index 64 b(-2) +
 // 16 b(-1) + 4 b(0) + b(+1), A, C, G, T = 0-3) in the measured reads, both
 // mates; the factors average to 1 over it.
-var contextFreq = [256]float64{
+var contextFreqDRR276626 = [256]float64{
 	0.01549, 0.005674, 0.007282, 0.009694, 0.005986, 0.003238, 0.0007476, 0.004643,
 	0.006655, 0.003674, 0.004675, 0.004824, 0.007152, 0.004177, 0.006313, 0.007105,
 	0.005477, 0.004098, 0.005323, 0.005168, 0.00419, 0.002978, 0.0005462, 0.003875,
@@ -114,10 +118,10 @@ var contextFreq = [256]float64{
 	0.005222, 0.003737, 0.004424, 0.0054, 0.007724, 0.007373, 0.007244, 0.01476,
 }
 
-// read1Context[k] are the context factors of read 1's class k: P(Q11) and
-// P(Q25) at a cycle are multiplied by Low and Mid of the cycle's context.
-var read1Context = [...]*ContextFactors{
-	NewContextFactors(
+// read1ContextDRR276626[k] are the context factors of read 1's class k: P(Q11)
+// and P(Q25) at a cycle are multiplied by Low and Mid of the cycle's context.
+var read1ContextDRR276626 = [...]*ContextFactors{
+	NewContextFactors(&contextFreqDRR276626,
 		[256]float64{
 			1.256, 3.856, 2.957, 1.566, 0.1583, 0.218, 0.3579, 0.2789,
 			0.8183, 0.5777, 0.359, 0.477, 0.6609, 0.3062, 1.014, 1.97,
@@ -186,7 +190,7 @@ var read1Context = [...]*ContextFactors{
 			0.7035, 0.6079, 0.873, 0.9786, 0.3735, 0.4935, 0.3323, 0.5675,
 			0.6559, 0.6847, 0.447, 0.4601, 0.551, 0.3463, 0.5531, 1.183,
 		}),
-	NewContextFactors(
+	NewContextFactors(&contextFreqDRR276626,
 		[256]float64{
 			1.072, 2.478, 2.406, 1.471, 0.2998, 0.2974, 0.4118, 0.4796,
 			0.9415, 0.7693, 0.3873, 0.5287, 0.915, 0.5783, 1.021, 2.022,
@@ -255,7 +259,7 @@ var read1Context = [...]*ContextFactors{
 			0.7538, 0.7172, 0.9498, 1.047, 0.5228, 0.6926, 0.551, 0.9648,
 			0.6724, 0.7312, 0.5517, 0.5648, 0.6799, 0.4691, 0.7135, 1.184,
 		}),
-	NewContextFactors(
+	NewContextFactors(&contextFreqDRR276626,
 		[256]float64{
 			0.755, 1.336, 1.581, 1.079, 0.7558, 0.787, 0.924, 0.9869,
 			1.791, 1.263, 0.9056, 1.043, 1.211, 1.054, 1.236, 1.598,
@@ -324,7 +328,7 @@ var read1Context = [...]*ContextFactors{
 			0.6887, 0.666, 0.8329, 0.9202, 0.8777, 0.9934, 0.9383, 1.363,
 			1.048, 0.9961, 0.9205, 0.8872, 0.7634, 0.6328, 0.8304, 0.9579,
 		}),
-	NewContextFactors(
+	NewContextFactors(&contextFreqDRR276626,
 		[256]float64{
 			0.4882, 0.8398, 0.9474, 0.7387, 1.097, 0.9055, 1.106, 1.304,
 			2.028, 1.643, 1.242, 1.572, 1.459, 1.364, 1.242, 1.414,
@@ -393,7 +397,7 @@ var read1Context = [...]*ContextFactors{
 			0.5721, 0.6323, 0.7325, 0.7061, 1.007, 1.025, 1.017, 1.293,
 			1.312, 1.306, 1.273, 1.191, 0.8468, 0.8742, 0.868, 0.7935,
 		}),
-	NewContextFactors(
+	NewContextFactors(&contextFreqDRR276626,
 		[256]float64{
 			0.4886, 0.8513, 0.7963, 0.7601, 1.242, 1.085, 1.396, 1.247,
 			2.036, 1.758, 1.534, 1.775, 1.482, 1.346, 1.177, 1.309,
@@ -462,7 +466,7 @@ var read1Context = [...]*ContextFactors{
 			0.6529, 0.6772, 0.8867, 0.7362, 1.112, 1.105, 0.9612, 1.167,
 			1.352, 1.301, 1.326, 1.268, 0.9052, 0.9351, 0.8627, 0.6482,
 		}),
-	NewContextFactors(
+	NewContextFactors(&contextFreqDRR276626,
 		[256]float64{
 			0.6299, 1.007, 0.9554, 1.023, 1.117, 0.9779, 1.187, 1.135,
 			1.527, 1.473, 1.326, 1.524, 1.273, 1.099, 1.092, 1.176,
@@ -533,10 +537,10 @@ var read1Context = [...]*ContextFactors{
 		}),
 }
 
-// read2Context[k] are the context factors of read 2's class k: P(Q11) and
-// P(Q25) at a cycle are multiplied by Low and Mid of the cycle's context.
-var read2Context = [...]*ContextFactors{
-	NewContextFactors(
+// read2ContextDRR276626[k] are the context factors of read 2's class k: P(Q11)
+// and P(Q25) at a cycle are multiplied by Low and Mid of the cycle's context.
+var read2ContextDRR276626 = [...]*ContextFactors{
+	NewContextFactors(&contextFreqDRR276626,
 		[256]float64{
 			1.297, 3.73, 2.944, 1.682, 0.1389, 0.2043, 0.4265, 0.3521,
 			1.093, 0.8797, 0.36, 0.5278, 0.6731, 0.389, 1.042, 1.705,
@@ -605,7 +609,7 @@ var read2Context = [...]*ContextFactors{
 			0.8859, 0.7801, 0.9915, 1.128, 0.4503, 0.5679, 0.4936, 0.6301,
 			0.677, 0.7872, 0.6221, 0.5556, 0.5063, 0.3435, 0.5908, 1.06,
 		}),
-	NewContextFactors(
+	NewContextFactors(&contextFreqDRR276626,
 		[256]float64{
 			1.137, 2.452, 2.299, 1.375, 0.3642, 0.3895, 0.6387, 0.5677,
 			1.054, 0.895, 0.5339, 0.6994, 0.8596, 0.6176, 1.126, 1.708,
@@ -674,7 +678,7 @@ var read2Context = [...]*ContextFactors{
 			0.8523, 0.7942, 0.9938, 1.103, 0.6024, 0.7133, 0.6563, 0.9838,
 			0.7772, 0.8011, 0.6728, 0.6809, 0.6725, 0.4815, 0.7551, 1.054,
 		}),
-	NewContextFactors(
+	NewContextFactors(&contextFreqDRR276626,
 		[256]float64{
 			0.7004, 1.309, 1.341, 0.9705, 0.8601, 0.8904, 1.251, 1.213,
 			1.657, 1.339, 0.9812, 1.244, 1.248, 0.9983, 1.176, 1.51,
@@ -743,7 +747,7 @@ var read2Context = [...]*ContextFactors{
 			0.7172, 0.6763, 0.9412, 0.9187, 0.9279, 0.936, 0.9969, 1.313,
 			1.101, 1.033, 1.017, 1.025, 0.7896, 0.7033, 0.922, 0.8953,
 		}),
-	NewContextFactors(
+	NewContextFactors(&contextFreqDRR276626,
 		[256]float64{
 			0.4409, 0.7842, 0.9344, 0.776, 1.366, 0.9846, 1.405, 1.309,
 			1.942, 1.749, 1.261, 1.614, 1.57, 1.367, 1.086, 1.323,
@@ -812,7 +816,7 @@ var read2Context = [...]*ContextFactors{
 			0.5971, 0.5388, 0.7987, 0.7363, 1.054, 1.028, 1.13, 1.221,
 			1.316, 1.381, 1.251, 1.263, 0.9379, 0.8068, 0.8882, 0.6818,
 		}),
-	NewContextFactors(
+	NewContextFactors(&contextFreqDRR276626,
 		[256]float64{
 			0.544, 0.9734, 0.9387, 0.9612, 1.328, 1.038, 1.325, 1.206,
 			1.711, 1.596, 1.392, 1.521, 1.548, 1.168, 1.077, 1.239,
@@ -881,7 +885,7 @@ var read2Context = [...]*ContextFactors{
 			0.9101, 0.8225, 1.014, 0.8365, 1.116, 1.042, 0.9813, 1.068,
 			1.158, 1.281, 1.158, 1.216, 0.9581, 0.7898, 0.9321, 0.5343,
 		}),
-	NewContextFactors(
+	NewContextFactors(&contextFreqDRR276626,
 		[256]float64{
 			0.6527, 0.8817, 0.928, 0.938, 1.073, 1.009, 1.134, 1.197,
 			1.143, 1.228, 1.172, 1.287, 1.16, 1.196, 1.074, 1.113,

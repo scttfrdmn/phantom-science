@@ -50,7 +50,7 @@ func writeGenerateConfig(t *testing.T, readLength, reads int) string {
 
 func TestGenerateCommand_NewFlags(t *testing.T) {
 	for _, name := range []string{"seed", "platform", "read-length-dist", "read-length-n50", "read-length-median",
-		"read-length-mean", "read-length-sd", "basecaller-tier", "quality-model", "illumina-errors", "insert-size-mean", "insert-size-sd", "compress", "region", "reference", "strict-ref", "total-bases", "total-reads", "workers", "flow-cells", "output"} {
+		"read-length-mean", "read-length-sd", "basecaller-tier", "quality-model", "illumina-profile", "illumina-errors", "insert-size-mean", "insert-size-sd", "compress", "region", "reference", "strict-ref", "total-bases", "total-reads", "workers", "flow-cells", "output"} {
 		if generateCmd.Flags().Lookup(name) == nil {
 			t.Errorf("generateCmd should have --%s flag", name)
 		}
@@ -236,6 +236,45 @@ func TestGenerate_ScaleFlags(t *testing.T) {
 			t.Errorf("bad --total-bases: err = %v", err)
 		}
 	})
+}
+
+// --illumina-profile reaches the engine: a lower-quality run's profile
+// lowers the mean quality; an unknown name fails.
+func TestGenerate_IlluminaProfileFlag(t *testing.T) {
+	meanQ := func(profile string) (float64, error) {
+		flags := map[string]string{"config": writeGenerateConfig(t, 150, 2000), "stdout": "true", "seed": "3"}
+		if profile != "" {
+			flags["illumina-profile"] = profile
+		}
+		setGenerateFlags(t, flags)
+		var out bytes.Buffer
+		if err := runGenerate(generateCmd, &out); err != nil {
+			return 0, err
+		}
+		lines := strings.Split(out.String(), "\n")
+		var sum, n float64
+		for i := 3; i < len(lines); i += 4 {
+			for j := range len(lines[i]) {
+				sum += float64(lines[i][j] - '!')
+				n++
+			}
+		}
+		return sum / n, nil
+	}
+	def, err := meanQ("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	low, err := meanQ("novaseq6000-err15600747")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !(low < def-1) {
+		t.Errorf("mean Q %.2f with novaseq6000-err15600747, %.2f by default; want about 1.6 lower", low, def)
+	}
+	if _, err := meanQ("novaseq6000-nosuchrun"); err == nil || !strings.Contains(err.Error(), "unknown illumina profile") {
+		t.Errorf("unknown profile: err = %v", err)
+	}
 }
 
 func TestGenerate_StdoutOnlyFlags(t *testing.T) {
