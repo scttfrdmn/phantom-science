@@ -36,8 +36,8 @@ on `main` but not in a tagged release yet.
   - qualities that depend on the read's bases (since 0.12.0): each read
     class's low-bin probabilities follow the 4-base context, as in the real
     run (for example, Q25 is 2.5 times as likely after TT as after CA);
-  - substitutions at the measured, cycle-dependent rates of each bin (Q37
-    3.2e-4; Q25 0.07–0.25%; Q11 2.9–8.3%) with the measured substitution
+  - substitutions at the measured, cycle-dependent rates of each bin (for
+    DRR276626: Q37 3.2e-4; Q25 0.07–0.25%; Q11 2.9–8.3%) with the measured substitution
     spectrum (C→A and G→T dominate); Q2 bases are `N`.
 
   The two reads of a pair share a quality class, as real mates do (default
@@ -482,7 +482,7 @@ TUI: `generate` writes as fast as it can, and `batch_interval` has no effect.
   well each feature set separates real reads from generated ones, with a
   real-versus-real null and the most separating features; `-reference
   FASTA [-region]` generates the compared reads from a genome. On NovaSeq
-  6000 run DRR276626, the run the model was fitted to, against hg38:
+  6000 run DRR276626 with its own profile (`novaseq6000-drr276626`), against hg38:
   sequence 0.519, quality 0.524; against three held-out runs, quality
   0.62–0.76, about as far as those runs are from each other (chance
   0.5; see [docs/SCIENTIFIC_VALIDATION.md](docs/SCIENTIFIC_VALIDATION.md)).
