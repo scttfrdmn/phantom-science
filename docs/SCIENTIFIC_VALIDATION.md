@@ -96,7 +96,7 @@ Real-versus-real within each run (alternate halves) was 0.497–0.503 in all
   both-mates-poor ratio 1.01 → 3.87 (real 3.95), and the pair classifier on
   DRR276626 0.593 → 0.551, with similar drops on every held-out run.
 
-**Run profiles.** Three runs are fitted with the same pipeline and shipped as
+**Run profiles.** Since 0.13.0 the default profile is DRR394916, the most central against unfitted runs; the DRR276626 figures above apply to `--illumina-profile novaseq6000-drr276626`. Three runs are fitted with the same pipeline and shipped as
 profiles; DRR260182, SRR30646135 (NIST GIAB) and ERR12737258 (MRC WIMM) are
 never fitted and serve as held-out runs. Pair classifier, profile × run
 (`results/heldout/profile_matrix.tsv`; real run vs real run 0.581–0.780,

@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - A new `pair` feature set combines both mates' quality features with how their qualities go together.
   - `-real-fastq-b`/`-real-fastq2-b` compare two real runs; `-real-only` and `-write-generated` are new.
 - `scripts/acceptance/illumina_heldout.sh` measures the Illumina model against three held-out NovaSeq 6000 runs (ERR15600747, DRR394916, DRR260182) and against how far real runs are from each other (#35).
-- Illumina run profiles (`illumina.profile`, `generate --illumina-profile`, `run_e2e_tests -illumina-profile`): `novaseq6000-drr276626` (default), `novaseq6000-drr394916` and `novaseq6000-err15600747`, each fitted to its run's qualities, mate coupling, errors and insert sizes. The profile's insert sizes apply unless `illumina.insert_size` is set (#35).
+- Illumina run profiles (`illumina.profile`, `generate --illumina-profile`, `run_e2e_tests -illumina-profile`): `novaseq6000-drr394916` (the default), `novaseq6000-drr276626` and `novaseq6000-err15600747`, each fitted to its run's qualities, mate coupling, errors and insert sizes. The profile's insert sizes apply unless `illumina.insert_size` is set (#35).
 - `illumina_heldout.sh` measures every profile against six runs, three of them never fitted: DRR260182, SRR30646135 (NIST) and ERR12737258 (MRC WIMM) (#35).
 
 ### Changed
@@ -23,6 +23,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Mate low-quality count correlation is now 0.29, against 0.28 real; it was 0.
   - The pair classifier on DRR276626 falls from 0.593 to 0.551.
   - Single-end output is unchanged.
+- **BREAKING (Illumina output):** the default run profile is `novaseq6000-drr394916` (TruSeq DNA PCR-free; mean Q 35.3/34.6; 90.3/86.9% ≥Q30). It is the most central profile against runs never used for fitting. It was `novaseq6000-drr276626` (36.2/36.1) (#35).
+  - With no `illumina.profile`, inserts stay lognormal 455 ± 100. Naming a profile, `novaseq6000-drr394916` included, brings its run's inserts (560 ± 115 for that one). `illumina.insert_size` always wins.
+  - Single-end and paired binned output change. Mates' below-Q30 count correlation is 0.51, matching the real 0.51.
+  - `--illumina-profile novaseq6000-drr276626` gives the earlier qualities and inserts.
+  - Linear-model and ONT output are unchanged.
 
 ### Fixed
 - The Q25 error-rate fit could give rates at or below zero at early cycles for runs whose error rate rises convexly. It now fits either curvature, and rates are clamped at 0 (#35).

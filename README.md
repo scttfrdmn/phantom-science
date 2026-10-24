@@ -21,16 +21,18 @@ on `main` but not in a tagged release yet.
   from the FASTA on both strands, so reads align back to it. Without it,
   bases are uniform random, or drawn from an HMM trained with `train`, and
   reads do not align to any genome. Paired-end mates are the two ends of one
-  fragment, with insert sizes from the run profile (lognormal 455 ± 100 for
-  the default) unless `illumina.insert_size` is set.
+  fragment, with insert sizes lognormal 455 ± 100 by default, or the run's
+  own when `illumina.profile` is named, unless `illumina.insert_size` is
+  set.
 - **Illumina-style output** (since 0.10.0) has Illumina headers and file
-  names, and a quality and error model fitted to a real NovaSeq 6000 run (ENA
-  DRR276626, 200,000 read pairs aligned to GRCh38;
-  `scripts/acceptance/illumina_calibrate.sh`):
+  names, and a quality and error model fitted to real NovaSeq 6000 runs
+  (200,000 read pairs each, aligned to GRCh38;
+  `scripts/acceptance/illumina_calibrate.sh`). The default profile is
+  DRR394916 (TruSeq PCR-free); see the profile table below.
   - qualities in the four values NovaSeq 6000 writes (Q2, Q11, Q25, Q37),
     from per-read quality classes and per-cycle fractions; generated reads
-    match the fitted run's per-cycle fractions within 0.002 on average, and the mean
-    quality (R1 36.23 and R2 36.08 against 36.22 and 36.08);
+    match their run's per-cycle fractions and mean quality (default: R1
+    35.28 and R2 34.59 against 35.29 and 34.60);
   - qualities that depend on the read's bases (since 0.12.0): each read
     class's low-bin probabilities follow the 4-base context, as in the real
     run (for example, Q25 is 2.5 times as likely after TT as after CA);
@@ -38,16 +40,17 @@ on `main` but not in a tagged release yet.
     3.2e-4; Q25 0.07–0.25%; Q11 2.9–8.3%) with the measured substitution
     spectrum (C→A and G→T dominate); Q2 bases are `N`.
 
-  The two reads of a pair share a quality class, as real mates do (mates'
-  low-quality counts correlate 0.29, against 0.28 in the fitted run). Real
+  The two reads of a pair share a quality class, as real mates do (default
+  profile: mates' below-Q30 counts correlate 0.51, against 0.51 in its
+  run). Real
   runs differ a lot from each other, so the model ships run profiles
   (`illumina.profile`, `generate --illumina-profile`), each fitted to one
   run's qualities, mate coupling, errors and insert sizes:
 
   | Profile | Run | Library | Mean Q R1/R2 | ≥Q30 R1/R2 | Insert |
   |---|---|---|---|---|---|
-  | `novaseq6000-drr276626` (default) | DRR276626 | not recorded | 36.2 / 36.1 | 95.4 / 94.7% | 455 ± 100 |
-  | `novaseq6000-drr394916` | DRR394916 | TruSeq PCR-free | 35.3 / 34.6 | 90.3 / 86.9% | 560 ± 115 |
+  | `novaseq6000-drr394916` (default) | DRR394916 | TruSeq PCR-free | 35.3 / 34.6 | 90.3 / 86.9% | 560 ± 115 (455 ± 100 when the profile is not named) |
+  | `novaseq6000-drr276626` (default before 0.13.0) | DRR276626 | not recorded | 36.2 / 36.1 | 95.4 / 94.7% | 455 ± 100 |
   | `novaseq6000-err15600747` | ERR15600747 | SureSelect QXT | 34.6 / 34.3 | 86.5 / 85.5% | 390 ± 150 |
 
   A profile reproduces its run (pair classifier 0.55–0.58 against it), not
