@@ -17,7 +17,7 @@ them produce the same Illumina-style FASTQ (headers
 Base qualities and errors come from the `illumina:` section (binned RTA3
 qualities with quality-matched substitutions by default; `quality_model:
 linear` uses `base_quality` and `quality_decay` instead), and paired reads are
-the two ends of one fragment with `insert_size` (normal 350 ± 50 unless set).
+the two ends of one fragment with `insert_size` (the profile's measured sizes unless set; lognormal 455 ± 100 for the default profile). `illumina.profile` selects a fitted run profile (see the main README).
 There is no per-instrument model: MiSeq does not bin its qualities, so binned
 output resembles NovaSeq and NextSeq. Fields such as `run_time_hours`,
 `q30_percentage`, `cluster_density_k_per_mm2`, `loading_concentration_pm`,

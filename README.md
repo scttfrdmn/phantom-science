@@ -21,8 +21,8 @@ on `main` but not in a tagged release yet.
   from the FASTA on both strands, so reads align back to it. Without it,
   bases are uniform random, or drawn from an HMM trained with `train`, and
   reads do not align to any genome. Paired-end mates are the two ends of one
-  fragment, with insert sizes drawn from `illumina.insert_size` (normal
-  350 ± 50 by default).
+  fragment, with insert sizes from the run profile (lognormal 455 ± 100 for
+  the default) unless `illumina.insert_size` is set.
 - **Illumina-style output** (since 0.10.0) has Illumina headers and file
   names, and a quality and error model fitted to a real NovaSeq 6000 run (ENA
   DRR276626, 200,000 read pairs aligned to GRCh38;
@@ -38,13 +38,24 @@ on `main` but not in a tagged release yet.
     3.2e-4; Q25 0.07–0.25%; Q11 2.9–8.3%) with the measured substitution
     spectrum (C→A and G→T dominate); Q2 bases are `N`.
 
-  The calibration comes from one tile of one high-quality run. Against three
-  held-out NovaSeq 6000 runs (`scripts/acceptance/illumina_heldout.sh`) the
-  qualities are as far from each run as that fitted run is (mean Q 34.6–35.6
-  on the held-out runs against 36.2), mates' qualities are independent while
-  real mates' are correlated (0.28–0.53), and the default insert size is one
-  library's (held-out medians 290–559). Indels are not modelled (measured
-  5–7e-5 per base on all four runs). It is not validated beyond 151 cycles
+  The two reads of a pair share a quality class, as real mates do (mates'
+  low-quality counts correlate 0.29, against 0.28 in the fitted run). Real
+  runs differ a lot from each other, so the model ships run profiles
+  (`illumina.profile`, `generate --illumina-profile`), each fitted to one
+  run's qualities, mate coupling, errors and insert sizes:
+
+  | Profile | Run | Library | Mean Q R1/R2 | ≥Q30 R1/R2 | Insert |
+  |---|---|---|---|---|---|
+  | `novaseq6000-drr276626` (default) | DRR276626 | not recorded | 36.2 / 36.1 | 95.4 / 94.7% | 455 ± 100 |
+  | `novaseq6000-drr394916` | DRR394916 | TruSeq PCR-free | 35.3 / 34.6 | 90.3 / 86.9% | 560 ± 115 |
+  | `novaseq6000-err15600747` | ERR15600747 | SureSelect QXT | 34.6 / 34.3 | 86.5 / 85.5% | 390 ± 150 |
+
+  A profile reproduces its run (pair classifier 0.55–0.58 against it), not
+  other runs: against three held-out runs the closest profile scores
+  0.64–0.66, within the 0.58–0.76 spread of real runs against those runs
+  (`scripts/acceptance/illumina_heldout.sh`). Each profile comes from one
+  tile of one run. Indels are not modelled (measured 5–7e-5 per base on all
+  runs). It is not validated beyond 151 cycles
   or for other instruments (MiSeq writes unbinned qualities; NovaSeq X uses other
   values). `illumina.quality_model: linear`
   restores the old ramp (`base_quality` minus `quality_decay` per base, no

@@ -12,11 +12,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - A new `pair` feature set combines both mates' quality features with how their qualities go together.
   - `-real-fastq-b`/`-real-fastq2-b` compare two real runs; `-real-only` and `-write-generated` are new.
 - `scripts/acceptance/illumina_heldout.sh` measures the Illumina model against three held-out NovaSeq 6000 runs (ERR15600747, DRR394916, DRR260182) and against how far real runs are from each other (#35).
+- Illumina run profiles (`illumina.profile`, `generate --illumina-profile`, `run_e2e_tests -illumina-profile`): `novaseq6000-drr276626` (default), `novaseq6000-drr394916` and `novaseq6000-err15600747`, each fitted to its run's qualities, mate coupling, errors and insert sizes. The profile's insert sizes apply unless `illumina.insert_size` is set (#35).
+- `illumina_heldout.sh` measures every profile against six runs, three of them never fitted: DRR260182, SRR30646135 (NIST) and ERR12737258 (MRC WIMM) (#35).
 
 ### Changed
 - Realism claims are qualified (#35). The 0.12.0 quality-classifier figures (0.524 R1, 0.543 R2) apply to DRR276626, the run the model was fitted to.
   - Against three held-out runs, generated qualities are as far from each run as DRR276626 is: read-1 quality 0.62–0.76, against 0.57–0.77 between real runs. Sequence is within the real-run spread.
   - Known gaps: mates' qualities are independent, while real ones correlate 0.28–0.53; the quality level is one high-quality run's; the insert default is one library's.
+- **BREAKING (paired Illumina output):** the mates of a pair draw their quality classes together from a joint class table fitted to DRR276626 (#35).
+  - Mate low-quality count correlation is now 0.29, against 0.28 real; it was 0.
+  - The pair classifier on DRR276626 falls from 0.593 to 0.551.
+  - Single-end output is unchanged.
+
+### Fixed
+- The Q25 error-rate fit could give rates at or below zero at early cycles for runs whose error rate rises convexly. It now fits either curvature, and rates are clamped at 0 (#35).
 
 ## [0.12.0] - 2026-10-21
 

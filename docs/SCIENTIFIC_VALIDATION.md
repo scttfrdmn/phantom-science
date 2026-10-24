@@ -89,9 +89,31 @@ Real-versus-real within each run (alternate halves) was 0.497–0.503 in all
   0.767, 0.672 vs 0.677, 0.619 vs 0.627). Real runs differ a great deal
   (0.57–0.77), and DRR276626 is the best of the four: mean Q 36.2 against
   34.6–35.6.
-- **Pairs** are where the model is worse than DRR276626 on every run
-  (+0.03 to +0.04): real mates' low-quality counts are correlated (0.28–0.53
-  across the four runs) and the model's mates are independent.
+- **Pairs** were worse than DRR276626 on every run (+0.03 to +0.04): real
+  mates' low-quality counts are correlated (0.28–0.53) and the model's mates
+  were independent. The mates now share a quality class (a 6 × 6 joint class
+  table fitted to DRR276626): count correlation −0.003 → 0.293 (real 0.282),
+  both-mates-poor ratio 1.01 → 3.87 (real 3.95), and the pair classifier on
+  DRR276626 0.593 → 0.551, with similar drops on every held-out run.
+
+**Run profiles.** Three runs are fitted with the same pipeline and shipped as
+profiles; DRR260182, SRR30646135 (NIST GIAB) and ERR12737258 (MRC WIMM) are
+never fitted and serve as held-out runs. Pair classifier, profile × run
+(`results/heldout/profile_matrix.tsv`; real run vs real run 0.581–0.780,
+median 0.675):
+
+| Profile | DRR276626 | DRR394916 | ERR15600747 | DRR260182 | SRR30646135 | ERR12737258 |
+|---|---|---|---|---|---|---|
+| drr276626 | **0.551** | 0.742 | 0.777 | 0.678 | 0.752 | 0.690 |
+| drr394916 | 0.757 | **0.570** | 0.654 | 0.655 | 0.640 | 0.648 |
+| err15600747 | 0.796 | 0.662 | **0.583** | 0.698 | 0.703 | 0.707 |
+
+Each profile is close to its own run, and against every other run it scores
+about what its real run scores (within −0.003 to +0.037). Choosing the
+profile nearest a held-out run in mean quality picks DRR394916 for all three,
+scoring 0.640–0.655: within the range of the other real runs against those
+runs, above their median. Limitation: read-2 G calls are poorer in DRR394916
+and ERR15600747 than their profiles make them (mean Q 0.20 and 0.33 lower).
 
 Results: `scripts/acceptance/calibrate/illumina/results/heldout/`
 (`classifier_spread.tsv`, `classifier_matrix.tsv`,

@@ -50,7 +50,7 @@ location without editing a file.
 
 `generate` reads: `sample_name`, `lane`, `output_dir`, `read_length`,
 `reads_per_batch` (reads or read pairs per file), `total_batches` (number of
-files), `paired_end`, `illumina` (`quality_model`, `errors`, `insert_size`),
+files), `paired_end`, `illumina` (`quality_model`, `profile`, `errors`, `insert_size`),
 `base_quality` and `quality_decay` (only with `quality_model: linear`),
 `dataset_id`,
 `run_id`, `flowcell_id`, `max_output_gb`/`max_output_tb` (a cap on the bases
