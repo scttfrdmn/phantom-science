@@ -13,7 +13,15 @@
 # library protocol, study) describe the profile (RESULTS/profile.tsv); a
 # run that is not an Illumina NovaSeq 6000 run, or whose first 10,000
 # quality lines use other characters than the binned '#', ',', ':', 'F'
-# (SRA-Lite runs have '?' and '$'), is rejected. Steps:
+# (SRA-Lite runs have '?' and '$'), is rejected.
+#
+# A pooled profile (#36): ACCESSION may list several runs (space-separated).
+# The first PAIRS read pairs of each are downloaded (read files already in
+# WORK with that many reads are reused; local read files cannot be given),
+# checked as above and concatenated, so the fit sees equal numbers of pairs
+# from every run and its read classes span the runs. Each run's ENA
+# metadata goes to RESULTS/profile_runs.tsv; profile.tsv lists the runs.
+# Steps:
 #   1. quality alphabet, per-cycle quality frequencies, transitions, run
 #      lengths, per-read composition and N calls of both mates;
 #   2. minimap2 -ax sr alignment; substitution rate per quality and cycle,
@@ -30,11 +38,14 @@
 #      the run's Profile), with the measured quality by base and context in
 #      RESULTS/context_summary.tsv.
 #
-# Environment (defaults in brackets; acc is ACCESSION in lower case):
-#   ACCESSION [DRR276626]  PAIRS [200000]  THREADS [8]
+# Environment (defaults in brackets; acc is ACCESSION in lower case, or
+# "pooled" when ACCESSION lists several runs):
+#   ACCESSION [DRR276626]  PAIRS [200000, per run]  THREADS [8]
 #   PROFILE   [novaseq6000-acc], the profile's name
 #   RESULTS   [scripts/acceptance/calibrate/illumina/results for DRR276626,
-#             else scripts/acceptance/calibrate/illumina/results/profiles/ACCESSION]
+#             scripts/acceptance/calibrate/illumina/results/profiles/pooled
+#             for several runs, else
+#             scripts/acceptance/calibrate/illumina/results/profiles/ACCESSION]
 #   GO_OUT    [internal/genomics/illumina/profile_acc.go]
 #   MMI       [none: index REFERENCE on the fly]
 #   WORK      [a new temporary directory, removed at exit unless KEEP_WORK=1]
@@ -53,13 +64,25 @@ for tool in curl gzip minimap2 samtools python3; do
 	command -v "$tool" >/dev/null 2>&1 || die "$tool not found on PATH"
 done
 
-accession="${ACCESSION:-DRR276626}"
-acc="$(tr '[:upper:]' '[:lower:]' <<<"$accession")"
+read -r -a accessions <<<"${ACCESSION:-DRR276626}"
+[[ ${#accessions[@]} -ge 1 ]] || die "ACCESSION is empty"
+pooled=""
+if [[ ${#accessions[@]} -gt 1 ]]; then
+	pooled=1
+	[[ $# -eq 1 ]] || die "local read files cannot be given for a pooled profile (several ACCESSION runs)"
+	accession="$(IFS=,; echo "${accessions[*]}")"
+	acc=pooled
+else
+	accession="${accessions[0]}"
+	acc="$(tr '[:upper:]' '[:lower:]' <<<"$accession")"
+fi
 pairs="${PAIRS:-200000}"
 threads="${THREADS:-8}"
 profile="${PROFILE:-novaseq6000-$acc}"
 default_results=scripts/acceptance/calibrate/illumina/results
-if [[ "$accession" != DRR276626 ]]; then
+if [[ -n "$pooled" ]]; then
+	default_results="$default_results/profiles/pooled"
+elif [[ "$accession" != DRR276626 ]]; then
 	default_results="$default_results/profiles/$accession"
 fi
 results="${RESULTS:-$default_results}"
@@ -85,55 +108,102 @@ trap cleanup EXIT
 
 ena_api="https://www.ebi.ac.uk/ena/portal/api/filereport"
 fields="run_accession,instrument_model,library_layout,library_strategy,nominal_length,read_count,base_count,fastq_ftp,study_title,study_accession,center_name,library_construction_protocol"
-report="$work/ena.tsv"
-curl -fsS "$ena_api?accession=$accession&result=read_run&fields=$fields&format=tsv" -o "$report" ||
-	die "ENA file report for $accession failed"
-# meta FIELD: the value of FIELD in the ENA report.
+# meta FIELD: the value of FIELD in the ENA report $report.
 meta() { awk -F'\t' -v k="$1" 'NR == 1 { for (i = 1; i <= NF; i++) c[$i] = i } NR == 2 { print $c[k] }' "$report"; }
-[[ "$(meta instrument_model)" == "Illumina NovaSeq 6000" ]] || die "$accession is $(meta instrument_model), not Illumina NovaSeq 6000"
-[[ "$(meta library_layout)" == PAIRED ]] || die "$accession is not paired"
-library="$(meta library_construction_protocol)"
-if [[ -z "$library" ]]; then
-	library="not recorded"
-	if [[ -n "$(meta nominal_length)" ]]; then
-		library="$library (nominal insert $(meta nominal_length))"
+# library_of: the library protocol of the run of $report, as submitted.
+library_of() {
+	local l
+	l="$(meta library_construction_protocol)"
+	if [[ -z "$l" ]]; then
+		l="not recorded"
+		if [[ -n "$(meta nominal_length)" ]]; then
+			l="$l (nominal insert $(meta nominal_length))"
+		fi
 	fi
+	printf '%s' "$l"
+}
+# check_alphabet FASTQ: reject a run without NovaSeq binned qualities.
+check_alphabet() {
+	local a
+	a="$(awk 'NR % 4 == 0 && NR <= 40000' "$1" | fold -w1 | sort -u | tr -d '\n')"
+	[[ "$a" =~ ^[#,:F]+$ ]] || die "$1: quality alphabet '$a' is not NovaSeq binned qualities (#,:F); SRA-Lite?"
+}
+lines=$((4 * pairs))
+studies=()
+if [[ -n "$pooled" ]]; then
+	printf 'accession\tstudy\tinstrument\tcenter\tlibrary\tnominal_insert\tread_length\tpairs\tmd5_r1\tmd5_r2\n' >"$results/profile_runs.tsv"
 fi
-
-if [[ $# -eq 3 ]]; then
-	r1="$2"
-	r2="$3"
-	[[ -s "$r1" && -s "$r2" ]] || die "read files $r1 / $r2 missing or empty"
-	source="local files $(basename "$r1"), $(basename "$r2") (stated to be $accession)"
-else
+for a in "${accessions[@]}"; do
+	report="$work/ena_$a.tsv"
+	curl -fsS "$ena_api?accession=$a&result=read_run&fields=$fields&format=tsv" -o "$report" ||
+		die "ENA file report for $a failed"
+	[[ "$(meta instrument_model)" == "Illumina NovaSeq 6000" ]] || die "$a is $(meta instrument_model), not Illumina NovaSeq 6000"
+	[[ "$(meta library_layout)" == PAIRED ]] || die "$a is not paired"
+	studies+=("$(meta study_accession)")
+	if [[ $# -eq 3 ]]; then
+		continue
+	fi
 	urls="$(meta fastq_ftp)"
-	[[ "$urls" == *";"* ]] || die "$accession has no paired FASTQ files at ENA"
-	r1="$work/${accession}_1.fastq"
-	r2="$work/${accession}_2.fastq"
-	lines=$((4 * pairs))
+	[[ "$urls" == *";"* ]] || die "$a has no paired FASTQ files at ENA"
 	for i in 1 2; do
+		out="$work/${a}_$i.fastq"
+		if [[ -s "$out" && "$(wc -l <"$out" | tr -d ' ')" -eq "$lines" ]]; then
+			echo "Reusing $out"
+			continue
+		fi
 		url="https://$(cut -d';' -f"$i" <<<"$urls")"
-		out="$work/${accession}_$i.fastq"
 		echo "Downloading the first $pairs reads of $url ..."
 		# head closes the pipe early; curl and gzip then fail with SIGPIPE,
 		# so the line count below is the check.
 		{ curl -fsS "$url" | gzip -dc | head -n "$lines" >"$out"; } || true
 		[[ "$(wc -l <"$out" | tr -d ' ')" -eq "$lines" ]] || die "download of $url gave fewer than $pairs reads"
 	done
+	check_alphabet "$work/${a}_1.fastq"
+	check_alphabet "$work/${a}_2.fastq"
+	if [[ -n "$pooled" ]]; then
+		len="$(awk 'NR % 4 == 2 { print length($0) }' "$work/${a}_1.fastq" | sort -n | uniq | tr '\n' ',' | sed 's/,$//')"
+		md5s="$(python3 -I -c 'import hashlib, sys; print("\t".join(hashlib.md5(open(f, "rb").read()).hexdigest() for f in sys.argv[1:]))' "$work/${a}_1.fastq" "$work/${a}_2.fastq")"
+		printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$a" "$(meta study_accession)" "$(meta instrument_model)" "$(meta center_name)" \
+			"$(library_of)" "$(meta nominal_length)" "$len" "$pairs" "$md5s" >>"$results/profile_runs.tsv"
+	fi
+done
+
+if [[ $# -eq 3 ]]; then
+	r1="$2"
+	r2="$3"
+	[[ -s "$r1" && -s "$r2" ]] || die "read files $r1 / $r2 missing or empty"
+	check_alphabet "$r1"
+	check_alphabet "$r2"
+	source="local files $(basename "$r1"), $(basename "$r2") (stated to be $accession)"
+elif [[ -n "$pooled" ]]; then
+	r1="$work/pooled_1.fastq"
+	r2="$work/pooled_2.fastq"
+	for i in 1 2; do
+		files=()
+		for a in "${accessions[@]}"; do files+=("$work/${a}_$i.fastq"); done
+		cat "${files[@]}" >"$work/pooled_$i.fastq"
+	done
+	source="ENA ${accessions[*]}, the first $pairs read pairs of each, concatenated (Illumina NovaSeq 6000, PAIRED WGS; see profile_runs.tsv)"
+else
+	r1="$work/${accession}_1.fastq"
+	r2="$work/${accession}_2.fastq"
 	source="ENA $accession, first $pairs read pairs ($(meta instrument_model), $(meta library_layout) $(meta library_strategy), nominal insert $(meta nominal_length))"
 fi
-for r in "$r1" "$r2"; do
-	a="$(awk 'NR % 4 == 0 && NR <= 40000' "$r" | fold -w1 | sort -u | tr -d '\n')"
-	[[ "$a" =~ ^[#,:F]+$ ]] || die "$r: quality alphabet '$a' is not NovaSeq binned qualities (#,:F); SRA-Lite?"
-done
 {
 	printf 'key\tvalue\n'
 	printf 'name\t%s\n' "$profile"
 	printf 'accession\t%s\n' "$accession"
-	printf 'study\t%s\n' "$(meta study_accession)"
+	printf 'study\t%s\n' "$(IFS=,; echo "${studies[*]}")"
 	printf 'instrument\t%s\n' "$(meta instrument_model)"
-	printf 'center\t%s\n' "$(meta center_name)"
-	printf 'library\t%s\n' "$library"
+	if [[ -n "$pooled" ]]; then
+		printf 'center\t%s\n' "several (profile_runs.tsv)"
+		printf 'library\t%s\n' "several (profile_runs.tsv)"
+		printf 'id\t%s\n' "$acc"
+		printf 'pairs_per_run\t%s\n' "$pairs"
+	else
+		printf 'center\t%s\n' "$(meta center_name)"
+		printf 'library\t%s\n' "$(library_of)"
+	fi
 	printf 'pairs\t%s\n' "$(($(wc -l <"$r1") / 4))"
 	printf 'results\t%s\n' "$results"
 } >"$results/profile.tsv"

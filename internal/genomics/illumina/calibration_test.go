@@ -32,6 +32,10 @@ func profileResults(p *Profile) string {
 	if p == &profileDRR276626 {
 		return resultsRoot
 	}
+	if len(p.Runs) > 0 {
+		// a pooled profile (illumina_calibrate.sh with several runs)
+		return filepath.Join(resultsRoot, "profiles", "pooled")
+	}
 	return filepath.Join(resultsRoot, "profiles", p.Run.Accession)
 }
 

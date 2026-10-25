@@ -1,0 +1,11 @@
+key	value
+name	novaseq6000-pooled
+accession	DRR394916,DRR276626,ERR15600747
+study	PRJDB13883,PRJDB11215,PRJEB97783
+instrument	Illumina NovaSeq 6000
+center	several (profile_runs.tsv)
+library	several (profile_runs.tsv)
+id	pooled
+pairs_per_run	200000
+pairs	600000
+results	scripts/acceptance/calibrate/illumina/results/profiles/pooled
