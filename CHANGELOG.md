@@ -10,14 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Illumina profile `novaseq6000-pooled` (#36), fitted to 600,000 read pairs pooled from DRR394916, DRR276626 and ERR15600747 (200,000 each). Against three never-fitted NovaSeq 6000 runs it is the closest profile: held-out median pair classifier 0.615, read-1 quality 0.568, read-2 quality 0.590, against 0.648 / 0.606 / 0.627 for `novaseq6000-drr394916`.
 - `illumina_calibrate.sh` fits a pooled profile when `ACCESSION` lists several runs (equal pairs of each; per-run ENA metadata in `profile_runs.tsv`). `illumina_heldout.sh` accepts `PROFILE=RUN+RUN+...` and writes `profile_spread.tsv` (per-profile own / other-fitted / held-out spread).
+- `verify --reference FASTA`, `--hmm-model` and `--read-length-histogram` (#37), repeatable like `--variants`. A run is regenerated with the file whose size and sha256 match the manifest's record, and refused (naming the file, its size and sha256) when none is given.
 
 ### Changed
 - **The default Illumina profile is now `novaseq6000-pooled`** (#36), replacing `novaseq6000-drr394916`, because it is the closest profile to NovaSeq 6000 runs no profile was fitted to. Default binned Illumina output changes: mean quality R1 35.35 / R2 34.98 (was 35.28 / 34.59), and mates' below-Q30 counts correlate 0.56 (was 0.51). With no profile named, inserts stay lognormal 455 ± 100. `novaseq6000-drr394916` is still available by name; the golden hashes of the Illumina, scenario and HMM cases are re-pinned.
 - `fit_illumina.py` takes the read-class EM's expected low-bin count per read as the reads' mean count, so runs of different lengths keep the classes normalised. Single-run profiles are unchanged (byte-identical).
 - `illumina_heldout.sh` includes `novaseq6000-pooled` in its default `PROFILES`; `results/heldout` re-measured 2026-10-25 (single-run numbers unchanged).
+- The run manifest records the reference FASTA, HMM model and read-length histogram as `reference`, `hmm_model` and `read_length_histogram` {name, bytes, sha256}, like `variants` (#37). Its config no longer holds `reference_path`, `hmm_model_path`, `model_dir` or `read_length_distribution.empirical_path`. Each file is hashed once per run; generated data is unchanged.
+- Manifests of 0.14.0 and earlier, which record these files by path, still verify: the given file of the same name (or the only one given), else the recorded path, is used with a warning that it cannot be checked (#37).
 
 ### Fixed
 - `TestKeyedSeed_BinnedQualitiesStayOnBins` compared the quality alphabets of two runs of different sizes and seeds, including the rare Q2 bin, so it depended on chance; it now compares runs of the same size, apart from Q2.
+- The manifest held the reference path as typed, so a local (often absolute) path shipped with the data, and runs given relative and absolute paths wrote different manifests (#37).
+- `verify --candidates` with a `--manifest` as the base configuration dropped the manifest's VCF record, so candidates of a `--variants` run were regenerated without their variants (#37).
 
 ## [0.14.0] - 2026-10-24
 

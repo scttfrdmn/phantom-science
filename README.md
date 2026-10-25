@@ -200,7 +200,10 @@ works; prefer the subcommands.
   fake uploader, not against real AWS.
 - **Manifest:** every run writes `phantom-manifest.json` with the seed, the
   sanitized config, and the size and sha256 of every output. It never contains
-  key material.
+  key material or local paths: the files a run reads (reference FASTA, VCF,
+  HMM model, read-length histogram) are recorded by base name, size and
+  sha256 (`reference`, `variants`, `hmm_model`, `read_length_histogram`), not
+  by path.
 - **Reference genome:** `--reference genome.fa [--region chr:start-end]`
   samples reads from an uncompressed FASTA (a samtools `.fai` is used when
   present; gzip is rejected). Only the region is loaded; a whole GRCh38 takes
@@ -212,7 +215,9 @@ works; prefer the subcommands.
   cannot be combined with an HMM model. Measured on hg38
   chr22:20,000,000–21,000,000 (200,000 pairs, `minimap2 -ax sr`): 100% of reads
   mapped and properly paired, insert 348 ± 48, and per-quality mismatch rates
-  equal to the model's.
+  equal to the model's. The manifest records the FASTA by name, size and
+  sha256; `verify --reference genome.fa` regenerates such runs (also with
+  `--region` and `--variants`) and refuses a FASTA whose sha256 differs.
 - **HMM model:** `--hmm-model-path model.hmm.json`, or
   `--population CEU --model-dir models/` to load `models/CEU.hmm.json`. If a
   configured model is missing or cannot be loaded, `generate` fails before
@@ -350,6 +355,14 @@ stegano library or CGO.
    Or name candidates without manifests: `--config run.json --customer C
    --dataset D --salt S`, or `--candidates file.tsv` (customer, dataset, salt
    per line) with `--config` or a `--manifest`.
+
+   A run that read input files is regenerated with them: pass `--reference`,
+   `--variants`, `--hmm-model` or `--read-length-histogram` (each
+   repeatable). verify uses only a file whose size and sha256 match the
+   manifest's record, and refuses without one. Manifests from 0.14.0 and
+   earlier record these files by path; verify then uses the given file of the
+   same name (or the only one given), else the recorded path, and warns that
+   it cannot be checked.
 
 How verification decides:
 
