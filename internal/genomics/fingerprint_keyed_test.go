@@ -140,10 +140,14 @@ func TestKeyedSeed_BinnedQualitiesStayOnBins(t *testing.T) {
 	c := fingerprinted(binnedConfig(t.TempDir()), keyFile, "ACME", "study_1")
 	c.ReadsPerBatch = 2000
 	fp, _ := runTree(t, c)
-	plain, _ := runTree(t, binnedConfig(t.TempDir()))
+	pc := binnedConfig(t.TempDir())
+	pc.ReadsPerBatch = c.ReadsPerBatch
+	plain, _ := runTree(t, pc)
 	got, want := qualityAlphabet(t, fp), qualityAlphabet(t, plain)
-	// Q2 no-calls are rare (about 1.8e-7 per base), so a small run may lack '#'.
-	if got != want || strings.Trim(got, binChars) != "" || !strings.Contains(got, "F") {
+	// Q2 no-calls are rare, so whether a run of this size has a '#' is
+	// chance (the two runs have different seeds); compare the other bins.
+	noQ2 := func(s string) string { return strings.ReplaceAll(s, "#", "") }
+	if noQ2(got) != noQ2(want) || strings.Trim(got, binChars) != "" || !strings.Contains(got, "F") {
 		t.Errorf("quality alphabet %q, unfingerprinted %q, want the same subset of the bins %q", got, want, binChars)
 	}
 }

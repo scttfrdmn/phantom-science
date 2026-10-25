@@ -16,7 +16,7 @@ import (
 
 // The profile and the insert size are resolved by the rule documented in
 // package illumina (profiles.go): no profile gives the default profile
-// (novaseq6000-drr394916) with lognormal 455 ± 100 inserts; a profile set
+// (novaseq6000-pooled) with lognormal 455 ± 100 inserts; a profile set
 // explicitly, the default included, brings its run's inserts; a set
 // insert_size always wins (its empty fields defaulted).
 func TestIllumina_ProfileResolution(t *testing.T) {
@@ -30,20 +30,21 @@ func TestIllumina_ProfileResolution(t *testing.T) {
 		profile string
 		insert  types.InsertSizeSpec
 	}{
-		{"unset", types.IlluminaSpec{}, "novaseq6000-drr394916", ln(455, 100)},
+		{"unset", types.IlluminaSpec{}, "novaseq6000-pooled", ln(455, 100)},
+		{"explicit pooled", types.IlluminaSpec{Profile: "novaseq6000-pooled"}, "novaseq6000-pooled", ln(465, 140)},
 		{"explicit drr394916", types.IlluminaSpec{Profile: "novaseq6000-drr394916"}, "novaseq6000-drr394916", ln(560, 115)},
 		{"explicit drr394916, other case", types.IlluminaSpec{Profile: "NovaSeq6000-DRR394916"}, "novaseq6000-drr394916", ln(560, 115)},
 		{"explicit drr276626", types.IlluminaSpec{Profile: "novaseq6000-drr276626"}, "novaseq6000-drr276626", ln(455, 100)},
 		{"explicit err15600747", types.IlluminaSpec{Profile: "novaseq6000-err15600747"}, "novaseq6000-err15600747", ln(390, 150)},
 		{"insert_size, no profile", types.IlluminaSpec{InsertSize: types.InsertSizeSpec{Mean: 300, SD: 30}},
-			"novaseq6000-drr394916", normal300},
+			"novaseq6000-pooled", normal300},
 		{"insert_size wins over drr394916", types.IlluminaSpec{Profile: "novaseq6000-drr394916", InsertSize: types.InsertSizeSpec{Mean: 300, SD: 30}},
 			"novaseq6000-drr394916", normal300},
 		{"insert_size wins over err15600747", types.IlluminaSpec{Profile: "novaseq6000-err15600747", InsertSize: ln(250, 40)},
 			"novaseq6000-err15600747", ln(250, 40)},
 		{"partial insert_size: defaults, not the profile's", types.IlluminaSpec{Profile: "novaseq6000-drr394916", InsertSize: types.InsertSizeSpec{Max: 900}},
 			"novaseq6000-drr394916", types.InsertSizeSpec{Dist: types.InsertSizeLognormal, Mean: 455, SD: 100, Max: 900}},
-		{"linear model", types.IlluminaSpec{QualityModel: types.IlluminaQualityLinear}, "novaseq6000-drr394916", ln(455, 100)},
+		{"linear model", types.IlluminaSpec{QualityModel: types.IlluminaQualityLinear}, "novaseq6000-pooled", ln(455, 100)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c := binnedConfig(t.TempDir())

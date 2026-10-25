@@ -115,7 +115,7 @@ type PlatformConfig struct {
 	IlluminaQualityModel string
 	// IlluminaProfile is SequencerConfig.Illumina.Profile: the run the
 	// binned model is fitted to (empty: the default profile's qualities,
-	// DRR394916, with lognormal 455 ± 100 inserts; set, the profile's own
+	// novaseq6000-pooled, with lognormal 455 ± 100 inserts; set, the profile's own
 	// inserts).
 	IlluminaProfile string
 

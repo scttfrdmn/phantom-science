@@ -23,7 +23,7 @@
 // insert sizes) is fitted to each run by the same pipeline, and selected by
 // name (illumina.profile):
 //
-//   - novaseq6000-drr394916 (the default): DRR394916, NCCHD, TruSeq DNA
+//   - novaseq6000-drr394916 (the default in 0.13.0–0.14.0): DRR394916, NCCHD, TruSeq DNA
 //     PCR-Free, 2×151; mean Q 35.29 / 34.60 (read 1 / read 2), 90.3 % /
 //     86.9 % at Q30 or more, Q11 4.0 % / 6.0 %, insert median 559;
 //   - novaseq6000-drr276626 (the default of earlier releases): DRR276626,
@@ -32,7 +32,7 @@
 //   - novaseq6000-err15600747: ERR15600747, EBI / Southampton, Agilent
 //     SureSelect QXT, 2×150; mean Q 34.57 / 34.31, 86.5 % / 85.5 %, Q11
 //     5.8 % / 6.8 %, insert median 361;
-//   - novaseq6000-pooled (#36): the three runs above pooled, the same
+//   - novaseq6000-pooled (the default, #36): the three runs above pooled, the same
 //     200,000 pairs of each fitted together as one run, so that the read
 //     classes span the runs (2×151; the 2×150 run's reads keep their
 //     length); mean Q 35.36 / 34.99, 90.7 % / 89.0 %, Q11 3.8 % / 4.9 %,
@@ -45,7 +45,7 @@
 // The insert size belongs to the profile because a profile reproduces one
 // run, and the run's library is part of it; illumina.insert_size overrides
 // it. With no profile set, though, the insert size is lognormal 455 ± 100
-// (DRR276626's), not the default profile's 560 ± 115: see "The default" in
+// (DRR276626's), not the default profile's 465 ± 140: see "The default" in
 // profiles.go for the exact rule. The figures in the rest of this
 // documentation are DRR276626's, the run the model was first fitted to.
 //

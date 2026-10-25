@@ -26,20 +26,20 @@ func binIndex(q byte) int {
 	return -1
 }
 
-// The default profile is novaseq6000-drr394916 and is listed first; the
+// The default profile is novaseq6000-pooled (#36) and is listed first; the
 // package's default models are its; the linear model's substitution model
 // (ApplyErrors) stays novaseq6000-drr276626's, so linear output does not
 // change with the default.
 func TestDefaultProfile(t *testing.T) {
-	if DefaultProfile != "novaseq6000-drr394916" || ProfileNames()[0] != DefaultProfile {
+	if DefaultProfile != "novaseq6000-pooled" || ProfileNames()[0] != DefaultProfile {
 		t.Fatalf("default %q, names %v", DefaultProfile, ProfileNames())
 	}
 	p, err := LookupProfile("")
-	if err != nil || p != &profileDRR394916 {
+	if err != nil || p != &profilePOOLED {
 		t.Fatalf("LookupProfile(\"\") = %v, %v", p, err)
 	}
-	if NovaSeqErrors != profileDRR394916.Errors || &Read1.Classes[0] != &profileDRR394916.Read1.Classes[0] ||
-		&Read2.Classes[0] != &profileDRR394916.Read2.Classes[0] || &NovaSeqPairs.Joint[0] != &profileDRR394916.Pairs.Joint[0] {
+	if NovaSeqErrors != profilePOOLED.Errors || &Read1.Classes[0] != &profilePOOLED.Read1.Classes[0] ||
+		&Read2.Classes[0] != &profilePOOLED.Read2.Classes[0] || &NovaSeqPairs.Joint[0] != &profilePOOLED.Pairs.Joint[0] {
 		t.Error("the package's default models are not the default profile's")
 	}
 	if linearErrors != profileDRR276626.Errors {
@@ -47,7 +47,7 @@ func TestDefaultProfile(t *testing.T) {
 	}
 }
 
-// The pooled profile (#36) resolves by name and is not the default; it
+// The pooled profile (#36) resolves by name, case-insensitively; it
 // describes the pool as the join of its runs, fitted to equal numbers of
 // pairs of each; its qualities, for the read lengths of its runs (2×151 and
 // 2×150), take only the NovaSeq values and reproduce from the seed.
@@ -55,9 +55,6 @@ func TestPooledProfile(t *testing.T) {
 	p, err := LookupProfile("NovaSeq6000-Pooled")
 	if err != nil || p != &profilePOOLED {
 		t.Fatalf("LookupProfile(novaseq6000-pooled) = %v, %v", p, err)
-	}
-	if p.Name == DefaultProfile {
-		t.Fatal("the pooled profile is the default")
 	}
 	if len(p.Runs) != 3 {
 		t.Fatalf("%d runs, want 3", len(p.Runs))

@@ -36,18 +36,19 @@ import (
 // qualities) were re-pinned when qualities came to depend on the read's
 // bases (#35), and the paired Illumina cases again when the mates came to
 // draw their quality classes together (#35), and all of these when the
-// default profile became novaseq6000-drr394916 (#35).
+// default profile became novaseq6000-drr394916 (#35), and again when it
+// became novaseq6000-pooled (#36).
 var goldenWant = map[string]string{
-	"illumina binned paired":               "55d57e943cd6425576bc0e341f5ba465b3eec076a044f12deb696f045dd33b72",
-	"illumina reference paired":            "ebfdda3eb38922d0f81390ec0d8e42c3ba8df58e1d24fb77f57dcfa3aee3951c",
-	"illumina lognormal inserts and reads": "231bb544131ac0de3caf4e9510ad4bdfb84f62e0393a862486a5a36eb89a6f10",
+	"illumina binned paired":               "ee568ba3eb7afca795bc02184ed5af80577d27a61be6cd2ea73cabeb1b2cb865",
+	"illumina reference paired":            "4cfee62c41b4b8a79123c8bd7e96715ec3380bef094af38302f390dc021b3adb",
+	"illumina lognormal inserts and reads": "46b0a97d4d7103c35d2beff3862aa028c1a155bac13a89ae766a64577958cdff",
 	"ont hac lognormal":                    "be4106e6e7c7124f5bf7b9cb241f322e366c2c7b05f9c822828aa9713186e962",
 	"ont fast gamma":                       "d953196a6882cd0a44f4dcf8e6400204d178fe4857a0cedb85b1a228fda3aa31",
 	"signal dna":                           "682455f7f9c12b82beea715ea5c77482d68a82e319985039ba05410d0b7c26c0",
 	"signal rna":                           "975c142bf9974b7d2931885273c1b1e4a9000a3ab6d8521d38ae2826847c7002",
 	"transcriptome":                        "88585ae93756fa5a87a407761187024afc757fff36d0688f010d6e3af6bbe840",
-	"scenario trio":                        "ae7cab4935f8b91f7e888dbe1e315c0e5627cec0e476a89991a41e2c4b957a2c",
-	"hmm train and generate":               "a820391d33250dec7b76ec22951abda6fa1ceeee96fd7788ec0b44f705a863ae",
+	"scenario trio":                        "794f7c17df70cd8559ac9d0a3c6996d9bf8481495f4b3af3c3c373b252f65ee3",
+	"hmm train and generate":               "d0af88074f77cd9189080fc687225661e176c5f21514a6580e51d23999b8dbc4",
 }
 
 func goldenBinary(t *testing.T) string {

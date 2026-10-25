@@ -19,25 +19,25 @@ package illumina
 // # The default
 //
 // DefaultProfile, used when illumina.profile is not set, is
-// novaseq6000-drr394916 (TruSeq DNA PCR-Free; mean Q 35.29 / 34.60): of the
-// fitted runs it is the most central against NovaSeq 6000 runs that were
-// never fitted (#35). Releases before it defaulted to novaseq6000-drr276626,
-// which is still available by name.
+// novaseq6000-pooled (mean Q 35.36 / 34.99), fitted to three runs together:
+// of the profiles it is the closest to NovaSeq 6000 runs that were never
+// fitted (#36). Earlier defaults, novaseq6000-drr394916 (0.13.0–0.14.0) and
+// novaseq6000-drr276626 (before 0.13.0), are still available by name.
 //
 // The insert size is resolved separately, because it belongs to the
 // library, not to the qualities:
 //
 //   - illumina.insert_size set (any field): it wins, whatever the profile,
 //     with types.IlluminaSpec.WithDefaults filling the fields left empty;
-//   - else illumina.profile set (any profile, novaseq6000-drr394916
+//   - else illumina.profile set (any profile, novaseq6000-pooled
 //     included): that profile's measured inserts (Profile.InsertSize;
-//     novaseq6000-drr394916 lognormal 560 ± 115);
+//     novaseq6000-pooled lognormal 465 ± 140);
 //   - else (no profile, no insert size): lognormal 455 ± 100
 //     (types.DefaultInsertSizeMean and DefaultInsertSizeSD), not the
-//     default profile's 560 ± 115, so that default paired output keeps the
+//     default profile's 465 ± 140, so that default paired output keeps the
 //     insert sizes of earlier releases.
 //
-// So an unset profile and an explicit novaseq6000-drr394916 give the same
+// So an unset profile and an explicit novaseq6000-pooled give the same
 // qualities, mate coupling, errors and context factors, and differ only in
 // the inserts of paired reads. The quality_model linear does not use a
 // profile (its substitution model, with illumina.errors quality, is
@@ -102,10 +102,10 @@ type Profile struct {
 // Its qualities, mate coupling, errors and context factors are used; its
 // insert sizes are not (see the package's profile documentation above:
 // unset, the insert size is lognormal 455 ± 100).
-const DefaultProfile = "novaseq6000-drr394916"
+const DefaultProfile = "novaseq6000-pooled"
 
 // profiles lists the fitted profiles, the default first.
-var profiles = []*Profile{&profileDRR394916, &profileDRR276626, &profileERR15600747, &profilePOOLED}
+var profiles = []*Profile{&profilePOOLED, &profileDRR394916, &profileDRR276626, &profileERR15600747}
 
 // ProfileNames returns the names of the fitted profiles, the default first.
 func ProfileNames() []string {
@@ -146,13 +146,13 @@ func (p *Profile) Params(mate int) QualityParams {
 var (
 	// Read1 is the default quality model of read 1 (of single-end reads
 	// too).
-	Read1 = profileDRR394916.Read1
+	Read1 = profilePOOLED.Read1
 	// Read2 is the default quality model of read 2.
-	Read2 = profileDRR394916.Read2
+	Read2 = profilePOOLED.Read2
 	// NovaSeqPairs couples the default models' read classes.
-	NovaSeqPairs = profileDRR394916.Pairs
+	NovaSeqPairs = profilePOOLED.Pairs
 	// NovaSeqErrors is the default profile's substitution model.
-	NovaSeqErrors = profileDRR394916.Errors
+	NovaSeqErrors = profilePOOLED.Errors
 )
 
 // linearErrors is the substitution model of the linear quality model

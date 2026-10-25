@@ -31,7 +31,8 @@ package genomics
 //     tier, ONT reads get the linear decay and no errors.
 //   - Illumina, quality_model "binned" (the default): qualities in the
 //     NovaSeq 6000 bins (Q2/Q11/Q25/Q37) from package illumina, fitted to
-//     a real run (illumina.profile, default run DRR394916, #35) and drawn
+//     a real run (illumina.profile, #35; by default
+//     novaseq6000-pooled, three runs pooled, #36) and drawn
 //     given the read's bases (each cycle's Q11 and
 //     Q25 probabilities depend on its 4-base context, #35; the two reads of
 //     a pair draw their quality classes together, #35), and with errors

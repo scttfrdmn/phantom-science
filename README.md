@@ -28,11 +28,12 @@ on `main` but not in a tagged release yet.
   names, and a quality and error model fitted to real NovaSeq 6000 runs
   (200,000 read pairs each, aligned to GRCh38;
   `scripts/acceptance/illumina_calibrate.sh`). The default profile is
-  DRR394916 (TruSeq PCR-free); see the profile table below.
+  `novaseq6000-pooled` (since 0.15.0), fitted to three runs together; see
+  the profile table below.
   - qualities in the four values NovaSeq 6000 writes (Q2, Q11, Q25, Q37),
     from per-read quality classes and per-cycle fractions; generated reads
-    match their run's per-cycle fractions and mean quality (default: R1
-    35.28 and R2 34.59 against 35.29 and 34.60);
+    match their runs' per-cycle fractions and mean quality (default: R1
+    35.35 and R2 34.98 against 35.36 and 34.99 in the pooled reads);
   - qualities that depend on the read's bases (since 0.12.0): each read
     class's low-bin probabilities follow the 4-base context, as in the real
     run (for example, Q25 is 2.5 times as likely after TT as after CA);
@@ -41,25 +42,27 @@ on `main` but not in a tagged release yet.
     spectrum (C→A and G→T dominate); Q2 bases are `N`.
 
   The two reads of a pair share a quality class, as real mates do (default
-  profile: mates' below-Q30 counts correlate 0.51, against 0.51 in its
-  run). Real
+  profile: mates' below-Q30 counts correlate 0.56, against 0.56 in its
+  pooled reads and 0.37–0.62 in single runs). Real
   runs differ a lot from each other, so the model ships run profiles
   (`illumina.profile`, `generate --illumina-profile`), each fitted to one
-  run's qualities, mate coupling, errors and insert sizes:
+  run's (or, pooled, three runs') qualities, mate coupling, errors and
+  insert sizes:
 
   | Profile | Run | Library | Mean Q R1/R2 | ≥Q30 R1/R2 | Insert |
   |---|---|---|---|---|---|
-  | `novaseq6000-drr394916` (default) | DRR394916 | TruSeq PCR-free | 35.3 / 34.6 | 90.3 / 86.9% | 560 ± 115 (455 ± 100 when the profile is not named) |
+  | `novaseq6000-pooled` (default) | DRR394916 + DRR276626 + ERR15600747 (200,000 pairs each) | the three libraries | 35.4 / 35.0 | 90.7 / 89.0% | 465 ± 140 (455 ± 100 when the profile is not named) |
+  | `novaseq6000-drr394916` (default in 0.13.0–0.14.0) | DRR394916 | TruSeq PCR-free | 35.3 / 34.6 | 90.3 / 86.9% | 560 ± 115 |
   | `novaseq6000-drr276626` (default before 0.13.0) | DRR276626 | not recorded | 36.2 / 36.1 | 95.4 / 94.7% | 455 ± 100 |
   | `novaseq6000-err15600747` | ERR15600747 | SureSelect QXT | 34.6 / 34.3 | 86.5 / 85.5% | 390 ± 150 |
-  | `novaseq6000-pooled` | DRR394916 + DRR276626 + ERR15600747 (200,000 pairs each) | the three libraries | 35.4 / 35.0 | 90.7 / 89.0% | 465 ± 140 |
 
-  A profile reproduces its run (pair classifier 0.55–0.58 against it), not
-  other runs: against three held-out runs the closest profile scores
-  0.64–0.66, within the 0.58–0.76 spread of real runs against those runs
-  (`scripts/acceptance/illumina_heldout.sh`). The pooled profile, fitted to
-  three runs together, is the closest to the held-out runs: pair classifier
-  median 0.615, against 0.648 for the default. Each profile comes from one
+  A single-run profile reproduces its run (pair classifier 0.55–0.58
+  against it), not other runs: against three held-out runs the closest
+  single-run profile scores 0.64–0.66, within the 0.58–0.76 spread of real
+  runs against those runs (`scripts/acceptance/illumina_heldout.sh`). The
+  pooled default is the closest to the held-out runs: pair classifier
+  median 0.615, against 0.648 for drr394916, and below the real-run median
+  0.675. Each profile comes from one
   tile of one run. Indels are not modelled (measured 5–7e-5 per base on all
   runs). It is not validated beyond 151 cycles
   or for other instruments (MiSeq writes unbinned qualities; NovaSeq X uses other

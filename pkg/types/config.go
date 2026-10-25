@@ -239,8 +239,8 @@ const (
 	// proper pairs of NovaSeq 6000 run DRR276626 aligned to GRCh38 (454.5 ±
 	// 99.8, right-skewed; scripts/acceptance/illumina_calibrate.sh), the
 	// default profile of earlier releases. It applies when illumina.profile
-	// is not set (although the default profile is now
-	// novaseq6000-drr394916, whose run's inserts are 560 ± 115), to the
+	// is not set (although the default profile is now novaseq6000-pooled,
+	// whose runs' inserts are 465 ± 140), to the
 	// linear quality model, and to the fields of a set insert_size left
 	// empty. Insert size is a property of the library preparation, not the
 	// instrument: an illumina.profile set explicitly brings its run's insert
@@ -259,14 +259,15 @@ type IlluminaSpec struct {
 	// cycle·QualityDecay, and the earlier output.
 	QualityModel string `json:"quality_model,omitempty" yaml:"quality_model,omitempty"`
 	// Profile selects the run the binned model is fitted to (#35):
-	// "novaseq6000-drr394916" (the default when empty),
-	// "novaseq6000-drr276626" (the default of earlier releases) or
+	// "novaseq6000-pooled" (the default when empty; three runs fitted
+	// together, #36), "novaseq6000-drr394916" (the default in
+	// 0.13.0–0.14.0), "novaseq6000-drr276626" (the default before) or
 	// "novaseq6000-err15600747": its qualities, mate coupling, substitution
 	// errors, context factors and, when Profile is set and InsertSize is
 	// not, its run's insert sizes. Empty, the qualities are
-	// novaseq6000-drr394916's but the insert size is the lognormal
-	// DefaultInsertSizeMean ± DefaultInsertSizeSD (455 ± 100), not that
-	// run's 560 ± 115; naming novaseq6000-drr394916 gives its 560 ± 115.
+	// novaseq6000-pooled's but the insert size is the lognormal
+	// DefaultInsertSizeMean ± DefaultInsertSizeSD (455 ± 100), not its
+	// runs' 465 ± 140; naming novaseq6000-pooled gives its 465 ± 140.
 	// Names are checked by the engine (illumina.ProfileNames); it needs
 	// quality_model binned.
 	Profile string `json:"profile,omitempty" yaml:"profile,omitempty"`

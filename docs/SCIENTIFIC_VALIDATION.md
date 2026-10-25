@@ -96,7 +96,7 @@ Real-versus-real within each run (alternate halves) was 0.497–0.503 in all
   both-mates-poor ratio 1.01 → 3.87 (real 3.95), and the pair classifier on
   DRR276626 0.593 → 0.551, with similar drops on every held-out run.
 
-**Run profiles.** Since 0.13.0 the default profile is DRR394916, the most central against unfitted runs; the DRR276626 figures above apply to `--illumina-profile novaseq6000-drr276626`. Three runs are fitted with the same pipeline and shipped as
+**Run profiles.** Since 0.15.0 the default profile is `novaseq6000-pooled` (below), the closest to unfitted runs; in 0.13.0–0.14.0 it was DRR394916; the DRR276626 figures above apply to `--illumina-profile novaseq6000-drr276626`. Three runs are fitted with the same pipeline and shipped as
 profiles; DRR260182, SRR30646135 (NIST GIAB) and ERR12737258 (MRC WIMM) are
 never fitted and serve as held-out runs. Pair classifier, profile × run
 (`results/heldout/profile_matrix.tsv`; real run vs real run 0.581–0.780,
@@ -120,15 +120,17 @@ and ERR15600747 than their profiles make them (mean Q 0.20 and 0.33 lower).
 pipeline to the three fitted runs together (200,000 pairs of each, 600,000 in
 all), so its read classes span the runs. Against the three held-out runs
 (`results/heldout/profile_spread.tsv`) its medians are read-1 quality 0.568,
-read-2 quality 0.590 and pair 0.615. For the default drr394916 they are
+read-2 quality 0.590 and pair 0.615. For drr394916 (the default in
+0.13.0–0.14.0) they are
 0.606, 0.627 and 0.648; drr276626 and err15600747 are higher still. The
 pooled medians are also below the real-run-vs-real-run medians (0.619, 0.601,
 0.675), so generated reads are closer to an unfitted run than a typical real
 run is. It is best on DRR260182 and ERR12737258. On SRR30646135 drr394916 is
 slightly closer (pair 0.640 vs 0.650). Against each fitted run it is further
 than that run's own profile (pair 0.600–0.692 vs 0.551–0.583). Limitations:
-three held-out runs; pooled mates are more coupled than in any one fitted run
-(below-Q30 count correlation 0.56); its inserts (lognormal 465 ± 140) are the
+three held-out runs; mixing runs raises the mates' coupling (below-Q30
+count correlation 0.56 in the pooled reads, against 0.37–0.58 in the fitted
+runs and 0.59–0.62 in the held-out runs); its inserts (lognormal 465 ± 140) are the
 pooled libraries', larger than the held-out runs'.
 
 Results: `scripts/acceptance/calibrate/illumina/results/heldout/`

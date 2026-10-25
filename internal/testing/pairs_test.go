@@ -172,8 +172,8 @@ func TestGenerateSyntheticData_Paired(t *testing.T) {
 	// read 1 forward and read 2 reverse-complemented, or the other way round
 	// for fragments from the reverse strand. Each mate is checked on its
 	// first 20 cycles: the last cycles have the most errors, and in the
-	// default profile (DRR394916) about a quarter of reads have an error in
-	// their last 20.
+	// DRR394916, one of the default profile's runs, about a quarter of reads
+	// have an error in their last 20.
 	in := func(b []byte) bool { return strings.Contains(genome, string(b[:20])) }
 	inRC := func(b []byte) bool { return strings.Contains(genome, reverseComplement(string(b[:20]))) }
 	opposite := 0
