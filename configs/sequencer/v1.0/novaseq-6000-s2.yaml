@@ -66,9 +66,11 @@ technology:
   four_channel_chemistry: false
 
 # Illumina read model (#27). quality_model: binned (NovaSeq 6000 bins Q2/Q11/Q25/Q37,
-# the default) or linear; errors: quality (substitutions at 10^(-Q/10), Q2
-# written as N; the default for binned) or none; insert_size: the paired-end
-# fragment length distribution (normal or lognormal).
+# the default) or linear; errors: quality (substitutions at each quality's
+# measured rate, Q2 written as N, and indel errors at the profile's measured
+# rates; the default for binned), substitutions (no indel errors) or none;
+# insert_size: the paired-end fragment length distribution (normal or
+# lognormal).
 illumina:
   quality_model: binned
   errors: quality

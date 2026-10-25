@@ -45,8 +45,9 @@ trio scenarios draw one synthetic window sequence.
 
 Read model. Every scenario FASTQ is written by the same read pipeline as
 'generate': Illumina reads have binned qualities (Q2/Q12/Q23/Q37) and
-quality-matched substitution errors by default (illumina.errors in
---config; set "none" for error-free bases). With sequencer.paired_end: true
+quality-matched substitution and indel errors by default (illumina.errors
+in --config; "substitutions" leaves out the indels, "none" gives error-free
+bases). With sequencer.paired_end: true
 the reads are pairs, the two ends of one fragment (illumina.insert_size),
 written to output.<member>_fastq and output.<member>_fastq_r2, or
 interleaved in output.<member>_fastq when no R2 file is given. sequencer.platform is

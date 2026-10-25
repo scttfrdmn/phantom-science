@@ -1,6 +1,6 @@
 // Package illumina models Illumina short-read output: per-cycle binned base
-// qualities, quality-matched substitution errors and paired-end insert
-// (fragment) sizes. Every function draws only from the *rand.Rand it is
+// qualities, quality-matched substitution errors, indel errors and
+// paired-end insert (fragment) sizes. Every function draws only from the *rand.Rand it is
 // given, so output is a pure function of the caller's seed.
 //
 // The parameters are fitted to real data, one Profile per run (#35): the
@@ -143,9 +143,16 @@
 // substituted base follows the measured spectrum (Matrix: C→A, G→T, T→A,
 // T→G and A→C dominate; C→T and T→C are rare), both measured from Q11
 // mismatches, of which about 99 % are sequencing errors, and applied to
-// every bin. Insertions and deletions are not modelled: the measured indel
-// error rate is 7·10⁻⁵ per base (25 events where mates overlap, against
-// about 1.7·10⁻³ substitutions per base).
+// every bin.
+//
+// Indel errors (#30) are modelled too (indels.go, IndelParams): 1.2·10⁻⁵
+// per base in the pooled runs (insertions 4.6·10⁻⁶, deletions 7.5·10⁻⁶;
+// 0.4 % of the sequencing errors where mates overlap, which are 3.4·10⁻³
+// per base), mostly slips in long homopolymers and tandem repeats. An
+// earlier estimate of 7·10⁻⁵ (25 events, DRR276626) counted mates that end
+// inside a long homopolymer, misaligned repeats, indels the two mates'
+// alignments place differently and mismatches aligned as gaps, which the
+// measurement now leaves out (scripts/acceptance/illumina_indels.sh).
 //
 // # Limitations
 //

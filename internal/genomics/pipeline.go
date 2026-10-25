@@ -142,9 +142,13 @@ type readPipeline struct {
 	// from its shared stream (binned Illumina qualities).
 	pairClasses func(r *rand.Rand) [2]int
 	applyErrors func(r *rand.Rand, seq, qual []byte) ([]byte, []byte)
-	header      func(r *rand.Rand, rec *seqread.Record) (string, string)
-	observer    ReadObserver
-	maxPhred    byte
+	// indels, when set, makes Illumina indel errors (#30): each read takes
+	// its bases from its template (the fragment, or the single-end read)
+	// with the errors, before its qualities are drawn.
+	indels   *illumina.IndelModel
+	header   func(r *rand.Rand, rec *seqread.Record) (string, string)
+	observer ReadObserver
+	maxPhred byte
 	// legacy selects the single-end flow that draws qualities before variant
 	// injection (ONT, linear Illumina qualities); binned Illumina qualities
 	// are drawn per read after it.
@@ -216,6 +220,9 @@ func (e *Engine) newPipeline(opts GenerateOpts, obs ReadObserver) (*readPipeline
 	}
 	p.pairClasses = e.pairClasses()
 	if p.applyErrors, err = e.errorModel(); err != nil {
+		return nil, err
+	}
+	if p.indels, err = e.indelModel(); err != nil {
 		return nil, err
 	}
 	if p.header, err = e.headerFormatter(); err != nil {
@@ -322,7 +329,11 @@ func (p *readPipeline) writeBatch(bw *bufio.Writer, r *rand.Rand, s batchSpec, s
 				if p.inserts == nil {
 					n = len(frag) // single-end: the whole read, which an indel may resize
 				}
-				seq, qual = p.mate(r, frag, n, mate, classes[mate-1])
+				var edits []illumina.Indel
+				seq, qual, edits = p.mate(r, frag, n, mate, classes[mate-1])
+				if p.inserts == nil && len(edits) > 0 {
+					p.placeSingle(&rec, len(seq), edits)
+				}
 			} else if seq, qual, err = p.read(r, length, readStart); err != nil {
 				return false, err
 			}
@@ -428,19 +439,101 @@ func (p *readPipeline) sampled(r *rand.Rand, n int, rec *seqread.Record, trim bo
 // mate returns the bases and qualities of one mate of frag: R1 reads the
 // first length bases, R2 the reverse complement of the last length bases.
 // Qualities (of quality class class, -1 to draw it) and errors come from r,
-// the mate's stream.
-func (p *readPipeline) mate(r *rand.Rand, frag []byte, length, mate, class int) ([]byte, []byte) {
+// the mate's stream. With indel errors (p.indels) the mate reads on into
+// the fragment (R1 towards its end, R2 towards its start) to make up for
+// deletions and reads fewer of its bases after insertions, so its length
+// stays length; a single-end read from a reference reads on into the
+// reference (fixed-length reads; variable-length reads change length
+// instead). The indel errors are returned, in cycle order.
+func (p *readPipeline) mate(r *rand.Rand, frag []byte, length, mate, class int) ([]byte, []byte, []illumina.Indel) {
 	var seq []byte
-	if mate == 2 {
+	var edits []illumina.Indel
+	switch {
+	case p.indels != nil:
+		tmpl, n := frag, length
+		var more func(int) []byte
+		switch {
+		case mate == 2:
+			tmpl = seqread.ReverseComplement(frag)
+		case p.inserts == nil && !p.fixedLength:
+			n = -1 // variable-length single-end reads keep the length the indels give them
+		case p.inserts == nil:
+			more = p.readOn(p.origin)
+		}
+		seq, edits = p.indels.Read(r, tmpl, n, more)
+		length = len(seq)
+	case mate == 2:
 		seq = seqread.ReverseComplement(frag[len(frag)-length:])
-	} else {
+	default:
 		seq = append([]byte(nil), frag[:length]...)
 	}
 	qual := p.qualities(r, seq, length, mate, class)
+	if len(edits) > 0 {
+		p.indels.Qualities(r, qual, edits)
+	}
 	if p.applyErrors != nil {
 		seq, qual = p.applyErrors(r, seq, qual)
 	}
-	return seq, qual
+	return seq, qual, edits
+}
+
+// readOn returns the template extension of a single-end read sampled from
+// the reference at o: the reference bases that follow it in sequencing
+// orientation (after its end on the plus strand, before its start, reverse
+// complemented, on the minus strand), or none at the end of the loaded
+// sequence or at an N. Positioned variants are not applied to them.
+func (p *readPipeline) readOn(o origin) func(k int) []byte {
+	if p.e.ref == nil {
+		return nil
+	}
+	done := int64(0) // bases already handed out
+	return func(k int) []byte {
+		lo, hi := o.start+int64(o.length)+done, o.start+int64(o.length)+done+int64(k)
+		if o.minus {
+			lo, hi = o.start-done-int64(k), o.start-done
+		}
+		if lo < 0 {
+			return nil
+		}
+		b, err := p.e.ref.Bases(o.chrom, lo, hi)
+		if err != nil || !allACGT(b) {
+			return nil
+		}
+		done += int64(k)
+		if o.minus {
+			return seqread.ReverseComplement(b)
+		}
+		return b
+	}
+}
+
+// placeSingle updates the record of a single-end read of n bases with indel
+// errors edits: its reference span (truth table, read position) and the
+// offsets of its planted alleles become those of the read as written.
+func (p *readPipeline) placeSingle(rec *seqread.Record, n int, edits []illumina.Indel) {
+	o := p.origin
+	n0 := o.length // the template bases sampled
+	used := illumina.TemplateUsed(n, edits)
+	if p.fragments != nil {
+		if o.minus {
+			o.start += int64(o.length - used)
+			rec.RefStart = o.start
+		}
+		o.length = used
+		p.origin = o
+	}
+	p.planted.remap(func(off, size int) (int, bool) {
+		if !o.minus || p.fragments == nil {
+			x := illumina.ReadOffset(off, edits)
+			return x, x < n
+		}
+		// Minus strand: offsets are on the forward strand, the template
+		// is in sequencing orientation, so the allele at forward offset
+		// off ends before template index n0 − off; the read's forward
+		// strand is its reverse complement.
+		x := n - illumina.ReadOffset(n0-off, edits)
+		return x, x >= 0 && x < n
+	})
 }
 
 // bases generates the bases of a read or fragment of length bases starting
@@ -519,13 +612,53 @@ func (p *readPipeline) bases(r *rand.Rand, length int, start int64, trim bool, q
 func (p *readPipeline) read(r *rand.Rand, length int, readStart int64) ([]byte, []byte, error) {
 	var seq, qual []byte
 	var err error
-	if p.legacy {
+	switch {
+	case p.legacy:
 		seq, qual, err = p.bases(r, length, readStart, p.fixedLength, func(n int) []byte { return p.qualities(r, nil, n, 1, -1) })
-	} else if seq, _, err = p.bases(r, length, readStart, p.fixedLength, nil); err == nil {
-		qual = p.qualities(r, seq, len(seq), 1, -1)
+	case p.indels != nil:
+		if seq, _, err = p.bases(r, length, readStart, p.fixedLength, nil); err == nil {
+			return p.readIndels(r, seq)
+		}
+	default:
+		if seq, _, err = p.bases(r, length, readStart, p.fixedLength, nil); err == nil {
+			qual = p.qualities(r, seq, len(seq), 1, -1)
+		}
 	}
 	if err != nil {
 		return nil, nil, err
+	}
+	if p.applyErrors != nil {
+		seq, qual = p.applyErrors(r, seq, qual)
+	}
+	return seq, qual, nil
+}
+
+// readIndels makes the indel errors of a single-end read without a
+// reference (bases tmpl, before errors), then draws its qualities and
+// substitutions: a fixed-length read reads on into new bases drawn as the
+// read's were (from the HMM model, or uniform from r).
+func (p *readPipeline) readIndels(r *rand.Rand, tmpl []byte) ([]byte, []byte, error) {
+	n := len(tmpl)
+	var more func(int) []byte
+	if p.fixedLength {
+		more = func(k int) []byte {
+			b, _, err := generateFrom(p.model, r, k)
+			if err != nil {
+				return nil
+			}
+			return b
+		}
+	} else {
+		n = -1
+	}
+	seq, edits := p.indels.Read(r, tmpl, n, more)
+	qual := p.qualities(r, seq, len(seq), 1, -1)
+	if len(edits) > 0 {
+		p.indels.Qualities(r, qual, edits)
+		p.planted.remap(func(off, _ int) (int, bool) {
+			x := illumina.ReadOffset(off, edits)
+			return x, x < len(seq)
+		})
 	}
 	if p.applyErrors != nil {
 		seq, qual = p.applyErrors(r, seq, qual)
@@ -912,6 +1045,7 @@ func (e *Engine) newFlowCellEngine(k, n int, seen map[string]bool) (*Engine, str
 		hmmModel: e.hmmModel, modelPath: e.modelPath, modelErr: e.modelErr, toolVersion: e.toolVersion,
 		customerID: e.customerID, fragments: e.fragments, ref: e.ref, refErr: e.refErr, refMaxRead: e.refMaxRead,
 		variants: e.variants, variantsInput: e.variantsInput, varRegion: e.varRegion, refVars: e.refVars, varErr: e.varErr,
+		indelParams: e.indelParams,
 	}
 	rel := ""
 	if n > 1 {
