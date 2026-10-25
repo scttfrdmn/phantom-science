@@ -167,6 +167,48 @@ generated_vs_heldout_run	novaseq6000-err15600747	ERR12737258	2	sequence	multinom
 generated_vs_heldout_run	novaseq6000-err15600747	ERR12737258	2	quality	logistic regression	200000	0.6138	0.0045
 generated_vs_heldout_run	novaseq6000-err15600747	ERR12737258	2	combined	stacked NB score + LR	200000	0.6148	0.0045
 generated_vs_heldout_run	novaseq6000-err15600747	ERR12737258	pair	pair	logistic regression	200000	0.7069	0.0045
+generated_vs_own_run	novaseq6000-pooled	DRR276626	1	sequence	multinomial naive Bayes	200000	0.5141	0.0045
+generated_vs_own_run	novaseq6000-pooled	DRR276626	1	quality	logistic regression	200000	0.6595	0.0045
+generated_vs_own_run	novaseq6000-pooled	DRR276626	1	combined	stacked NB score + LR	200000	0.6584	0.0045
+generated_vs_own_run	novaseq6000-pooled	DRR276626	2	sequence	multinomial naive Bayes	200000	0.5152	0.0045
+generated_vs_own_run	novaseq6000-pooled	DRR276626	2	quality	logistic regression	200000	0.6695	0.0045
+generated_vs_own_run	novaseq6000-pooled	DRR276626	2	combined	stacked NB score + LR	200000	0.6688	0.0045
+generated_vs_own_run	novaseq6000-pooled	DRR276626	pair	pair	logistic regression	200000	0.6919	0.0045
+generated_vs_own_run	novaseq6000-pooled	DRR394916	1	sequence	multinomial naive Bayes	200000	0.5109	0.0045
+generated_vs_own_run	novaseq6000-pooled	DRR394916	1	quality	logistic regression	200000	0.5472	0.0045
+generated_vs_own_run	novaseq6000-pooled	DRR394916	1	combined	stacked NB score + LR	200000	0.5511	0.0045
+generated_vs_own_run	novaseq6000-pooled	DRR394916	2	sequence	multinomial naive Bayes	200000	0.5199	0.0045
+generated_vs_own_run	novaseq6000-pooled	DRR394916	2	quality	logistic regression	200000	0.5769	0.0045
+generated_vs_own_run	novaseq6000-pooled	DRR394916	2	combined	stacked NB score + LR	200000	0.5796	0.0045
+generated_vs_own_run	novaseq6000-pooled	DRR394916	pair	pair	logistic regression	200000	0.6003	0.0045
+generated_vs_own_run	novaseq6000-pooled	ERR15600747	1	sequence	multinomial naive Bayes	200000	0.5292	0.0045
+generated_vs_own_run	novaseq6000-pooled	ERR15600747	1	quality	logistic regression	200000	0.6159	0.0045
+generated_vs_own_run	novaseq6000-pooled	ERR15600747	1	combined	stacked NB score + LR	200000	0.6171	0.0045
+generated_vs_own_run	novaseq6000-pooled	ERR15600747	2	sequence	multinomial naive Bayes	200000	0.5372	0.0045
+generated_vs_own_run	novaseq6000-pooled	ERR15600747	2	quality	logistic regression	200000	0.5804	0.0045
+generated_vs_own_run	novaseq6000-pooled	ERR15600747	2	combined	stacked NB score + LR	200000	0.585	0.0045
+generated_vs_own_run	novaseq6000-pooled	ERR15600747	pair	pair	logistic regression	200000	0.6276	0.0045
+generated_vs_heldout_run	novaseq6000-pooled	DRR260182	1	sequence	multinomial naive Bayes	200000	0.5077	0.0045
+generated_vs_heldout_run	novaseq6000-pooled	DRR260182	1	quality	logistic regression	200000	0.559	0.0045
+generated_vs_heldout_run	novaseq6000-pooled	DRR260182	1	combined	stacked NB score + LR	200000	0.56	0.0045
+generated_vs_heldout_run	novaseq6000-pooled	DRR260182	2	sequence	multinomial naive Bayes	200000	0.5109	0.0045
+generated_vs_heldout_run	novaseq6000-pooled	DRR260182	2	quality	logistic regression	200000	0.5833	0.0045
+generated_vs_heldout_run	novaseq6000-pooled	DRR260182	2	combined	stacked NB score + LR	200000	0.5738	0.0045
+generated_vs_heldout_run	novaseq6000-pooled	DRR260182	pair	pair	logistic regression	200000	0.5978	0.0045
+generated_vs_heldout_run	novaseq6000-pooled	SRR30646135	1	sequence	multinomial naive Bayes	200000	0.5106	0.0045
+generated_vs_heldout_run	novaseq6000-pooled	SRR30646135	1	quality	logistic regression	200000	0.5681	0.0045
+generated_vs_heldout_run	novaseq6000-pooled	SRR30646135	1	combined	stacked NB score + LR	200000	0.5745	0.0045
+generated_vs_heldout_run	novaseq6000-pooled	SRR30646135	2	sequence	multinomial naive Bayes	200000	0.517	0.0045
+generated_vs_heldout_run	novaseq6000-pooled	SRR30646135	2	quality	logistic regression	200000	0.6061	0.0045
+generated_vs_heldout_run	novaseq6000-pooled	SRR30646135	2	combined	stacked NB score + LR	200000	0.6079	0.0045
+generated_vs_heldout_run	novaseq6000-pooled	SRR30646135	pair	pair	logistic regression	200000	0.65	0.0045
+generated_vs_heldout_run	novaseq6000-pooled	ERR12737258	1	sequence	multinomial naive Bayes	200000	0.5114	0.0045
+generated_vs_heldout_run	novaseq6000-pooled	ERR12737258	1	quality	logistic regression	200000	0.5754	0.0045
+generated_vs_heldout_run	novaseq6000-pooled	ERR12737258	1	combined	stacked NB score + LR	200000	0.5721	0.0045
+generated_vs_heldout_run	novaseq6000-pooled	ERR12737258	2	sequence	multinomial naive Bayes	200000	0.513	0.0045
+generated_vs_heldout_run	novaseq6000-pooled	ERR12737258	2	quality	logistic regression	200000	0.5904	0.0045
+generated_vs_heldout_run	novaseq6000-pooled	ERR12737258	2	combined	stacked NB score + LR	200000	0.5852	0.0045
+generated_vs_heldout_run	novaseq6000-pooled	ERR12737258	pair	pair	logistic regression	200000	0.6151	0.0045
 real_run_vs_real_run	real:DRR276626	DRR394916	1	sequence	multinomial naive Bayes	200000	0.5155	0.0045
 real_run_vs_real_run	real:DRR276626	DRR394916	1	quality	logistic regression	200000	0.6769	0.0045
 real_run_vs_real_run	real:DRR276626	DRR394916	1	combined	stacked NB score + LR	200000	0.6766	0.0045

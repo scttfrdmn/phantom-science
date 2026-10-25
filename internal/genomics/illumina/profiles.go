@@ -10,6 +10,12 @@ package illumina
 // size of its library. Profiles are named for the instrument and the run's
 // accession.
 //
+// A pooled profile (#36, novaseq6000-pooled) is fitted by the same
+// pipeline to equal numbers of read pairs of several runs together
+// (illumina_calibrate.sh with several runs in ACCESSION): it aims at the
+// centre of the runs rather than at one of them. Its Runs list the runs;
+// its insert sizes are those of the pooled pairs.
+//
 // # The default
 //
 // DefaultProfile, used when illumina.profile is not set, is
