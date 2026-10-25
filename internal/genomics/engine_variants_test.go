@@ -465,7 +465,7 @@ func TestVariants_WorkersParityAndRegenerate(t *testing.T) {
 	}
 	regen := func(cfg types.SequencerConfig) ([]string, error) {
 		var got []string
-		_, err := NewEngineLog(cfg, nil).Regenerate(RegenOptions{Files: files, Variants: m.Variants}, func(_ RunFile, seq []byte) error {
+		_, err := NewEngineLog(cfg, nil).Regenerate(RegenOptions{Files: files, Variants: m.Variants, Reference: m.Reference}, func(_ RunFile, seq []byte) error {
 			got = append(got, string(seq))
 			return nil
 		})
@@ -473,6 +473,7 @@ func TestVariants_WorkersParityAndRegenerate(t *testing.T) {
 	}
 	cfg := m.Config
 	cfg.Seed = m.Seed
+	cfg.ReferencePath = ref.path // the manifest records it by hash (#37)
 	if _, err := regen(cfg); err == nil || !strings.Contains(err.Error(), "calls.vcf") {
 		t.Errorf("Regenerate without the VCF: err = %v", err)
 	}

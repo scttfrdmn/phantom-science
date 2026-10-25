@@ -45,6 +45,11 @@ type RegenOptions struct {
 	// it the run's reads cannot be reproduced. When nil, the engine's
 	// configuration is used as it is.
 	Variants *manifest.Input
+	// Reference, HMMModel and ReadLengths are the run's other input files
+	// (the manifest's reference, hmm_model and read_length_histogram),
+	// checked like Variants against the engine's reference_path, HMM model
+	// and read-length empirical_path.
+	Reference, HMMModel, ReadLengths *manifest.Input
 }
 
 // errRegenDone stops regeneration at a limit.
@@ -82,14 +87,8 @@ func (e *Engine) Regenerate(opts RegenOptions, observe func(f RunFile, seq []byt
 	if err := e.checkExtensions(); err != nil {
 		return 0, err
 	}
-	if want := opts.Variants; want != nil {
-		got := e.variantsInput
-		switch {
-		case got == nil:
-			return 0, fmt.Errorf("the run planted variants from %s (sha256 %s): configure that VCF (variants_path / --variants) to regenerate it", want.Name, want.SHA256)
-		case got.SHA256 != want.SHA256 || got.Bytes != want.Bytes:
-			return 0, fmt.Errorf("the run planted variants from %s (sha256 %s), not %s (sha256 %s)", want.Name, want.SHA256, got.Name, got.SHA256)
-		}
+	if err := e.checkRegenInputs(opts); err != nil {
+		return 0, err
 	}
 	n := max(e.config.FlowCells, 1)
 	engines := make([]*Engine, 0, n)

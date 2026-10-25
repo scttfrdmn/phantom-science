@@ -53,6 +53,16 @@ type VerifyOptions struct {
 	// from: a manifest that records one (by SHA-256) is regenerated with
 	// the matching file, and fails without it.
 	Variants []string
+	// References, HMMModels and ReadLengths are reference FASTA files, HMM
+	// models and read-length histograms a candidate run may have read
+	// (#37), matched to a manifest's records by size and SHA-256 like
+	// Variants. A manifest of phantom-science 0.14.0 or earlier records
+	// these by path: the file with that base name (or the only one given)
+	// is used, else the recorded path, with a warning that it cannot be
+	// checked.
+	References  []string
+	HMMModels   []string
+	ReadLengths []string
 }
 
 // VerifyFiles checks each FASTQ file in paths and reports one line per file

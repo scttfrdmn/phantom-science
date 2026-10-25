@@ -7,7 +7,10 @@
 // holds no wall-clock time, host name or absolute output path, and leaves
 // out settings that do not change the output (output_dir, workers), so two
 // runs with the same seed produce byte-identical manifests. It never holds
-// key material: the fingerprint key file path is removed.
+// key material (the fingerprint key file path is removed) or a local path:
+// the input files a run reads (reference FASTA, VCF, HMM model, read-length
+// histogram) are recorded by base name, size and SHA-256 (Input), and their
+// paths are removed from the configuration.
 //
 // A fingerprinted (keyed-seed) run records its Fingerprint (scheme,
 // customer, dataset, salt) instead of its seed: Seed and the flow-cell seeds
@@ -77,6 +80,16 @@ type Manifest struct {
 	// --variants), by base name, size and SHA-256; its path is not
 	// recorded. Regenerating the run needs this file.
 	Variants *Input `json:"variants,omitempty"`
+	// Reference is the FASTA reads were sampled from (reference_path /
+	// --reference, #37), HMMModel the HMM model bases were sampled from
+	// (hmm_model_path, or model_dir with population) and ReadLengths the
+	// read-length histogram (read_length_distribution.empirical_path), each
+	// by base name, size and SHA-256; their paths are not recorded.
+	// Regenerating the run needs these files. Manifests of
+	// phantom-science 0.14.0 and earlier record the paths in Config instead.
+	Reference   *Input `json:"reference,omitempty"`
+	HMMModel    *Input `json:"hmm_model,omitempty"`
+	ReadLengths *Input `json:"read_length_histogram,omitempty"`
 	// Encrypted is read from manifests of phantom-science 0.9.0 and earlier
 	// (encrypted quality-score fingerprints); it is no longer written.
 	Encrypted bool       `json:"fingerprint_encrypted,omitempty"`
@@ -191,14 +204,20 @@ func New(toolVersion string, seed uint64, runStart time.Time, config types.Seque
 	}
 }
 
-// SanitizeConfig returns c without key material, local output locations or
-// settings that do not affect the output: fingerprint key file paths, the
-// licence key, OutputDir, Workers and the VariantsPath (the manifest records
-// the VCF by name, size and SHA-256 instead) are cleared.
+// SanitizeConfig returns c without key material, local paths or settings
+// that do not affect the output: fingerprint key file paths, the licence
+// key, OutputDir, Workers and the input file paths (VariantsPath,
+// ReferencePath, HMMModelPath, ModelDir and the read-length EmpiricalPath;
+// the manifest records the files by name, size and SHA-256 instead) are
+// cleared.
 func SanitizeConfig(c types.SequencerConfig) types.SequencerConfig {
 	c.OutputDir = ""
 	c.Workers = 0
 	c.VariantsPath = ""
+	c.ReferencePath = ""
+	c.HMMModelPath = ""
+	c.ModelDir = ""
+	c.ReadLengthDistribution.EmpiricalPath = ""
 	c.Fingerprinting.KeyFile = ""
 	c.Enterprise.Fingerprinting.KeyFile = ""
 	c.Enterprise.LicenseKey = ""
@@ -244,6 +263,22 @@ func Read(path string) (*Manifest, error) {
 		return nil, fmt.Errorf("%s: format %q, want %q", filepath.Base(path), m.Format, Format)
 	}
 	return &m, nil
+}
+
+// HashInput returns the file at path as a run input: its base name, size
+// and SHA-256.
+func HashInput(path string) (*Input, error) {
+	n, sum, err := HashFile(path)
+	if err != nil {
+		return nil, err
+	}
+	return &Input{Name: filepath.Base(path), Bytes: n, SHA256: sum}, nil
+}
+
+// Same reports whether in and o describe the same file contents (size and
+// SHA-256; the name is not compared).
+func (in *Input) Same(o *Input) bool {
+	return in != nil && o != nil && in.Bytes == o.Bytes && in.SHA256 == o.SHA256
 }
 
 // HashFile returns the size and hex SHA-256 of the file at path.

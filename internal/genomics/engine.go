@@ -82,6 +82,13 @@ type Engine struct {
 	refVars       *refVariants
 	varErr        error
 
+	// inputs are the run's other input files as the manifest records them,
+	// hashed once (inputsOnce); inputsErr records a file that could not be
+	// hashed. See engine_inputs.go.
+	inputsOnce sync.Once
+	inputs     runInputs
+	inputsErr  error
+
 	// Files written by Generate and GenerateFASTQFile, in order.
 	filesMu sync.Mutex
 	files   []string

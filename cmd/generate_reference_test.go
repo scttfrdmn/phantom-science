@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/scttfrdmn/phantom-science/internal/genomics/manifest"
+	"github.com/spf13/pflag"
 )
 
 // writeCmdReference writes a two-contig FASTA and returns its path and
@@ -83,8 +84,11 @@ func TestGenerate_ReferenceRegionFiles(t *testing.T) {
 	if err := m.VerifyDir(out); err != nil {
 		t.Fatal(err)
 	}
-	if m.Config.ReferencePath != ref || m.Config.ReferenceRegion != "chr2:2001-6000" {
-		t.Errorf("manifest config reference %q region %q", m.Config.ReferencePath, m.Config.ReferenceRegion)
+	// The reference is recorded by name, size and sha256, not by path (#37).
+	n, sum, _ := manifest.HashFile(ref)
+	if m.Config.ReferencePath != "" || m.Config.ReferenceRegion != "chr2:2001-6000" ||
+		m.Reference == nil || *m.Reference != (manifest.Input{Name: "ref.fa", Bytes: n, SHA256: sum}) {
+		t.Errorf("manifest reference %+v, config reference_path %q region %q", m.Reference, m.Config.ReferencePath, m.Config.ReferenceRegion)
 	}
 	truths := 0
 	for _, o := range m.Outputs {
@@ -276,4 +280,106 @@ func TestGenerate_FileModeVariants(t *testing.T) {
 			t.Errorf("--strict-ref wrote output: %v", err)
 		}
 	})
+}
+
+// The manifest of a --reference run holds no local path (#37): the
+// reference and VCF are recorded by name, size and sha256, so a run given
+// relative paths with one worker and absolute paths with four writes the
+// same manifest, byte for byte.
+func TestGenerate_ManifestHasNoLocalPaths(t *testing.T) {
+	ref, seqs := writeCmdReference(t)
+	dir := filepath.Dir(ref)
+	vcf := filepath.Join(dir, "calls.vcf")
+	next := map[string]string{"A": "C", "C": "G", "G": "T", "T": "A"}
+	good := seqs["chr2"][2999:3000]
+	body := "##fileformat=VCFv4.2\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n" +
+		"chr2\t3000\tsnv1\t" + good + "\t" + next[good] + "\t.\t.\tAF=0.5\n"
+	if err := os.WriteFile(vcf, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := writePairedConfig(t, "")
+	outer := t
+	run := func(t *testing.T, reference, variants, workers string) (string, []byte) {
+		out := filepath.Join(outer.TempDir(), "out") // outlives the subtest
+		setGenerateFlags(t, map[string]string{
+			"config": cfg, "reference": reference, "variants": variants, "region": "chr2:2001-6000",
+			"seed": "11", "workers": workers, "output": out,
+		})
+		if err := runGenerate(generateCmd, io.Discard); err != nil {
+			t.Fatal(err)
+		}
+		data, err := os.ReadFile(filepath.Join(out, manifest.FileName))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out, data
+	}
+	var relOut, absOut string
+	var rel, abs []byte
+	t.Run("relative paths, 1 worker", func(t *testing.T) {
+		t.Chdir(dir)
+		relOut, rel = run(t, "ref.fa", "calls.vcf", "1")
+	})
+	t.Run("absolute paths, 4 workers", func(t *testing.T) {
+		absOut, abs = run(t, ref, vcf, "4")
+	})
+	if len(rel) == 0 || !bytes.Equal(rel, abs) {
+		t.Fatalf("manifests differ:\n%s\n---\n%s", rel, abs)
+	}
+	for _, local := range []string{dir, ref, vcf, cfg, filepath.Dir(cfg), relOut, absOut, os.TempDir()} {
+		if bytes.Contains(abs, []byte(local)) {
+			t.Errorf("manifest contains the local path %s", local)
+		}
+	}
+	m, err := manifest.Read(filepath.Join(absOut, manifest.FileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		in   *manifest.Input
+		path string
+	}{{m.Reference, ref}, {m.Variants, vcf}} {
+		n, sum, _ := manifest.HashFile(c.path)
+		if c.in == nil || *c.in != (manifest.Input{Name: filepath.Base(c.path), Bytes: n, SHA256: sum}) {
+			t.Errorf("manifest records %+v for %s", c.in, c.path)
+		}
+	}
+	if m.Config.ReferencePath != "" || m.Config.VariantsPath != "" || m.Config.OutputDir != "" {
+		t.Errorf("manifest config keeps paths: reference %q variants %q output %q", m.Config.ReferencePath, m.Config.VariantsPath, m.Config.OutputDir)
+	}
+
+	// verify --reference: the run is regenerated from the FASTA whose
+	// sha256 matches, and refused without it.
+	fastq := filepath.Join(absOut, m.Outputs[0].Path)
+	reset := func() {
+		verifyCmd.Flags().VisitAll(func(f *pflag.Flag) {
+			if f.Changed {
+				if sv, ok := f.Value.(pflag.SliceValue); ok {
+					_ = sv.Replace(nil)
+				} else {
+					_ = f.Value.Set(f.DefValue)
+				}
+				f.Changed = false
+			}
+		})
+	}
+	t.Cleanup(reset)
+	verify := func(flags map[string][]string) error {
+		reset()
+		for k, vs := range flags {
+			for _, v := range vs {
+				if err := verifyCmd.Flags().Set(k, v); err != nil {
+					t.Fatalf("set --%s: %v", k, err)
+				}
+			}
+		}
+		return verifyCmd.RunE(verifyCmd, []string{fastq})
+	}
+	man := filepath.Join(absOut, manifest.FileName)
+	if err := verify(map[string][]string{"manifest": {man}, "reference": {vcf, ref}, "variants": {vcf}}); err != nil {
+		t.Errorf("verify --reference --variants: %v", err)
+	}
+	if err := verify(map[string][]string{"manifest": {man}, "variants": {vcf}}); err == nil || !strings.Contains(err.Error(), "--reference") {
+		t.Errorf("verify without --reference: err = %v", err)
+	}
 }

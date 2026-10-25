@@ -845,7 +845,9 @@ func (e *Engine) generateRun() (err error) {
 		m.Fingerprint = fp
 	}
 	m.Destination = dest.uri()
-	m.Variants = e.variantsInput
+	if err := e.recordInputs(m); err != nil {
+		return err
+	}
 	n := max(e.config.FlowCells, 1)
 	seen := map[string]bool{}
 	for k := 1; k <= n; k++ {
