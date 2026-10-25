@@ -1,0 +1,81 @@
+op	class	runs	size	events	fraction
+I	hp	<10	1	1	0.5
+I	hp	<10	2	1	0.5
+I	hp	<10	3	0	0
+I	hp	<10	4	0	0
+I	hp	<10	5	0	0
+I	hp	<10	6	0	0
+I	hp	<10	7	0	0
+I	hp	<10	8	0	0
+I	hp	<10	9	0	0
+I	hp	<10	10+	0	0
+I	hp	10+	1	1	1
+I	hp	10+	2	0	0
+I	hp	10+	3	0	0
+I	hp	10+	4	0	0
+I	hp	10+	5	0	0
+I	hp	10+	6	0	0
+I	hp	10+	7	0	0
+I	hp	10+	8	0	0
+I	hp	10+	9	0	0
+I	hp	10+	10+	0	0
+I	str		1	2	0.666667
+I	str		2	0	0
+I	str		3	1	0.333333
+I	str		4	0	0
+I	str		5	0	0
+I	str		6	0	0
+I	str		7	0	0
+I	str		8	0	0
+I	str		9	0	0
+I	str		10+	0	0
+I	bg		1	6	0.272727
+I	bg		2	3	0.136364
+I	bg		3	6	0.272727
+I	bg		4	1	0.0454545
+I	bg		5	1	0.0454545
+I	bg		6	2	0.0909091
+I	bg		7	0	0
+I	bg		8	0	0
+I	bg		9	0	0
+I	bg		10+	3	0.136364
+D	hp	<10	1	13	1
+D	hp	<10	2	0	0
+D	hp	<10	3	0	0
+D	hp	<10	4	0	0
+D	hp	<10	5	0	0
+D	hp	<10	6	0	0
+D	hp	<10	7	0	0
+D	hp	<10	8	0	0
+D	hp	<10	9	0	0
+D	hp	<10	10+	0	0
+D	hp	10+	1	5	0.833333
+D	hp	10+	2	1	0.166667
+D	hp	10+	3	0	0
+D	hp	10+	4	0	0
+D	hp	10+	5	0	0
+D	hp	10+	6	0	0
+D	hp	10+	7	0	0
+D	hp	10+	8	0	0
+D	hp	10+	9	0	0
+D	hp	10+	10+	0	0
+D	str		1	4	0.8
+D	str		2	1	0.2
+D	str		3	0	0
+D	str		4	0	0
+D	str		5	0	0
+D	str		6	0	0
+D	str		7	0	0
+D	str		8	0	0
+D	str		9	0	0
+D	str		10+	0	0
+D	bg		1	0	0
+D	bg		2	3	0.2
+D	bg		3	5	0.333333
+D	bg		4	0	0
+D	bg		5	2	0.133333
+D	bg		6	1	0.0666667
+D	bg		7	0	0
+D	bg		8	0	0
+D	bg		9	0	0
+D	bg		10+	4	0.266667

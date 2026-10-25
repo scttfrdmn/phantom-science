@@ -1,0 +1,78 @@
+section	key	class	parameter	value
+shape	pooled			
+fit	I	hp	intercept_a	-14.0235
+fit	I	hp	slope_b	0.393427
+fit	I	hp	observed	25
+fit	I	hp	expected	25
+fit	I	hp	deviance	53.78
+fit	I	hp	points	30
+fit	I	str	intercept_a	-12.1771
+fit	I	str	slope_b	0.528082
+fit	I	str	observed	15
+fit	I	str	expected	15
+fit	I	str	deviance	49.83
+fit	I	str	points	19
+fit	I	bg	rate	3.0308e-06
+fit	I	bg	observed	78
+fit	D	hp	intercept_a	-12.4288
+fit	D	hp	slope_b	0.394368
+fit	D	hp	observed	124
+fit	D	hp	expected	122.067
+fit	D	hp	deviance	81.5
+fit	D	hp	points	30
+fit	D	str	intercept_a	-12.4865
+fit	D	str	slope_b	0.527997
+fit	D	str	observed	11
+fit	D	str	expected	11
+fit	D	str	deviance	12.39
+fit	D	str	points	19
+fit	D	bg	rate	2.29253e-06
+fit	D	bg	observed	59
+sizes_events	I	hp<10		15
+sizes_events	I	hp10+		10
+sizes_events	I	str		15
+sizes_events	I	bg		78
+sizes_events	D	hp<10		81
+sizes_events	D	hp10+		43
+sizes_events	D	str		11
+sizes_events	D	bg		59
+dependence	I	cycle	chi2	chi2=4.68 df=4 p=0.322 blocks=1-30,31-60,61-90,91-120,121+ events=2,10,29,46,31
+dependence	D	cycle	chi2	chi2=4.61 df=4 p=0.33 blocks=1-30,31-60,61-90,91-120,121+ events=1,20,41,68,64
+dependence	I	mate	binomial	mate1=61 mate2=57 p=0.783
+dependence	D	mate	binomial	mate1=95 mate2=99 p=0.83
+quality	inserted	2		0
+quality	inserted	11		0.245436
+quality	inserted	25		0.111562
+quality	inserted	37		0.643002
+quality	deletion_flank	2		0
+quality	deletion_flank	11		0.471649
+quality	deletion_flank	25		0.154639
+quality	deletion_flank	37		0.373711
+heldout	DRR260182		I	observed=145 expected=130.014 ratio=1.115 ci=[122.36,170.615] expected_in_ci=yes rate=4.81521e-06
+heldout	DRR260182		D	observed=132 expected=200.298 ratio=0.659 ci=[110.443,156.535] expected_in_ci=no rate=4.3835e-06
+heldout	SRR30646135		I	observed=15 expected=11.776 ratio=1.274 ci=[8.39539,24.7402] expected_in_ci=yes rate=5.35186e-06
+heldout	SRR30646135		D	observed=21 expected=18.6621 ratio=1.125 ci=[12.9993,32.1007] expected_in_ci=yes rate=7.4926e-06
+heldout	ERR12737258		I	observed=79 expected=72.7105 ratio=1.087 ci=[62.545,98.4576] expected_in_ci=yes rate=4.60574e-06
+heldout	ERR12737258		D	observed=90 expected=111.341 ratio=0.8083 ci=[72.3706,110.625] expected_in_ci=no rate=5.24704e-06
+recovery	I	short	detail	set=recovery-novaseq6000-err15600747 profile=novaseq6000-err15600747 found=22 generated=30.123
+recovery	I	repeat	detail	set=recovery-novaseq6000-err15600747 profile=novaseq6000-err15600747 found=28 generated=44.9871
+recovery	I	bg	detail	set=recovery-novaseq6000-err15600747 profile=novaseq6000-err15600747 found=116 generated=128.955
+recovery	I	all	detail	set=recovery-novaseq6000-err15600747 profile=novaseq6000-err15600747 found=166 generated=204.065 rate=3.79587e-06 run_rate=4.46027e-06
+recovery	I	short	factor	1.17503
+recovery	I	repeat	factor	1.17503
+recovery	I	bg	factor	1.17503
+recovery	D	short	detail	set=recovery-novaseq6000-err15600747 profile=novaseq6000-err15600747 found=163 generated=158.85
+recovery	D	repeat	detail	set=recovery-novaseq6000-err15600747 profile=novaseq6000-err15600747 found=83 generated=113.709
+recovery	D	bg	detail	set=recovery-novaseq6000-err15600747 profile=novaseq6000-err15600747 found=74 generated=104.316
+recovery	D	all	detail	set=recovery-novaseq6000-err15600747 profile=novaseq6000-err15600747 found=320 generated=376.874 rate=7.31734e-06 run_rate=7.78361e-06
+recovery	D	short	factor	1.06372
+recovery	D	repeat	factor	1.06372
+recovery	D	bg	factor	1.06372
+profile	novaseq6000-pooled	pooled	I	observed=118 expected=118 scale=1 rate=4.58506e-06 ci=[3.79517e-06,5.49086e-06] bases=25735766
+profile	novaseq6000-pooled	pooled	D	observed=194 expected=192.067 scale=1.01006 rate=7.53815e-06 ci=[6.51467e-06,8.67679e-06] bases=25735766
+profile	novaseq6000-drr394916	DRR394916	I	observed=28 expected=18.7638 scale=1.49223 rate=6.54504e-06 ci=[4.34913e-06,9.45941e-06] bases=4278046
+profile	novaseq6000-drr394916	DRR394916	D	observed=39 expected=30.1104 scale=1.29523 rate=9.11631e-06 ci=[6.48259e-06,1.24623e-05] bases=4278046
+profile	novaseq6000-drr276626	DRR276626	I	observed=47 expected=30.4206 scale=1.545 rate=6.84989e-06 ci=[5.03304e-06,9.1089e-06] bases=6861428
+profile	novaseq6000-drr276626	DRR276626	D	observed=60 expected=47.3419 scale=1.26738 rate=8.74454e-06 ci=[6.673e-06,1.1256e-05] bases=6861428
+profile	novaseq6000-err15600747	ERR15600747	I	observed=102 expected=104.837 scale=0.972936 rate=4.46027e-06 ci=[3.63682e-06,5.41446e-06] bases=22868578
+profile	novaseq6000-err15600747	ERR15600747	D	observed=178 expected=171.073 scale=1.04049 rate=7.78361e-06 ci=[6.68211e-06,9.01484e-06] bases=22868578
