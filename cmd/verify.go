@@ -26,8 +26,15 @@ Candidates come from:
 --config is the global sequencer-config flag; it must describe the run as
 generated (generate flags such as --platform or --reference change it, which
 is why the manifest, holding the effective configuration, is preferred).
-A run generated with --variants is regenerated with the same VCF: pass it
-with --variants (the manifest records it by sha256, not by path). The key
+A run is regenerated with the files it read, which the manifest records by
+name, size and sha256, never by path: pass the VCF of a --variants run with
+--variants, the FASTA of a --reference run with --reference, the model of an
+hmm_model_path run with --hmm-model and the histogram of an empirical
+read-length run with --read-length-histogram. A file is used only when its
+sha256 matches the record; without it, verify refuses. (Manifests of
+phantom-science 0.14.0 and earlier record these paths instead: the file
+given with the same name, or the recorded path, is used unchecked, with a
+warning.) The key
 comes from --key-file or PHANTOM_FINGERPRINT_KEY. Each file gets one
 verdict: the candidate it matches, with the reads checked and matched and the
 matches expected by chance. --decoy also regenerates the first candidate with
@@ -60,6 +67,12 @@ fingerprint, or cannot be read.`,
 		opts.MaxRegenReads, _ = f.GetInt64("max-regen-reads")
 		opts.Decoy, _ = f.GetBool("decoy")
 		opts.Variants, _ = f.GetStringArray("variants")
+		opts.References, _ = f.GetStringArray("reference")
+		opts.HMMModels, _ = f.GetStringArray("hmm-model")
+		if p, _ := f.GetString("hmm-model-path"); p != "" { // the global flag names one more
+			opts.HMMModels = append(opts.HMMModels, p)
+		}
+		opts.ReadLengths, _ = f.GetStringArray("read-length-histogram")
 		cmd.SilenceUsage = true
 		return cli.VerifyFiles(os.Stdout, args, opts)
 	},
@@ -79,4 +92,7 @@ func init() {
 	f.Int64("max-regen-reads", 0, "Regenerate at most this many reads per candidate (0: all)")
 	f.Bool("decoy", false, "Also match against the first candidate regenerated with a random seed (measured background)")
 	f.StringArray("variants", nil, "VCF a candidate run planted variants from (generate --variants); matched to a manifest by sha256 (repeatable)")
+	f.StringArray("reference", nil, "Reference FASTA a candidate run sampled reads from (generate --reference); matched to a manifest by sha256 (repeatable)")
+	f.StringArray("hmm-model", nil, "HMM model a candidate run sampled bases from (hmm_model_path); matched to a manifest by sha256 (repeatable)")
+	f.StringArray("read-length-histogram", nil, "Read-length histogram a candidate run sampled lengths from (read_length_distribution.empirical_path); matched to a manifest by sha256 (repeatable)")
 }

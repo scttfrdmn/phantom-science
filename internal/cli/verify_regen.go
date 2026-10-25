@@ -51,9 +51,12 @@ type candidate struct {
 	salt, seed        uint64
 	config            types.SequencerConfig
 	files             []genomics.RunFile // nil: the configured plan
-	// variants is the VCF a manifest records the run planted variants
-	// from; nil for none (or a --config candidate, whose config names it).
-	variants *manifest.Input
+	// fromManifest marks a candidate whose configuration comes from a
+	// manifest (directly, or as the base of --candidates); inputs are the
+	// input files that manifest records (see verify_inputs.go). A --config
+	// candidate's configuration names its files.
+	fromManifest bool
+	inputs       runInputs
 }
 
 // candidateResult is the outcome of matching against one candidate.
@@ -71,7 +74,7 @@ func verifyByRegeneration(w io.Writer, paths []string, opts VerifyOptions) error
 	if err != nil {
 		return err
 	}
-	if err := resolveCandidateVariants(cands, opts.Variants); err != nil {
+	if err := resolveCandidateInputs(w, cands, opts); err != nil {
 		return err
 	}
 	var key []byte
@@ -152,7 +155,9 @@ func matchCandidate(m *fingerprinting.Matcher, c *candidate, seed uint64, regen 
 	cfg.Enterprise.Fingerprinting = types.FingerprintConfig{}
 	cfg.OutputDir, cfg.Workers = "", 0
 	regen.Files = c.files
-	regen.Variants = c.variants
+	// resolveCandidateInputs has matched the other input files to the
+	// manifest; checking them again would hash them for every candidate.
+	regen.Variants = c.inputs.variants
 	start := time.Now()
 	m.Reset()
 	e := genomics.NewEngineLog(cfg, io.Discard)
@@ -247,6 +252,7 @@ func loadCandidates(opts VerifyOptions) ([]*candidate, error) {
 		return nil, errors.New("--customer, --dataset and --salt describe a candidate for --config; a --manifest records its own")
 	}
 	var base *types.SequencerConfig
+	var baseManifest *candidate // the manifest base is taken from
 	for _, p := range opts.Manifests {
 		c, err := manifestCandidate(p)
 		if err != nil {
@@ -254,7 +260,7 @@ func loadCandidates(opts VerifyOptions) ([]*candidate, error) {
 		}
 		if base == nil {
 			cfg := c.config
-			base = &cfg
+			base, baseManifest = &cfg, c
 		}
 		if opts.Candidates == "" {
 			cands = append(cands, c)
@@ -274,7 +280,7 @@ func loadCandidates(opts VerifyOptions) ([]*candidate, error) {
 		if err != nil {
 			return nil, err
 		}
-		base = cfg
+		base, baseManifest = cfg, nil
 	}
 	switch {
 	case opts.Candidates != "":
@@ -284,6 +290,13 @@ func loadCandidates(opts VerifyOptions) ([]*candidate, error) {
 		list, err := readCandidates(opts.Candidates, *base)
 		if err != nil {
 			return nil, err
+		}
+		if baseManifest != nil {
+			// The manifest's configuration carries no input paths: the
+			// candidates read the input files it records.
+			for _, c := range list {
+				c.fromManifest, c.inputs = true, baseManifest.inputs
+			}
 		}
 		cands = append(cands, list...)
 	case opts.ConfigPath != "":
@@ -296,43 +309,6 @@ func loadCandidates(opts VerifyOptions) ([]*candidate, error) {
 		return nil, errors.New("no candidate runs: pass --manifest, or --config with --customer, --dataset and --salt, or --candidates")
 	}
 	return cands, nil
-}
-
-// resolveCandidateVariants points each candidate whose manifest records a
-// VCF at the file among paths with the same size and SHA-256, so the run is
-// regenerated with its variants; a candidate without one fails, rather than
-// being regenerated without its variants and reported as not matching.
-func resolveCandidateVariants(cands []*candidate, paths []string) error {
-	type vcf struct {
-		path string
-		in   manifest.Input
-	}
-	var have []vcf
-	for _, p := range paths {
-		n, sum, err := manifest.HashFile(p)
-		if err != nil {
-			return fmt.Errorf("--variants: %w", err)
-		}
-		have = append(have, vcf{p, manifest.Input{Name: filepath.Base(p), Bytes: n, SHA256: sum}})
-	}
-	for _, c := range cands {
-		want := c.variants
-		if want == nil {
-			continue
-		}
-		found := ""
-		for _, h := range have {
-			if h.in.SHA256 == want.SHA256 && h.in.Bytes == want.Bytes {
-				found = h.path
-				break
-			}
-		}
-		if found == "" {
-			return fmt.Errorf("%s: the run planted variants from %s (%d bytes, sha256 %s): pass that VCF with --variants", c.label, want.Name, want.Bytes, want.SHA256)
-		}
-		c.config.VariantsPath = found
-	}
-	return nil
 }
 
 // candidateLabel names a keyed-seed candidate in reports.
@@ -349,7 +325,9 @@ func manifestCandidate(path string) (*candidate, error) {
 	if m.Signal != nil {
 		return nil, fmt.Errorf("%s: a signal run's BLOW5 output cannot be verified by read regeneration", path)
 	}
-	c := &candidate{config: m.Config, variants: m.Variants}
+	c := &candidate{config: m.Config, fromManifest: true, inputs: runInputs{
+		variants: m.Variants, reference: m.Reference, model: m.HMMModel, readLengths: m.ReadLengths,
+	}}
 	switch fp := m.Fingerprint; {
 	case fp != nil && fp.Scheme == fingerprinting.KeyedSeedScheme:
 		c.keyed, c.customer, c.dataset, c.salt = true, fp.Customer, fp.Dataset, fp.Salt

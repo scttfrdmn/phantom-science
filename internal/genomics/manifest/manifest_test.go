@@ -17,7 +17,10 @@ func TestSanitizeConfig(t *testing.T) {
 	c := types.SequencerConfig{
 		SampleName: "S", OutputDir: "/home/me/out", Workers: 8, Seed: 3,
 		VariantsPath: "/home/me/calls.vcf.gz", VariantsRegion: "chr5:1-900",
-		Fingerprinting: types.FingerprintConfig{Enable: true, KeyFile: "/secret/k", SteganographyLayers: []string{"quality_scores"}},
+		ReferencePath: "/home/me/hg38.fa", ReferenceRegion: "chr22",
+		HMMModelPath: "/home/me/m.hmm.json", ModelDir: "/home/me/models", Population: "YRI",
+		ReadLengthDistribution: types.ReadLengthSpec{Dist: types.ReadLengthEmpirical, EmpiricalPath: "/home/me/lengths.tsv"},
+		Fingerprinting:         types.FingerprintConfig{Enable: true, KeyFile: "/secret/k", SteganographyLayers: []string{"quality_scores"}},
 		Enterprise: types.EnterpriseConfig{CustomerID: "c", LicenseKey: "LIC-123",
 			Fingerprinting: types.FingerprintConfig{KeyFile: "/secret/k2"}},
 	}
@@ -25,7 +28,19 @@ func TestSanitizeConfig(t *testing.T) {
 	if s.OutputDir != "" || s.Workers != 0 || s.Fingerprinting.KeyFile != "" || s.Enterprise.Fingerprinting.KeyFile != "" || s.Enterprise.LicenseKey != "" || s.VariantsPath != "" {
 		t.Errorf("not sanitized: %+v", s)
 	}
-	if s.SampleName != "S" || s.Seed != 3 || !s.Fingerprinting.Enable || s.Enterprise.CustomerID != "c" || s.VariantsRegion != "chr5:1-900" {
+	// No local path is left (#37): the manifest records input files by hash.
+	m := New("", 1, time.Unix(0, 0), c)
+	data, err := m.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, leak := range []string{"/home/me", "/secret", "LIC-123"} {
+		if bytes.Contains(data, []byte(leak)) {
+			t.Errorf("manifest holds %s:\n%s", leak, data)
+		}
+	}
+	if s.SampleName != "S" || s.Seed != 3 || !s.Fingerprinting.Enable || s.Enterprise.CustomerID != "c" || s.VariantsRegion != "chr5:1-900" ||
+		s.ReferenceRegion != "chr22" || s.Population != "YRI" || s.ReadLengthDistribution.Dist != types.ReadLengthEmpirical {
 		t.Errorf("settings lost: %+v", s)
 	}
 	s.Fingerprinting.SteganographyLayers[0] = "x"
