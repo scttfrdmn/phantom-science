@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"math"
 	"math/rand/v2"
+	"strings"
 	"testing"
 
 	"github.com/scttfrdmn/phantom-science/pkg/types"
@@ -43,6 +44,58 @@ func TestDefaultProfile(t *testing.T) {
 	}
 	if linearErrors != profileDRR276626.Errors {
 		t.Error("ApplyErrors is not novaseq6000-drr276626's substitution model")
+	}
+}
+
+// The pooled profile (#36) resolves by name and is not the default; it
+// describes the pool as the join of its runs, fitted to equal numbers of
+// pairs of each; its qualities, for the read lengths of its runs (2×151 and
+// 2×150), take only the NovaSeq values and reproduce from the seed.
+func TestPooledProfile(t *testing.T) {
+	p, err := LookupProfile("NovaSeq6000-Pooled")
+	if err != nil || p != &profilePOOLED {
+		t.Fatalf("LookupProfile(novaseq6000-pooled) = %v, %v", p, err)
+	}
+	if p.Name == DefaultProfile {
+		t.Fatal("the pooled profile is the default")
+	}
+	if len(p.Runs) != 3 {
+		t.Fatalf("%d runs, want 3", len(p.Runs))
+	}
+	var accs, studies []string
+	pairs, maxLen := 0, 0
+	for _, r := range p.Runs {
+		if r.Pairs != p.Runs[0].Pairs {
+			t.Errorf("%s: %d pairs, %s %d: the runs are not pooled equally", r.Accession, r.Pairs, p.Runs[0].Accession, p.Runs[0].Pairs)
+		}
+		if r.Instrument != "Illumina NovaSeq 6000" {
+			t.Errorf("%s: instrument %q", r.Accession, r.Instrument)
+		}
+		accs, studies = append(accs, r.Accession), append(studies, r.Study)
+		pairs += r.Pairs
+		maxLen = max(maxLen, r.ReadLength)
+	}
+	if got := strings.Join(accs, ","); p.Run.Accession != got || p.Run.Study != strings.Join(studies, ",") {
+		t.Errorf("pool %q / %q, runs %q / %q", p.Run.Accession, p.Run.Study, got, strings.Join(studies, ","))
+	}
+	if p.Run.Pairs != pairs || p.Run.ReadLength != maxLen {
+		t.Errorf("pool %d pairs 2x%d, runs %d pairs, longest %d", p.Run.Pairs, p.Run.ReadLength, pairs, maxLen)
+	}
+	for _, m := range []int{1, 2} {
+		q := p.Params(m)
+		for _, n := range []int{150, 151} {
+			r := newRand(3)
+			for range 2000 {
+				for _, v := range q.Qualities(r, n) {
+					if binIndex(v) < 0 {
+						t.Fatalf("read %d, %d cycles: quality %d is not a NovaSeq value", m, n, v)
+					}
+				}
+			}
+			if !bytes.Equal(q.Qualities(newRand(9), n), q.Qualities(newRand(9), n)) {
+				t.Errorf("read %d, %d cycles: same seed gave different qualities", m, n)
+			}
+		}
 	}
 }
 

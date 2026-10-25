@@ -1,0 +1,12 @@
+key	value
+pairs	200000
+lowq_threshold	20
+poor_mate_min_lowq_bases	5
+lowq_count_correlation	0.493206
+frac_r1_poor	0.298585
+frac_r2_poor	0.33737
+frac_both_poor	0.201185
+frac_both_poor_if_independent	0.100734
+both_poor_ratio	1.9972
+lowq30_count_correlation	0.563794
+block_mean_correlation	0.110773

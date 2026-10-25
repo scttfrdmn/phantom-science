@@ -1,0 +1,10 @@
+key	value
+source	ENA DRR394916 DRR276626 ERR15600747, the first 200000 read pairs of each, concatenated (Illumina NovaSeq 6000, PAIRED WGS; see profile_runs.tsv)
+reads_per_mate	600000
+reads_md5	a6403c44851fdb20a5ce4a65d331a65c,4ab00aa1f45e4d4f8c14d0dd79e2625a
+reference	hg38.primary.fa
+reference_sequences	24
+aligner	minimap2 2.31-r1302 (-ax sr --MD)
+samtools	samtools 1.24
+python	Python 3.15.0
+date	2026-10-25

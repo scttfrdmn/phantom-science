@@ -15,16 +15,20 @@ Run with `python3 -I` (no third-party packages). Subcommands:
       Reads run_e2e_tests reports: one per profile and run (real vs real,
       and real vs the profile's generated reads), and one per pair of runs
       (-real-fastq-b, real run A vs real run B). PROFILE=RUN names the run
-      each profile was fitted to; the other runs are held out. Writes
+      each profile was fitted to (PROFILE=RUN+RUN+... the runs a pooled
+      profile was fitted to, #36: each is one of its own runs); the runs no
+      profile was fitted to are held out. Writes
       classifier_matrix.tsv (every comparison), classifier_spread.tsv (per
       read and feature set, min / median / max of: the real-vs-real nulls,
       a profile against its own run, against the other fitted runs, against
-      the held-out runs, and real run against real run), profile_matrix.tsv
+      the held-out runs, and real run against real run),
+      profile_spread.tsv (the same per profile), profile_matrix.tsv
       (the accuracy of every profile's reads and every real run against
       every run) and profile_matching.tsv: per run, the profile chosen by
       the matching rule (the profile whose run is closest in the mean
-      quality of read 1 and read 2, STATS_ROOT/RUN/fastq_summary.tsv; for a
-      fitted run, among the other profiles), its accuracy, the best other
+      quality of read 1 and read 2, STATS_ROOT/RUN/fastq_summary.tsv, a
+      pooled profile's the mean of its runs'; for a fitted run, among the
+      profiles not fitted to it), its accuracy, the best other
       profile's, and the accuracy of the other real runs against the run.
 
   calibration OUTDIR STATS_ROOT PROFILE=RUN,... SET ...
@@ -33,8 +37,9 @@ Run with `python3 -I` (no third-party packages). Subcommands:
       generated reads of a profile are the set generated-PROFILE). Writes
       calibration_stats.tsv (one row per statistic and mate, one column per
       read set, the spread of the held-out runs, and each profile's
-      generated reads minus its run) and cycle_delta.tsv (mean |difference|
-      of the per-cycle quality fractions between every two read sets).
+      generated reads minus its run, for a pooled profile minus the mean of
+      its runs) and cycle_delta.tsv (mean |difference| of the per-cycle
+      quality fractions between every two read sets).
 
   structure OUTDIR STATS_ROOT PROFILE=RUN,... SET ...
       Puts the quality-structure statistics of each read set
@@ -175,6 +180,29 @@ def basequal(outdir, r1, r2):
 # ---------------------------------------------------------------- classifiers
 
 
+def parse_profiles(arg):
+    """PROFILE=RUN[+RUN...],... -> {profile: [runs it was fitted to]}."""
+    out = {}
+    for p in arg.split(","):
+        name, runs = p.split("=", 1)
+        out[name] = runs.split("+")
+    return out
+
+
+def fitted_set(profiles):
+    return {r for runs in profiles.values() for r in runs}
+
+
+def mean_minus(stats, gen, runs, key):
+    """stats[gen][key] minus the mean over runs of stats[run][key]; None
+    when a value is missing."""
+    a = stats[gen].get(key)
+    b = [stats[r].get(key) for r in runs]
+    if not isinstance(a, float) or not all(isinstance(v, float) for v in b):
+        return None
+    return a - sum(b) / len(b)
+
+
 def comparisons(cs):
     return {c["feature_set"]: c for c in cs or []}
 
@@ -206,13 +234,14 @@ def classifiers(outdir, args):
     i = args.index("--")
     j = args.index("--", i + 1)
     root, prof_arg = args[0], args[1]
-    profiles = dict(p.split("=", 1) for p in prof_arg.split(","))
-    fitted_runs = set(profiles.values())
+    profiles = parse_profiles(prof_arg)
+    fitted_runs = fitted_set(profiles)
     gens = [a.split("=", 1) for a in args[i + 1 : j]]
     crosses = [a.split("=", 1) for a in args[j + 1 :]]
     rows = []
     acc = {}  # (read, features, a, b) -> accuracy; a is "real:RUN" or a profile
     spread = {}  # (read, features) -> kind -> [accuracy]
+    pspread = {}  # (profile, read, features) -> kind -> [accuracy]
     runs = []
 
     def add(kind, a, b, read, c):
@@ -229,7 +258,7 @@ def classifiers(outdir, args):
             if run not in seen_null:
                 for c in null:
                     add("real_vs_real", "real:" + run, run, read, c)
-            if profiles[prof] == run:
+            if run in profiles[prof]:
                 kind = "generated_vs_own_run"
             elif run in fitted_runs:
                 kind = "generated_vs_other_fitted_run"
@@ -237,6 +266,7 @@ def classifiers(outdir, args):
                 kind = "generated_vs_heldout_run"
             for c in gen or []:
                 add(kind, prof, run, read, c)
+                pspread.setdefault((prof, read, c["feature_set"]), {}).setdefault(kind, []).append(c["accuracy"])
         seen_null.add(run)
     for pair, path in crosses:
         a, b = pair.split(":", 1)
@@ -265,6 +295,21 @@ def classifiers(outdir, args):
         header += [f"{k}_n", f"{k}_min", f"{k}_median", f"{k}_max"]
     write_tsv(os.path.join(outdir, "classifier_spread.tsv"), header, out)
 
+    # The same per profile: each profile against its own run(s), the other
+    # fitted runs and the held-out runs.
+    pkinds = kinds[1:4]
+    prow = []
+    for (prof, read, fs), d in pspread.items():
+        row = [prof, "+".join(profiles[prof]), read, fs]
+        for k in pkinds:
+            v = sorted(d.get(k, []))
+            row += [len(v), fmt(v[0], 4) if v else "", fmt(statistics.median(v), 4) if v else "", fmt(v[-1], 4) if v else ""]
+        prow.append(row)
+    pheader = ["profile", "fitted_to", "read", "features"]
+    for k in pkinds:
+        pheader += [f"{k}_n", f"{k}_min", f"{k}_median", f"{k}_max"]
+    write_tsv(os.path.join(outdir, "profile_spread.tsv"), pheader, prow)
+
     # Profile x run matrix: generated reads of each profile, and each real
     # run, against each run (the diagonal of the real rows is the
     # real-vs-real null).
@@ -272,7 +317,7 @@ def classifiers(outdir, args):
     mrows = []
     for read, fs in MATRIX_SETS:
         for s in sources:
-            role = "profile fitted to " + profiles[s] if s in profiles else ("fitted run" if s[5:] in fitted_runs else "held-out run")
+            role = "profile fitted to " + "+".join(profiles[s]) if s in profiles else ("fitted run" if s[5:] in fitted_runs else "held-out run")
             mrows.append([read, fs, s, role] + [fmt(acc.get((read, fs, s, r)), 4) for r in runs])
     write_tsv(os.path.join(outdir, "profile_matrix.tsv"), ["read", "features", "source", "role"] + runs, mrows)
 
@@ -283,9 +328,10 @@ def classifiers(outdir, args):
     for run in runs:
         dist = {}
         for p, fr in profiles.items():
-            dist[p] = math.sqrt(sum((st[run][k] - st[fr][k]) ** 2 for k in MATCH_STATS))
-        # a fitted run is matched among the other profiles
-        cands = [p for p in profiles if profiles[p] != run]
+            centre = {k: sum(st[r][k] for r in fr) / len(fr) for k in MATCH_STATS}
+            dist[p] = math.sqrt(sum((st[run][k] - centre[k]) ** 2 for k in MATCH_STATS))
+        # a fitted run is matched among the profiles not fitted to it
+        cands = [p for p in profiles if run not in profiles[p]]
         matched = min(cands, key=lambda p: dist[p])
         for read, fs in MATRIX_SETS:
             gen = {p: acc.get((read, fs, p, run)) for p in profiles}
@@ -420,8 +466,8 @@ def cycle_delta(a, b):
 def calibration(outdir, args):
     """calibration OUTDIR STATS_ROOT PROFILE=RUN,... SET ..."""
     root, prof_arg, sets = args[0], args[1], args[2:]
-    profiles = dict(p.split("=", 1) for p in prof_arg.split(","))
-    fitted = set(profiles.values())
+    profiles = parse_profiles(prof_arg)
+    fitted = fitted_set(profiles)
     stats = {n: set_stats(os.path.join(root, n)) for n in sets}
     gen = {p: "generated-" + p for p in profiles if "generated-" + p in stats}
     heldout = [n for n in sets if n not in fitted and not n.startswith("generated-")]
@@ -438,12 +484,11 @@ def calibration(outdir, args):
         row = [stat, mate if mate else "pair"] + [fmt(v) if not isinstance(v, str) else v for v in vals]
         row += [fmt(min(hv)), fmt(statistics.median(hv)), fmt(max(hv))] if hv else [""] * 3
         for p, g in gen.items():
-            a, b = stats[g].get((stat, mate)), stats[profiles[p]].get((stat, mate))
-            row.append(fmt(a - b) if isinstance(a, float) and isinstance(b, float) else "")
+            row.append(fmt(mean_minus(stats, g, profiles[p], (stat, mate))))
         rows.append(row)
     write_tsv(
         os.path.join(outdir, "calibration_stats.tsv"),
-        ["statistic", "mate"] + sets + ["heldout_min", "heldout_median", "heldout_max"] + [f"{g}_minus_{profiles[p]}" for p, g in gen.items()],
+        ["statistic", "mate"] + sets + ["heldout_min", "heldout_median", "heldout_max"] + [f"{g}_minus_{'+'.join(profiles[p])}" for p, g in gen.items()],
         rows,
     )
     cyc = {n: cycle_fracs(os.path.join(root, n)) for n in sets}
@@ -464,10 +509,11 @@ def structure(outdir, args):
     Puts the structure.tsv of every read set (illumina_stats.py structure)
     side by side in structure_compare.tsv: one row per statistic and mate,
     one column per set, the spread of the held-out runs and each profile's
-    generated reads minus its run."""
+    generated reads minus its run (a pooled profile's minus the mean of its
+    runs)."""
     root, prof_arg, sets = args[0], args[1], args[2:]
-    profiles = dict(p.split("=", 1) for p in prof_arg.split(","))
-    fitted = set(profiles.values())
+    profiles = parse_profiles(prof_arg)
+    fitted = fitted_set(profiles)
     heldout = [n for n in sets if n not in fitted and not n.startswith("generated-")]
     vals, keys = {}, []
     for n in sets:
@@ -485,12 +531,12 @@ def structure(outdir, args):
         row = list(k) + [fmt(v[n]) if n in v else "" for n in sets]
         row += [fmt(min(hv)), fmt(statistics.median(hv)), fmt(max(hv))] if hv else [""] * 3
         for p, g in gen.items():
-            a, b = v.get(g), v.get(profiles[p])
-            row.append(fmt(a - b) if a is not None and b is not None else "")
+            a, b = v.get(g), [v.get(r) for r in profiles[p]]
+            row.append(fmt(a - sum(b) / len(b)) if a is not None and None not in b else "")
         rows.append(row)
     write_tsv(
         os.path.join(outdir, "structure_compare.tsv"),
-        ["section", "mate", "key"] + sets + ["heldout_min", "heldout_median", "heldout_max"] + [f"{g}_minus_{profiles[p]}" for p, g in gen.items()],
+        ["section", "mate", "key"] + sets + ["heldout_min", "heldout_median", "heldout_max"] + [f"{g}_minus_{'+'.join(profiles[p])}" for p, g in gen.items()],
         rows,
     )
 

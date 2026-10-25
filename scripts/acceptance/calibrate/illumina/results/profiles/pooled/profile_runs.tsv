@@ -1,0 +1,4 @@
+accession	study	instrument	center	library	nominal_insert	read_length	pairs	md5_r1	md5_r2
+DRR394916	PRJDB13883	Illumina NovaSeq 6000	NCCHD	TruSeq DNA PCR Free Kit	567	151	200000	c7676887d9c4de2b4a37736318084451	4df7119fc82eb558af41a8e76c63af77
+DRR276626	PRJDB11215	Illumina NovaSeq 6000	SAGA_U	not recorded (nominal insert 626)	626	151	200000	e74f844a2a16d15b10496df2f99b62c2	e2e45360457951787657ecb23c69d9b3
+ERR15600747	PRJEB97783	Illumina NovaSeq 6000	European Bioinformatics Institute;SOTON	Peripheral blood mononuclear cell samples via venipuncture Qiagne DNeasy column extraction Agilent SureSelect QXT whole genome library preparation kit		150	200000	7992b99621cde9121271dc1e2ad43db5	89d645ed8d00d83b5967baf45830af5c

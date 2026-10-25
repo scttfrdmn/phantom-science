@@ -1,5 +1,5 @@
-E2E measurements: 1 platform(s), base seed 1, 38.3s
-Generated bases: reference /Users/scttfrdmn/.xtmp/ps-36/ref/hg38.primary.fa
+E2E measurements: 1 platform(s), base seed 1, 31.5s
+Generated bases: reference /Users/scttfrdmn/.xtmp/ps-pooled/heldout/hg38.primary.fa
 Illumina profile: novaseq6000-drr394916
 
 READS (computed from the generated FASTQ)
@@ -8,7 +8,7 @@ Platform                   Reads       Bases   MeanLen  MinLen  MaxLen     N50  
 ----------------------------------------------------------------------------------------------------
 illumina_novaseq_6000       1000      150000     150.0     150     150     150   35.40 0.4132
 
-REAL VERSUS GENERATED (/Users/scttfrdmn/.xtmp/ps-36/heldout-work/reads/DRR394916_1.fastq + /Users/scttfrdmn/.xtmp/ps-36/heldout-work/reads/DRR394916_2.fastq; generated from reference /Users/scttfrdmn/.xtmp/ps-36/ref/hg38.primary.fa)
+REAL VERSUS GENERATED (/Users/scttfrdmn/.xtmp/ps-pooled/heldout/reads/DRR394916_1.fastq + /Users/scttfrdmn/.xtmp/ps-pooled/heldout/reads/DRR394916_2.fastq; generated from reference /Users/scttfrdmn/.xtmp/ps-pooled/heldout/hg38.primary.fa)
 ----------------------------------------------------------------------------------------------------
 illumina_novaseq_6000: 200000 real pairs (mean Q 35.29, GC 0.4072), 200000 generated (mean Q 35.29, GC 0.4090, 151 bp)
   read 2: real mean Q 34.60, GC 0.4097; generated mean Q 34.61, GC 0.4088
@@ -48,5 +48,5 @@ illumina_novaseq_6000: 200000 real pairs (mean Q 35.29, GC 0.4072), 200000 gener
     pair pair      r1:mean_qual_C                     real   35.50451  generated   35.56369  d  +0.023
 
 Failures: 0
-wrote /Users/scttfrdmn/.xtmp/ps-36/heldout-work/e2e/novaseq6000-drr394916_DRR394916/e2e_results.json
-wrote /Users/scttfrdmn/.xtmp/ps-36/heldout-work/e2e/novaseq6000-drr394916_DRR394916/e2e_summary.csv
+wrote /Users/scttfrdmn/.xtmp/ps-pooled/heldout/e2e/novaseq6000-drr394916_DRR394916/e2e_results.json
+wrote /Users/scttfrdmn/.xtmp/ps-pooled/heldout/e2e/novaseq6000-drr394916_DRR394916/e2e_summary.csv

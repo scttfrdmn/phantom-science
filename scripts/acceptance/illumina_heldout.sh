@@ -36,8 +36,11 @@
 #   RUNS     ["DRR276626 DRR394916 ERR15600747 DRR260182 SRR30646135
 #            ERR12737258"]; the runs of PROFILES and the held-out runs
 #   PROFILES ["novaseq6000-drr276626=DRR276626 novaseq6000-drr394916=DRR394916
-#            novaseq6000-err15600747=ERR15600747"]: each profile and the run
-#            it was fitted to; runs without a profile are held out
+#            novaseq6000-err15600747=ERR15600747
+#            novaseq6000-pooled=DRR394916+DRR276626+ERR15600747"]: each
+#            profile and the run it was fitted to (RUN+RUN+... the runs of
+#            a pooled profile, #36, whose generated reads are kept for the
+#            first); runs without a profile are held out
 #   PAIRS    [200000]  THREADS [8]  SEED [1]
 #   RESULTS [scripts/acceptance/calibrate/illumina/results/heldout]
 #   MMI     [WORK/reference.mmi, built with minimap2 -x sr -d]
@@ -58,12 +61,15 @@ done
 
 read -r -a runs <<<"${RUNS:-DRR276626 DRR394916 ERR15600747 DRR260182 SRR30646135 ERR12737258}"
 [[ ${#runs[@]} -ge 2 ]] || die "RUNS needs at least two runs"
-read -r -a profiles <<<"${PROFILES:-novaseq6000-drr276626=DRR276626 novaseq6000-drr394916=DRR394916 novaseq6000-err15600747=ERR15600747}"
+read -r -a profiles <<<"${PROFILES:-novaseq6000-drr276626=DRR276626 novaseq6000-drr394916=DRR394916 novaseq6000-err15600747=ERR15600747 novaseq6000-pooled=DRR394916+DRR276626+ERR15600747}"
 [[ ${#profiles[@]} -ge 1 ]] || die "PROFILES needs at least one profile"
 prof_names=()
 for pr in "${profiles[@]}"; do
 	[[ "$pr" == *=* ]] || die "PROFILES entry $pr is not PROFILE=RUN"
-	[[ " ${runs[*]} " == *" ${pr#*=} "* ]] || die "the run of profile $pr is not in RUNS"
+	IFS=+ read -r -a own_runs <<<"${pr#*=}"
+	for r in "${own_runs[@]}"; do
+		[[ " ${runs[*]} " == *" $r "* ]] || die "run $r of profile $pr is not in RUNS"
+	done
 	prof_names+=("${pr%%=*}")
 done
 prof_list="$(IFS=,; echo "${profiles[*]}")"
@@ -175,6 +181,7 @@ run_args=()
 for pr in "${profiles[@]}"; do
 	p="${pr%%=*}"
 	own="${pr#*=}"
+	own="${own%%+*}"
 	for acc in "${runs[@]}"; do
 		auth=false
 		gen=()
@@ -202,7 +209,9 @@ for ((i = 0; i < ${#runs[@]}; i++)); do
 done
 for pr in "${profiles[@]}"; do
 	p="${pr%%=*}"
-	cp "$work/e2e/${p}_${pr#*=}.txt" "$results/run_e2e_tests_${p}_${pr#*=}.txt"
+	own="${pr#*=}"
+	own="${own%%+*}"
+	cp "$work/e2e/${p}_$own.txt" "$results/run_e2e_tests_${p}_$own.txt"
 done
 
 # 4. Calibration statistics of every run and of every profile's reads.

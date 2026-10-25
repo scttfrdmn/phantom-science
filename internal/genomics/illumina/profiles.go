@@ -10,6 +10,12 @@ package illumina
 // size of its library. Profiles are named for the instrument and the run's
 // accession.
 //
+// A pooled profile (#36, novaseq6000-pooled) is fitted by the same
+// pipeline to equal numbers of read pairs of several runs together
+// (illumina_calibrate.sh with several runs in ACCESSION): it aims at the
+// centre of the runs rather than at one of them. Its Runs list the runs;
+// its insert sizes are those of the pooled pairs.
+//
 // # The default
 //
 // DefaultProfile, used when illumina.profile is not set, is
@@ -69,8 +75,14 @@ type RunStats struct {
 type Profile struct {
 	// Name selects the profile (illumina.profile), e.g.
 	// "novaseq6000-drr276626".
-	Name  string
-	Run   RunInfo
+	Name string
+	// Run describes the run the profile was fitted to; for a profile
+	// pooled from several runs (Runs), the pool: its accessions and studies
+	// joined by commas, its longest read length and its total pairs.
+	Run RunInfo
+	// Runs are the runs a pooled profile was fitted to, equal numbers of
+	// read pairs of each (#36); nil for a profile fitted to one run.
+	Runs  []RunInfo
 	Stats RunStats
 	// Read1 and Read2 are the quality models of the two mates (Read1 also
 	// of single-end reads); Pairs couples their classes.
@@ -93,7 +105,7 @@ type Profile struct {
 const DefaultProfile = "novaseq6000-drr394916"
 
 // profiles lists the fitted profiles, the default first.
-var profiles = []*Profile{&profileDRR394916, &profileDRR276626, &profileERR15600747}
+var profiles = []*Profile{&profileDRR394916, &profileDRR276626, &profileERR15600747, &profilePOOLED}
 
 // ProfileNames returns the names of the fitted profiles, the default first.
 func ProfileNames() []string {

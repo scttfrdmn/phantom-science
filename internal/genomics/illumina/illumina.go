@@ -31,7 +31,16 @@
 //     94.7 %, Q11 1.6 % / 2.0 %, insert median 446;
 //   - novaseq6000-err15600747: ERR15600747, EBI / Southampton, Agilent
 //     SureSelect QXT, 2×150; mean Q 34.57 / 34.31, 86.5 % / 85.5 %, Q11
-//     5.8 % / 6.8 %, insert median 361.
+//     5.8 % / 6.8 %, insert median 361;
+//   - novaseq6000-pooled (#36): the three runs above pooled, the same
+//     200,000 pairs of each fitted together as one run, so that the read
+//     classes span the runs (2×151; the 2×150 run's reads keep their
+//     length); mean Q 35.36 / 34.99, 90.7 % / 89.0 %, Q11 3.8 % / 4.9 %,
+//     inserts the pooled pairs' (median 462, lognormal 465 ± 140). Against
+//     the NovaSeq 6000 runs no profile was fitted to it is the closest
+//     profile (scripts/acceptance/calibrate/illumina/results/heldout,
+//     profile_spread.tsv); against each fitted run it is further than that
+//     run's own profile.
 //
 // The insert size belongs to the profile because a profile reproduces one
 // run, and the run's library is part of it; illumina.insert_size overrides
