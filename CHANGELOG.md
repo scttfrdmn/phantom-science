@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+Illumina profile `novaseq6000-pooled` (#36), fitted to 600,000 read pairs pooled from DRR394916, DRR276626 and ERR15600747 (200,000 each). Against three never-fitted NovaSeq 6000 runs it is the closest profile: held-out median pair classifier 0.615, read-1 quality 0.568, read-2 quality 0.590, against 0.648 / 0.606 / 0.627 for the default `novaseq6000-drr394916`. Select it with `illumina.profile` or `--illumina-profile novaseq6000-pooled`.
+`illumina_calibrate.sh` fits a pooled profile when `ACCESSION` lists several runs (equal pairs of each; per-run ENA metadata in `profile_runs.tsv`). `illumina_heldout.sh` accepts `PROFILE=RUN+RUN+...` and writes `profile_spread.tsv` (per-profile own / other-fitted / held-out spread).
+
+### Changed
+`fit_illumina.py` takes the read-class EM's expected low-bin count per read as the reads' mean count, so runs of different lengths keep the classes normalised. Single-run profiles are unchanged (byte-identical).
+`illumina_heldout.sh` includes `novaseq6000-pooled` in its default `PROFILES`; `results/heldout` re-measured 2026-10-25 (single-run numbers unchanged).
+
 ## [0.14.0] - 2026-10-24
 
 ### Added

@@ -107,6 +107,7 @@ median 0.675):
 | drr276626 | **0.551** | 0.742 | 0.777 | 0.678 | 0.752 | 0.690 |
 | drr394916 | 0.757 | **0.570** | 0.654 | 0.655 | 0.640 | 0.648 |
 | err15600747 | 0.796 | 0.662 | **0.583** | 0.698 | 0.703 | 0.707 |
+| pooled (DRR394916+DRR276626+ERR15600747) | 0.692 | 0.600 | 0.628 | **0.598** | 0.650 | **0.615** |
 
 Each profile is close to its own run, and against every other run it scores
 about what its real run scores (within −0.003 to +0.037). Choosing the
@@ -115,8 +116,23 @@ scoring 0.640–0.655: within the range of the other real runs against those
 runs, above their median. Limitation: read-2 G calls are poorer in DRR394916
 and ERR15600747 than their profiles make them (mean Q 0.20 and 0.33 lower).
 
+**Pooled profile (#36).** `novaseq6000-pooled` is fitted by the same
+pipeline to the three fitted runs together (200,000 pairs of each, 600,000 in
+all), so its read classes span the runs. Against the three held-out runs
+(`results/heldout/profile_spread.tsv`) its medians are read-1 quality 0.568,
+read-2 quality 0.590 and pair 0.615. For the default drr394916 they are
+0.606, 0.627 and 0.648; drr276626 and err15600747 are higher still. The
+pooled medians are also below the real-run-vs-real-run medians (0.619, 0.601,
+0.675), so generated reads are closer to an unfitted run than a typical real
+run is. It is best on DRR260182 and ERR12737258. On SRR30646135 drr394916 is
+slightly closer (pair 0.640 vs 0.650). Against each fitted run it is further
+than that run's own profile (pair 0.600–0.692 vs 0.551–0.583). Limitations:
+three held-out runs; pooled mates are more coupled than in any one fitted run
+(below-Q30 count correlation 0.56); its inserts (lognormal 465 ± 140) are the
+pooled libraries', larger than the held-out runs'.
+
 Results: `scripts/acceptance/calibrate/illumina/results/heldout/`
-(`classifier_spread.tsv`, `classifier_matrix.tsv`,
+(`classifier_spread.tsv`, `profile_spread.tsv`, `classifier_matrix.tsv`,
 `calibration_stats.tsv`).
 
 In the same runs the GC control scored 0.973–0.994 and the quality control
