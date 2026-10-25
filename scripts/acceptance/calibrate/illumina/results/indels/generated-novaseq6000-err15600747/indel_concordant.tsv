@@ -1,0 +1,7 @@
+op	class	events
+I	hp	0
+I	str	0
+I	bg	0
+D	hp	6
+D	str	1
+D	bg	1

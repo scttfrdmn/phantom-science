@@ -13,6 +13,7 @@ is missing.
 | `transcriptome_bambu.sh` | Bambu quantification and novel-isoform discovery on simulated cDNA | #13 | Completed on GRCh38 chr22 / GENCODE v49: count Pearson 0.872, Spearman 0.832; novel precision 0.90, recall 0.55 |
 | `pycoqc.sh` | PycoQC reads a generated `sequencing_summary.txt` | #16 | Passed: PycoQC 2.5.2 counted all 537 reads |
 | `illumina_heldout.sh` | The Illumina run profiles (three single-run, one pooled) against three held-out NovaSeq 6000 runs and against real-run-vs-real-run distances | #35, #36 | Run 2026-10-25: results in `calibrate/illumina/results/heldout/` (see below) |
+| `illumina_indels.sh` | Illumina indel error rates where mates overlap (three fitted runs, their pool, three held-out runs), the fit of the indel model, and the closed loop on generated reads | #30 | Run 2026-10-25: results in `calibrate/illumina/results/indels/` (see below) |
 | `../fetch-pore-model.sh` | Downloads an ONT k-mer pore model for `signal` | #14 | Used for the end-to-end example below |
 
 Until a script has been run, the feature it checks has only the repository's
@@ -243,6 +244,67 @@ the md5 of the streamed reads, are in `calibrate/illumina/results/heldout/`:
 `cycle_delta.tsv`, `structure_compare.tsv`, `runs.tsv`, `run.tsv`, and per
 read set `sets/NAME/`.
 About 45 minutes on 12 cores; 9 GB for the minimap2 index.
+
+## illumina_indels.sh (#30)
+
+```sh
+scripts/acceptance/illumina_indels.sh hg38.primary.fa
+```
+
+Measures indel errors where the two mates of a proper pair overlap: an
+indel in one mate only, after left-normalisation against the reference
+(rebuilt from SEQ, CIGAR and MD), is a sequencing error; one in both is the
+sample's (`illumina_stats.py indels`). Left out as alignment artefacts:
+mates that end inside the repeat, an indel of the other mate within 10
+bases or the other mate's mismatches there (the same difference aligned
+another way), an insertion and a deletion of one mate within 10 bases
+(mismatches aligned as two gaps), and errors of different pairs within 50
+bases (misaligned repeats). Errors are counted per homopolymer run by its
+length, per short tandem repeat (2-6 base units) by its copies and per
+base, with exact Poisson 95 % intervals. Only the overlap is measured (from
+cycle insert − read length to the end of both mates, so early cycles come
+only from short inserts), and indels within 10 bases of an alignment end
+are not compared.
+
+The runs of `RUNS` (default DRR394916 and DRR276626, 4,000,000 pairs each,
+whose long inserts rarely overlap, and ERR15600747, 1,000,000) and
+`HELDOUT` (DRR260182, SRR30646135, ERR12737258, 1,000,000 each; no profile
+is fitted to them) are streamed from ENA and aligned with minimap2; the
+pool is the first 1,000,000 pairs of each fitted run. `fit_indels.py` fits
+the model's shape to the pool and each profile's insertion and deletion
+rates to its run. With `RECOVERY` (default
+`novaseq6000-err15600747=2000000`) it builds phantom-science with that
+model, generates reads from the reference (seed `SEED` + 1), measures them
+(`recovery-PROFILE`) and refits with the rates multiplied by the run's
+measured rate over the generated reads' (×1.18 insertions, ×1.06
+deletions). It writes `internal/genomics/illumina/profile_indels.go` and
+`indel_fit.tsv` (the fits, the held-out runs against the pooled model, the
+recovery, and tests of a cycle or mate dependence). Then the closed loop:
+reads generated with each profile of `GENERATED` (default
+`novaseq6000-pooled=3000000 novaseq6000-err15600747=2000000`) measured
+the same way (`generated-PROFILE`, checked by
+`TestCalibration_IndelClosedLoop`), and of `FLOOR` without indel errors
+(`floor-PROFILE`: what the method finds where there is nothing). Results,
+with the md5 of the streamed and generated reads, are in
+`calibrate/illumina/results/indels/`: `summary.tsv` (every set's rates),
+`indel_fit.tsv`, `runs.tsv`, `run.tsv` and per set `indel_*.tsv`
+(summary, classes by repeat, coarser `indel_repeats.tsv`, lengths, sizes,
+cycles, qualities, the sample's indels, every error in `indel_events.tsv`).
+About 70 minutes on 12 cores with the downloads; 9 GB for the minimap2
+index.
+
+| Set | Pairs | Insertions per base (95 %), errors | Deletions per base (95 %), errors |
+|---|---|---|---|
+| pool (3 × 1,000,000) | 3,000,000 | 4.6·10⁻⁶ (3.8-5.5), 118 | 7.5·10⁻⁶ (6.5-8.7), 194 |
+| DRR394916 | 4,000,000 | 6.5·10⁻⁶ (4.3-9.5), 28 | 9.1·10⁻⁶ (6.5-12.5), 39 |
+| DRR276626 | 4,000,000 | 6.8·10⁻⁶ (5.0-9.1), 47 | 8.7·10⁻⁶ (6.7-11.3), 60 |
+| ERR15600747 | 1,000,000 | 4.5·10⁻⁶ (3.6-5.4), 102 | 7.8·10⁻⁶ (6.7-9.0), 178 |
+| DRR260182 (held out) | 1,000,000 | 4.8·10⁻⁶ (4.1-5.7), 145 | 4.4·10⁻⁶ (3.7-5.2), 132 |
+| SRR30646135 (held out) | 1,000,000 | 5.4·10⁻⁶ (3.0-8.8), 15 | 7.5·10⁻⁶ (4.6-11.5), 21 |
+| ERR12737258 (held out) | 1,000,000 | 4.6·10⁻⁶ (3.6-5.7), 79 | 5.2·10⁻⁶ (4.2-6.4), 90 |
+| generated, novaseq6000-pooled | 3,000,000 | 4.6·10⁻⁶ (3.4-6.1), 50 | 7.4·10⁻⁶ (5.9-9.2), 81 |
+| generated, novaseq6000-err15600747 | 2,000,000 | 5.2·10⁻⁶ (4.6-6.0), 230 | 7.8·10⁻⁶ (7.0-8.7), 342 |
+| generated without indel errors (floor) | 2,000,000 | 1.1·10⁻⁷ (0.4-2.7), 5 | 2.0·10⁻⁷ (0.9-3.9), 9 |
 
 ## transcriptome_bambu.sh (#13)
 

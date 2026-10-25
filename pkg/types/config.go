@@ -232,9 +232,12 @@ const (
 	IlluminaQualityBinned = "binned"
 	IlluminaQualityLinear = "linear"
 	IlluminaErrorsQuality = "quality"
-	IlluminaErrorsNone    = "none"
-	InsertSizeNormal      = "normal"
-	InsertSizeLognormal   = "lognormal"
+	// IlluminaErrorsSubstitutions is "quality" without indel errors (#30):
+	// the output of releases before indel errors were modelled.
+	IlluminaErrorsSubstitutions = "substitutions"
+	IlluminaErrorsNone          = "none"
+	InsertSizeNormal            = "normal"
+	InsertSizeLognormal         = "lognormal"
 	// The default insert size is lognormal with the mean and SD measured on
 	// proper pairs of NovaSeq 6000 run DRR276626 aligned to GRCh38 (454.5 ±
 	// 99.8, right-skewed; scripts/acceptance/illumina_calibrate.sh), the
@@ -271,11 +274,15 @@ type IlluminaSpec struct {
 	// Names are checked by the engine (illumina.ProfileNames); it needs
 	// quality_model binned.
 	Profile string `json:"profile,omitempty" yaml:"profile,omitempty"`
-	// Errors is "quality" or "none". "quality" substitutes bases at the
-	// measured rate of their quality and cycle and writes Q2 bases as N
-	// (with the linear model, at 10^(−Q/10)); "none" leaves bases
-	// as generated. Empty means "quality" for the binned model and "none"
-	// for the linear one.
+	// Errors is "quality", "substitutions" or "none". "quality"
+	// substitutes bases at the measured rate of their quality and cycle,
+	// writes Q2 bases as N and, with the binned model, makes indel errors
+	// at the profile's measured rates (#30; mostly in homopolymers and
+	// tandem repeats); with the linear model it substitutes at
+	// 10^(−Q/10) and makes no indels. "substitutions" is "quality"
+	// without the indel errors (the binned output of earlier releases);
+	// "none" leaves bases as generated. Empty means "quality" for the
+	// binned model and "none" for the linear one.
 	Errors string `json:"errors,omitempty" yaml:"errors,omitempty"`
 	// InsertSize is the fragment-length distribution of paired-end reads.
 	// Resolution, in order: set (any field), it wins, its empty fields
@@ -338,9 +345,9 @@ func (s IlluminaSpec) Validate() error {
 		return fmt.Errorf("unknown illumina quality_model %q: want binned or linear", s.QualityModel)
 	}
 	switch s.Errors {
-	case IlluminaErrorsQuality, IlluminaErrorsNone:
+	case IlluminaErrorsQuality, IlluminaErrorsSubstitutions, IlluminaErrorsNone:
 	default:
-		return fmt.Errorf("unknown illumina errors %q: want quality or none", s.Errors)
+		return fmt.Errorf("unknown illumina errors %q: want quality, substitutions or none", s.Errors)
 	}
 	is := s.InsertSize
 	switch is.Dist {

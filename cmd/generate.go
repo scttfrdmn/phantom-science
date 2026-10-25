@@ -106,7 +106,7 @@ func init() {
 	f.Float64("read-length-sd", 0, "Read-length standard deviation")
 	f.String("basecaller-tier", "", "ONT basecaller tier for the error model: sup, hac or fast (platform ont only)")
 	f.String("quality-model", "", "Illumina quality model: binned (default; NovaSeq 6000 bins Q2/Q11/Q25/Q37, fitted to a real run, see --illumina-profile) or linear (base_quality - cycle*quality_decay)")
-	f.String("illumina-errors", "", "Illumina sequencing errors: quality (default for binned; substitutions at 10^(-Q/10), Q2 as N) or none")
+	f.String("illumina-errors", "", "Illumina sequencing errors: quality (default for binned: substitutions at each quality's measured rate, Q2 as N, and indel errors at the profile's measured rates; linear: substitutions at 10^(-Q/10) only), substitutions (quality without indel errors: the output of earlier releases) or none")
 	f.String("illumina-profile", "", "Illumina run profile of the binned model: "+strings.Join(illumina.ProfileNames(), ", ")+" (default "+illumina.DefaultProfile+"; set explicitly, it also brings its run's insert sizes)")
 	f.Float64("insert-size-mean", 0, "Mean paired-end insert (fragment) size in bases (default: 455, lognormal; with --illumina-profile, the profile's measured insert sizes)")
 	f.Float64("insert-size-sd", 0, "Standard deviation of the paired-end insert size (default: 100; with --illumina-profile, the profile's)")

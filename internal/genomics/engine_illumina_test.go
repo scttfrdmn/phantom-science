@@ -114,10 +114,13 @@ func TestIllumina_DefaultBinnedQualities(t *testing.T) {
 // BaseFactor of the true base), within 99 % of a Poisson-binomial. Truth is the error-free
 // run with the same seed: paired file output draws each fragment from the
 // pair stream, so turning errors off changes only the mate streams
-// (qualities and errors), not the fragments.
+// (qualities and errors), not the fragments. Indel errors (#30), which
+// shift the bases after them, are left out (errors "substitutions"); they
+// draw from the mate stream before the qualities.
 func TestIllumina_ErrorRateMatchesQuality(t *testing.T) {
 	c := binnedConfig(t.TempDir())
 	c.ReadsPerBatch, c.TotalBatches = 20000, 1
+	c.Illumina.Errors = types.IlluminaErrorsSubstitutions
 	o1, o2 := mateFiles(t, c)
 	c.Illumina.Errors = types.IlluminaErrorsNone
 	t1, t2 := mateFiles(t, c)
@@ -204,7 +207,7 @@ func TestIllumina_QualitiesFollowMateBases(t *testing.T) {
 			}
 			seed := uint64(100*i + mate)
 			class := i%7 - 1                                                                                 // -1: drawn from the mate's stream
-			seq, qual := p.mate(rand.New(rand.NewPCG(seed, 2)), frag, c.ReadLength, mate, class)             // #nosec G404 -- test stream
+			seq, qual, _ := p.mate(rand.New(rand.NewPCG(seed, 2)), frag, c.ReadLength, mate, class)          // #nosec G404 -- test stream
 			wantQ := illumina.ParamsFor(mate).QualitiesForClass(rand.New(rand.NewPCG(seed, 2)), want, class) // #nosec G404 -- test stream
 			if string(seq) != string(want) || string(qual) != string(wantQ) {
 				t.Fatalf("fragment %d mate %d: qualities not drawn for the mate's bases in sequencing orientation", i, mate)

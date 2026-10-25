@@ -1,0 +1,14 @@
+set	role	study	center	library_protocol	nominal_insert	pairs	md5_r1	md5_r2
+DRR394916	fitted	PRJDB13883	NCCHD	TruSeq DNA PCR Free Kit	567	4000000	673b02d94f5e2ddffdcc970c7ed99edb	79d1e69d21d8c9650edcba3ab5f99262
+DRR276626	fitted	PRJDB11215	SAGA_U		626	4000000	8de44d0f855eac2c9e8156d044ffbeca	f5af0749a02d90d024bf0cb35b6ff413
+ERR15600747	fitted	PRJEB97783	European Bioinformatics Institute;SOTON	Peripheral blood mononuclear cell samples via venipuncture Qiagne DNeasy column extraction Agilent SureSelect QXT whole genome library preparation kit		1000000	37307760d734e9f480a4305452d833ef	8283ec93afb7731cc394cbe85b400e37
+DRR260182	heldout	PRJDB10898	NCCRI	TruSeq Nano DNA Library Prep Kit	292	1000000	262228354e9c42dbcd8d0a086e58aef5	99328c63ed15bc00ff35581c1cbe62b2
+SRR30646135	heldout	PRJNA200694	SUB14721553			1000000	4a4a5715c77fa9b008f7241564f1376a	54b29a72a83cb7da9b8d95d16baa7800
+ERR12737258	heldout	PRJEB73282	MRC Weatherall Institute of Molecular Medicine Clinical Genetics Group;MRC WIMM CGG			1000000	1406901227fd3f5bb601b63f4d284220	20ae9a446468393f64a4ec2d7775d07b
+pooled	pool	PRJDB13883	NCCHD	TruSeq DNA PCR Free Kit	567	1000000	e55e9c0cbff692c623d9fdca46053092	eac492994d65642751326fa7501e5c03
+pooled	pool	PRJDB11215	SAGA_U		626	1000000	c7fbf2692113b607e6ae74a90b16369e	c10410b5ce5e97ef0016997b4b84ead5
+pooled	pool	PRJEB97783	European Bioinformatics Institute;SOTON	Peripheral blood mononuclear cell samples via venipuncture Qiagne DNeasy column extraction Agilent SureSelect QXT whole genome library preparation kit		1000000	37307760d734e9f480a4305452d833ef	8283ec93afb7731cc394cbe85b400e37
+recovery-novaseq6000-err15600747	generated, errors quality (seed 31)					2000000	156956a7c6b72263a4ad99818214aa9d	fb2fd3f3b7f161b6d3f61ad02305aac5
+generated-novaseq6000-pooled	generated, errors quality (seed 30)					3000000	53936edc159f0afa0bf272abb40c7680	4c6c6d1ab8593abe9dc98f02c2a84a37
+generated-novaseq6000-err15600747	generated, errors quality (seed 30)					2000000	a069abe4e2fb69e324f3c22ab8a4c970	edcac311a0d5ffa391cab7f288e1d9af
+floor-novaseq6000-err15600747	generated, errors substitutions (seed 30)					2000000	0d4340d9fcb3d79ec146a3252c816961	b6ed0113880c488db78bb90d79466452

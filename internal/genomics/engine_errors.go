@@ -38,8 +38,14 @@ package genomics
 //     a pair draw their quality classes together, #35), and with errors
 //     "quality" (the default for binned)
 //     substitutions at the measured rate of each bin and cycle, with the
-//     measured spectrum, and Q2 bases written as N. The binned model
-//     replaces HMM qualities.
+//     measured spectrum, Q2 bases written as N, and indel errors at the
+//     profile's measured rates (#30, mostly slips in homopolymers and
+//     tandem repeats; illumina.IndelModel). Indel errors are made before
+//     the qualities are drawn: the read takes its bases from its template
+//     (the fragment) with the errors and keeps its length, and the
+//     qualities at the errors are redrawn from the measured ones. Errors
+//     "substitutions" leaves out the indels. The binned model replaces
+//     HMM qualities.
 //   - Illumina, quality_model "linear": the earlier model,
 //     BaseQuality − i·QualityDecay clamped to [2, 41], which draws nothing;
 //     errors default to "none". Single-end linear output is byte-identical
@@ -207,7 +213,7 @@ func (e *Engine) errorModel() (func(r *rand.Rand, seq, qual []byte) ([]byte, []b
 	if m != nil {
 		return m.ApplyQualities, nil
 	}
-	if !e.isONT() && e.illuminaSpec().Errors == types.IlluminaErrorsQuality {
+	if errs := e.illuminaSpec().Errors; !e.isONT() && (errs == types.IlluminaErrorsQuality || errs == types.IlluminaErrorsSubstitutions) {
 		if !e.binnedQualities() {
 			return illumina.ApplyErrors, nil
 		}
@@ -218,4 +224,22 @@ func (e *Engine) errorModel() (func(r *rand.Rand, seq, qual []byte) ([]byte, []b
 		return prof.Errors.Apply, nil
 	}
 	return nil, nil
+}
+
+// indelModel returns the Illumina indel-error model (#30), or nil for
+// none: the profile's with binned qualities and errors "quality". The
+// linear quality model makes no indel errors (its output is unchanged), nor
+// do errors "substitutions" and "none".
+func (e *Engine) indelModel() (*illumina.IndelModel, error) {
+	if !e.binnedQualities() || e.illuminaSpec().Errors != types.IlluminaErrorsQuality {
+		return nil, nil
+	}
+	prof, err := e.illuminaProfile()
+	if err != nil {
+		return nil, err
+	}
+	if e.indelParams != nil {
+		return illumina.NewIndelModel(*e.indelParams), nil
+	}
+	return illumina.NewIndelModel(prof.Indels), nil
 }

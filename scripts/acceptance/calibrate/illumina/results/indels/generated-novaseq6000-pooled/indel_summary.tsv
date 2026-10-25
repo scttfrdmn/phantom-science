@@ -1,0 +1,38 @@
+key	events	value	ci_low	ci_high
+pairs		3000000		
+proper_usable_pairs		2796257		
+overlap_pairs		169344		
+positions		5443083		
+skipped_ref		0		
+excluded_near_other_mate		6		
+excluded_repeat_at_edge		25		
+excluded_other_mate_mismatch		7		
+excluded_gap_pair		22		
+excluded_hotspot		0		
+mate_bases		10886166		
+indel_events		131		
+indel_rate_per_base	131	1.20336e-05	1.00613e-05	1.42796e-05
+indel_bases_per_base	366	3.36207e-05	3.02641e-05	3.72478e-05
+mate1_indel_rate_per_base	65	1.19418e-05	9.2164e-06	1.52208e-05
+mate2_indel_rate_per_base	66	1.21255e-05	9.37785e-06	1.54266e-05
+indel_length1_rate_per_base	66	6.06274e-06	4.68892e-06	7.71329e-06
+indel_length2_rate_per_base	32	2.93951e-06	2.01062e-06	4.14971e-06
+indel_length3+_rate_per_base	33	3.03137e-06	2.08666e-06	4.25717e-06
+ins_events		50		
+ins_rate_per_base	50	4.59299e-06	3.409e-06	6.05528e-06
+ins_bases_per_base	175	1.60754e-05	1.37819e-05	1.86416e-05
+mate1_ins_rate_per_base	23	4.22555e-06	2.67863e-06	6.34039e-06
+mate2_ins_rate_per_base	27	4.96042e-06	3.26895e-06	7.21716e-06
+ins_length1_rate_per_base	21	1.92905e-06	1.19411e-06	2.94876e-06
+ins_length2_rate_per_base	13	1.19418e-06	6.35849e-07	2.04208e-06
+ins_length3+_rate_per_base	16	1.46976e-06	8.40092e-07	2.38679e-06
+del_events		81		
+del_rate_per_base	81	7.44064e-06	5.90894e-06	9.24803e-06
+del_bases_per_base	191	1.75452e-05	1.51451e-05	2.02176e-05
+mate1_del_rate_per_base	42	7.71622e-06	5.56117e-06	1.04301e-05
+mate2_del_rate_per_base	39	7.16506e-06	5.09506e-06	9.79487e-06
+del_length1_rate_per_base	45	4.13369e-06	3.01514e-06	5.5312e-06
+del_length2_rate_per_base	19	1.74533e-06	1.05081e-06	2.72556e-06
+del_length3+_rate_per_base	17	1.56161e-06	9.09698e-07	2.5003e-06
+concordant_events		0		
+concordant_rate_per_position	0	0	0	6.77719e-07

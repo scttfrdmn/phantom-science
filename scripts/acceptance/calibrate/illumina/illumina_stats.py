@@ -38,6 +38,13 @@ Run with `python3 -I` (no third-party packages). Subcommands:
       non-reference base in both mates is a variant of the sample or a
       pre-sequencing change) and insert sizes of proper pairs.
 
+  indels OUTDIR < name-grouped SAM (minimap2 output, with --MD)
+      Indel errors (#30) where the mates of a proper pair overlap: an indel
+      in one mate only (after left-normalisation) is a sequencing error.
+      Rates per base with exact Poisson 95 % intervals, insertions and
+      deletions, by mate, length, cycle block, homopolymer run and other
+      repeat context, and the qualities at the errors (indel_*.tsv).
+
 All output is tab-separated with a header line.
 """
 
@@ -430,9 +437,10 @@ def md_flags(md):
 
 
 class Rec:
-    __slots__ = ("flag", "rname", "pos", "mapq", "cigar", "seq", "qual", "md", "tlen")
+    __slots__ = ("qname", "flag", "rname", "pos", "mapq", "cigar", "seq", "qual", "md", "tlen")
 
     def __init__(self, f):
+        self.qname = f[0]
         self.flag = int(f[1])
         self.rname = f[2]
         self.pos = int(f[3])
@@ -744,6 +752,453 @@ def sam_stats(outdir, stream):
     write_tsv(os.path.join(outdir, "sam_summary.tsv"), ["key", "value"], summary)
 
 
+# ---------------------------------------------------------------- indels
+
+# Indel errors (#30) from the overlap of the two mates of a proper pair.
+# Both mates read the same molecule there, so an indel of the sample (or of
+# library preparation) is in both and an indel in one mate only is a
+# sequencing error. Indels are left-normalised against the reference (which
+# is reconstructed from SEQ, CIGAR and MD) before they are compared, so the
+# same indel placed differently in a repeat by the aligner matches.
+#
+# Biases: only the overlap is measured, the cycles from (insert - read
+# length) to the end of both mates, so late cycles are over-represented and
+# the first cycles come only from short inserts (indel_cycles.tsv gives the
+# rate by cycle block; indel_summary.tsv the rate over the overlap). Indels
+# within INDEL_MARGIN of either mate's alignment end are not compared (the
+# aligner may soft-clip them), errors that make a mate unmappable or clip it
+# (long indels, MAPQ < 30) are missed, and an error in both mates at one
+# place counts as a variant. Left out as alignment artefacts: indels of the
+# other mate within INDEL_NEAR bases (the same event placed differently),
+# mismatches of the other mate within CLEAN bases (the same difference
+# aligned as substitutions), an insertion and a deletion of one mate within
+# INDEL_NEAR bases (mismatches aligned as two gaps), indels in a repeat a
+# mate ends in, and discordant indels of different pairs within HOTSPOT
+# bases (collapsed repeats). Reads generated without indel errors
+# (errors: substitutions), measured the same way, give the method's floor.
+INDEL_CYCLE_BLOCKS = [(0, 30), (30, 60), (60, 90), (90, 120), (120, 10**6)]
+INDEL_NEAR = 10  # an indel of the other mate this close is the same event
+HOTSPOT = 50  # discordant indels of two pairs this close are a misaligned repeat
+CLEAN = 5  # the other mate must match the reference this far either side of an error
+# The model's repeat classes (internal/genomics/illumina, IndelParams):
+# homopolymer runs by length, short tandem repeats (units of STR_UNITS
+# bases, at least two copies) by copies, and every other place (background,
+# per base). The bins are [lo, hi) and must match the Go model's.
+# indel_classes.tsv has one row per run length (copies) up to HP_CAP
+# (STR_CAP), indel_repeats.tsv the coarser HP_BINS and STR_BINS.
+HP_CAP, STR_CAP = 30, 20
+HP_EXACT = [(h, h + 1) for h in range(1, HP_CAP)] + [(HP_CAP, 10**6)]
+HP_BINS = [(1, 2), (2, 3), (3, 4), (4, 5), (5, 6), (6, 7), (7, 8), (8, 9), (9, 10), (10, 12), (12, 15), (15, 20), (20, 10**6)]
+STR_UNITS = range(2, 7)
+STR_EXACT = [(c, c + 1) for c in range(2, STR_CAP)] + [(STR_CAP, 10**6)]
+STR_BINS = [(2, 3), (3, 5), (5, 7), (7, 10), (10, 10**6)]
+SIZE_MAX = 10  # sizes of SIZE_MAX or more are pooled
+
+
+def bin_of(bins, n):
+    for i, (lo, hi) in enumerate(bins):
+        if lo <= n < hi:
+            return i
+    return None
+
+
+def bin_name(lo, hi):
+    if hi >= 10**6:
+        return f"{lo}+"
+    return str(lo) if hi == lo + 1 else f"{lo}-{hi - 1}"
+
+
+def ref_segment(rec):
+    """The reference bases of rec's alignment span (from SEQ, CIGAR and MD), or None."""
+    flags = md_flags(rec.md)
+    dels = [d[1:] for _, d, _ in MD_RE.findall(rec.md) if d]
+    out, qi, k, di = [], 0, 0, 0
+    for n, op in CIGAR_RE.findall(rec.cigar):
+        n = int(n)
+        if op in "M=X":
+            for _ in range(n):
+                if k >= len(flags):
+                    return None
+                out.append(flags[k] or rec.seq[qi])
+                qi += 1
+                k += 1
+        elif op in "IS":
+            qi += n
+        elif op == "D":
+            if di >= len(dels) or len(dels[di]) != n:
+                return None
+            out.append(dels[di])
+            di += 1
+        elif op == "N":
+            return None
+    return "".join(out)
+
+
+def indel_events(rec):
+    """Yield (op, ref_pos, length, inserted bases, cycle, query index) of rec's
+    indels. The cycle (0-based, sequencing orientation) is that of the first
+    inserted base, or of the base read after a deletion."""
+    L = len(rec.seq)
+    rev = rec.flag & 0x10
+    rp, qi = rec.pos, 0
+    for n, op in CIGAR_RE.findall(rec.cigar):
+        n = int(n)
+        if op in "M=X":
+            rp += n
+            qi += n
+        elif op == "I":
+            yield "I", rp, n, rec.seq[qi:qi + n], (L - qi - n if rev else qi), qi
+            qi += n
+        elif op == "D":
+            yield "D", rp, n, "", (L - qi if rev else qi), qi
+            rp += n
+        elif op == "S":
+            qi += n
+        elif op == "N":
+            rp += n
+
+
+def unit_of(s):
+    """The shortest unit u with s = u * k."""
+    for n in range(1, len(s) + 1):
+        if len(s) % n == 0 and s[:n] * (len(s) // n) == s:
+            return s[:n]
+    return s
+
+
+def normalise(op, p, n, ins, ref, r0):
+    """Left-normalise an indel at 1-based p (ref[i - r0] is position i): return
+    (p, bases) with bases the deleted or inserted sequence."""
+    if op == "D":
+        while p - 1 - r0 >= 0 and p + n - 1 - r0 < len(ref) and ref[p - 1 - r0] == ref[p + n - 1 - r0]:
+            p -= 1
+        return p, ref[p - r0:p + n - r0]
+    s = ins
+    while p - 1 - r0 >= 0 and ref[p - 1 - r0] == s[-1]:
+        s = s[-1] + s[:-1]
+        p -= 1
+    return p, s
+
+
+def tract(ref, i, u):
+    """Copies of unit u in ref from index i."""
+    c = 0
+    while ref[i + c * len(u):i + (c + 1) * len(u)] == u:
+        c += 1
+    return c
+
+
+def classify(op, s, c_at):
+    """The model class of a normalised indel of bases s: (class, copies,
+    size). c_at(u) is the copies of unit u at the indel. A run of one base
+    (a deletion from it, or an insertion of its base) is "hp" with the run's
+    length and the size in bases; a tandem repeat of a unit of STR_UNITS
+    bases with at least two copies (the deleted copy included) is "str" with
+    its copies and the size in units; anything else is "bg" (background)
+    with the size in bases."""
+    u = unit_of(s)
+    c = c_at(u)
+    if len(u) == 1 and c >= 1:
+        return "hp", c, len(s), u
+    if len(u) in STR_UNITS and c >= 2:
+        return "str", c, len(s) // len(u), u
+    return "bg", 0, len(s), u
+
+
+def repeat_tracts(ref, a, b):
+    """Yield (class, copies) of the homopolymer runs and short tandem repeat
+    tracts lying wholly in ref[a:b] (maximal runs; for each unit length the
+    leftmost start of a tract, tracts of one unit length not overlapping)."""
+    i = a
+    if 0 < i < len(ref) and ref[i - 1] == ref[i]:
+        while i < b and ref[i] == ref[i - 1]:
+            i += 1
+    while i < b:
+        j = i
+        while j < len(ref) and ref[j] == ref[i]:
+            j += 1
+        if ref[i] in "ACGT" and j <= b:
+            yield "hp", j - i
+        i = j
+    for k in STR_UNITS:
+        nxt = a
+        for i in range(a, b - 2 * k + 1):
+            if i < nxt:
+                continue
+            u = ref[i:i + k]
+            if ref[i + k:i + 2 * k] != u or unit_of(u) != u or any(ch not in "ACGT" for ch in u):
+                continue
+            if i >= k and ref[i - k:i] == u:
+                continue  # inside a tract that starts before the window
+            c = tract(ref, i, u)
+            nxt = i + c * k
+            if nxt <= b:
+                yield "str", c
+
+
+def poisson_ci(k, conf=0.95):
+    """Exact (Garwood) confidence interval of a Poisson mean given count k."""
+    a = (1 - conf) / 2
+
+    def cdf(k, mu):  # P(X <= k)
+        if k < 0:
+            return 0.0
+        if mu <= 0:
+            return 1.0
+        lm = math.log(mu)
+        return min(1.0, sum(math.exp(i * lm - mu - math.lgamma(i + 1)) for i in range(k + 1)))
+
+    def solve(f, lo, hi):
+        for _ in range(200):
+            mid = (lo + hi) / 2
+            if f(mid):
+                lo = mid
+            else:
+                hi = mid
+        return (lo + hi) / 2
+
+    hi0 = k + 20 * math.sqrt(k + 1) + 20
+    lower = 0.0 if k == 0 else solve(lambda mu: 1 - cdf(k - 1, mu) < a, 0.0, hi0)
+    upper = solve(lambda mu: cdf(k, mu) > a, 0.0, hi0)
+    return lower, upper
+
+
+def rate_cols(k, n):
+    """k events in n opportunities: rate and its exact 95 % interval."""
+    if n <= 0:
+        return ["nan", "nan", "nan"]
+    lo, hi = poisson_ci(k)
+    return [fmt(k / n), fmt(lo / n), fmt(hi / n)]
+
+
+def indel_stats(outdir, stream):
+    t = {
+        "pairs": 0, "proper_usable_pairs": 0, "overlap_pairs": 0, "positions": 0,
+        "skipped_ref": 0, "excluded_near_other_mate": 0, "excluded_repeat_at_edge": 0,
+        "excluded_other_mate_mismatch": 0, "excluded_gap_pair": 0,
+    }
+    # discordant events: dicts with mate, op, cls, copies, size, bases, cycle, quals, chrom, pos, read
+    disc = []
+    conc = {}  # (op, class) -> concordant events (counted once)
+    cyc_pos = {}  # (mate, block) -> positions
+    tracts_n = {}  # (class, bin) -> runs or tracts in the windows (counted once; both mates read each)
+    qual_bins = {}  # (mate, phred) -> overlap bases
+
+    def block(c):
+        for i, (lo, hi) in enumerate(INDEL_CYCLE_BLOCKS):
+            if lo <= c < hi:
+                return i
+        return len(INDEL_CYCLE_BLOCKS) - 1
+
+    def pair_indels(r1, r2):
+        s1, e1, _ = indels(r1)
+        s2, e2, _ = indels(r2)
+        lo, hi = max(s1, s2) + INDEL_MARGIN, min(e1, e2) - INDEL_MARGIN
+        if hi <= lo:
+            return
+        g1, g2 = ref_segment(r1), ref_segment(r2)
+        if g1 is None or g2 is None:
+            t["skipped_ref"] += 1
+            return
+        r0 = min(s1, s2)
+        ref = [""] * (max(e1, e2) - r0)
+        for g, s in ((g1, s1), (g2, s2)):
+            for i, b in enumerate(g):
+                ref[s - r0 + i] = ref[s - r0 + i] or b
+        ref = "".join(ref)
+        if len(ref) != max(e1, e2) - r0:
+            t["skipped_ref"] += 1
+            return
+        t["overlap_pairs"] += 1
+        t["positions"] += hi - lo
+        for cls, c in repeat_tracts(ref, lo - r0, hi - r0):
+            k = (cls, min(c, HP_CAP if cls == "hp" else STR_CAP))
+            tracts_n[k] = tracts_n.get(k, 0) + 1
+        mism = {1: set(), 2: set()}  # reference positions of each mate's mismatches
+        for rec in (r1, r2):
+            m = rec.mate()
+            for rp, _, cyc, _, q, refb in aligned_bases(rec):
+                if refb:
+                    mism[m].add(rp)
+                if lo <= rp < hi:
+                    k = (m, block(cyc))
+                    cyc_pos[k] = cyc_pos.get(k, 0) + 1
+                    k = (m, q)
+                    qual_bins[k] = qual_bins.get(k, 0) + 1
+        ev = {}
+        for rec in (r1, r2):
+            out = {}
+            for op, p, n, ins, cyc, qi in indel_events(rec):
+                np_, s = normalise(op, p, n, ins, ref, r0)
+                if op == "I":
+                    qs = [ord(c) - 33 for c in rec.qual[qi:qi + n]]
+                else:
+                    qs = [ord(c) - 33 for c in rec.qual[max(qi - 1, 0):qi + 1]]
+                out[(op, np_, s)] = (p, cyc, qs)
+            ev[rec.mate()] = out
+        for m, other in ((1, 2), (2, 1)):
+            for key, (p, cyc, qs) in ev[m].items():
+                op, np_, s = key
+                span = len(s) if op == "D" else 0
+                if not (lo <= min(p, np_) and max(p, np_) + span <= hi):
+                    continue  # the event must lie inside both mates' alignments
+                cls, c, size, u = classify(op, s, lambda u: tract(ref, np_ - r0, u))
+                if cls != "bg" and np_ + c * len(u) > hi:
+                    # a mate ends in the repeat: it cannot show the indel
+                    t["excluded_repeat_at_edge"] += 1
+                    continue
+                if key in ev[other]:
+                    if m == 1:
+                        conc[(op, cls)] = conc.get((op, cls), 0) + 1
+                    continue
+                # An indel of the other mate nearby is the same event
+                # represented differently, not an error.
+                if any(abs(o[1] - np_) <= INDEL_NEAR for o in ev[other]):
+                    t["excluded_near_other_mate"] += 1
+                    continue
+                # An insertion and a deletion of one mate close together are
+                # a cluster of mismatches aligned as a pair of gaps (reads
+                # generated without indel errors have them at low-quality
+                # calls).
+                if any(o[0] != op and abs(o[1] - np_) <= INDEL_NEAR for o in ev[m]):
+                    t["excluded_gap_pair"] += 1
+                    continue
+                # Mismatches of the other mate there are the same difference
+                # aligned as substitutions.
+                if any(np_ - CLEAN <= x < np_ + span + CLEAN for x in mism[other]):
+                    t["excluded_other_mate_mismatch"] += 1
+                    continue
+                disc.append({"mate": m, "op": op, "cls": cls, "copies": c, "size": size, "bases": s, "cycle": cyc,
+                             "quals": qs, "chrom": r1.rname, "pos": np_, "read": r1.qname})
+
+    def pair(group):
+        t["pairs"] += 1
+        prim = {}
+        for rec in group:
+            if not (rec.flag & 0x900):
+                prim[rec.mate()] = rec
+        r1, r2 = prim.get(1), prim.get(2)
+        if r1 and r2 and r1.usable() and r2.usable() and r1.flag & 0x2 and r1.rname == r2.rname:
+            t["proper_usable_pairs"] += 1
+            pair_indels(r1, r2)
+
+    group, name = [], None
+    for line in stream:
+        if line.startswith("@"):
+            continue
+        f = line.rstrip("\n").split("\t")
+        if f[0] != name:
+            if group:
+                pair(group)
+            group, name = [], f[0]
+        group.append(Rec(f))
+    if group:
+        pair(group)
+
+    # Hotspots: discordant indels of different pairs within HOTSPOT bases of
+    # each other are misalignments in collapsed repeats (at this coverage two
+    # errors of independent pairs that close are not expected).
+    disc.sort(key=lambda d: (d["chrom"], d["pos"]))
+    hot = set()
+    for i in range(1, len(disc)):
+        a, b = disc[i - 1], disc[i]
+        if a["chrom"] == b["chrom"] and b["pos"] - a["pos"] <= HOTSPOT and a["read"] != b["read"]:
+            hot.update((i - 1, i))
+    t["excluded_hotspot"] = len(hot)
+    disc = [d for i, d in enumerate(disc) if i not in hot]
+    pos = t["positions"]
+    mate_bases = 2 * pos  # each window position is read by both mates
+    ins = [d for d in disc if d["op"] == "I"]
+    dels = [d for d in disc if d["op"] == "D"]
+    summary = [[k, "", v, "", ""] for k, v in t.items()]
+    summary.append(["mate_bases", "", mate_bases, "", ""])
+    for label, evs in (("indel", disc), ("ins", ins), ("del", dels)):
+        summary.append([f"{label}_events", "", len(evs), "", ""])
+        summary.append([f"{label}_rate_per_base"] + [len(evs)] + rate_cols(len(evs), mate_bases))
+        nb = sum(len(d["bases"]) for d in evs)
+        summary.append([f"{label}_bases_per_base"] + [nb] + rate_cols(nb, mate_bases))
+        for m in (1, 2):
+            k = sum(1 for d in evs if d["mate"] == m)
+            summary.append([f"mate{m}_{label}_rate_per_base"] + [k] + rate_cols(k, pos))
+        for lab, sel in (("1", lambda n: n == 1), ("2", lambda n: n == 2), ("3+", lambda n: n >= 3)):
+            k = sum(1 for d in evs if sel(len(d["bases"])))
+            summary.append([f"{label}_length{lab}_rate_per_base"] + [k] + rate_cols(k, mate_bases))
+    nc = sum(conc.values())
+    summary.append(["concordant_events", "", nc, "", ""])
+    summary.append(["concordant_rate_per_position"] + [nc] + rate_cols(nc, pos))
+    write_tsv(os.path.join(outdir, "indel_summary.tsv"), ["key", "events", "value", "ci_low", "ci_high"], summary)
+
+    # lengths (bases), errors and the sample's indels (concordant)
+    rows = []
+    for op in "ID":
+        evs = [d for d in disc if d["op"] == op]
+        for n in range(1, SIZE_MAX + 1):
+            k = sum(1 for d in evs if min(len(d["bases"]), SIZE_MAX) == n)
+            rows.append([op, n if n < SIZE_MAX else f"{SIZE_MAX}+", k, fmt(k / len(evs)) if evs else "nan"])
+    write_tsv(os.path.join(outdir, "indel_lengths.tsv"), ["op", "length", "events", "fraction"], rows)
+
+    # the model's classes: rate per opportunity (a run, a tract or a base,
+    # read once by each mate), and the sizes
+    for name, hb, sb in (("indel_classes.tsv", HP_EXACT, STR_EXACT), ("indel_repeats.tsv", HP_BINS, STR_BINS)):
+        rows = []
+        for op in "ID":
+            for cls, bins in (("hp", hb), ("str", sb)):
+                for i, (lo, hi) in enumerate(bins):
+                    n = 2 * sum(v for (c2, c), v in tracts_n.items() if c2 == cls and lo <= c < hi)
+                    k = sum(1 for d in disc if d["op"] == op and d["cls"] == cls and bin_of(bins, d["copies"]) == i)
+                    rows.append([op, cls, bin_name(lo, hi), n, k] + rate_cols(k, n))
+            k = sum(1 for d in disc if d["op"] == op and d["cls"] == "bg")
+            rows.append([op, "bg", "", mate_bases, k] + rate_cols(k, mate_bases))
+        write_tsv(os.path.join(outdir, name), ["op", "class", "bin", "opportunities", "events", "rate", "ci_low", "ci_high"], rows)
+    rows = []
+    for op in "ID":
+        for cls in ("hp", "str", "bg"):
+            # hp sizes apart for short (< 10) and long runs
+            groups = [("", lambda d: True)]
+            if cls == "hp":
+                groups = [("<10", lambda d: d["copies"] < 10), ("10+", lambda d: d["copies"] >= 10)]
+            for gname, sel in groups:
+                evs = [d for d in disc if d["op"] == op and d["cls"] == cls and sel(d)]
+                for n in range(1, SIZE_MAX + 1):
+                    k = sum(1 for d in evs if min(d["size"], SIZE_MAX) == n)
+                    rows.append([op, cls, gname, n if n < SIZE_MAX else f"{SIZE_MAX}+", k, fmt(k / len(evs)) if evs else "nan"])
+    write_tsv(os.path.join(outdir, "indel_sizes.tsv"), ["op", "class", "runs", "size", "events", "fraction"], rows)
+    rows = [[op, cls, conc.get((op, cls), 0)] for op in "ID" for cls in ("hp", "str", "bg")]
+    write_tsv(os.path.join(outdir, "indel_concordant.tsv"), ["op", "class", "events"], rows)
+
+    # cycles
+    rows = []
+    for m in (1, 2, "both"):
+        for b, (lo, hi) in enumerate(INDEL_CYCLE_BLOCKS):
+            mates = (1, 2) if m == "both" else (m,)
+            n = sum(cyc_pos.get((mm, b), 0) for mm in mates)
+            ki = sum(1 for d in ins if d["mate"] in mates and block(d["cycle"]) == b)
+            kd = sum(1 for d in dels if d["mate"] in mates and block(d["cycle"]) == b)
+            rows.append([m, bin_name(lo + 1, hi + 1), n, ki] + rate_cols(ki, n) + [kd] + rate_cols(kd, n))
+    write_tsv(os.path.join(outdir, "indel_cycles.tsv"),
+              ["mate", "cycles", "bases", "ins", "ins_rate", "ins_low", "ins_high", "del", "del_rate", "del_low", "del_high"], rows)
+
+    # qualities at the errors: inserted bases, and the bases either side of a deletion
+    rows = []
+    for m in (1, 2, "both"):
+        mates = (1, 2) if m == "both" else (m,)
+        tot = sum(v for (mm, _), v in qual_bins.items() if mm in mates)
+        ni = sum(len(d["quals"]) for d in ins if d["mate"] in mates)
+        nd = sum(len(d["quals"]) for d in dels if d["mate"] in mates)
+        for q in sorted({q for (mm, q) in qual_bins if mm in mates}):
+            n = sum(qual_bins.get((mm, q), 0) for mm in mates)
+            qi_ = sum(d["quals"].count(q) for d in ins if d["mate"] in mates)
+            qd = sum(d["quals"].count(q) for d in dels if d["mate"] in mates)
+            rows.append([m, q, n, fmt(n / tot), qi_, fmt(qi_ / ni) if ni else "nan", qd, fmt(qd / nd) if nd else "nan"])
+    write_tsv(os.path.join(outdir, "indel_quality.tsv"),
+              ["mate", "phred", "overlap_bases", "fraction", "inserted_bases", "inserted_fraction", "deletion_flank_bases", "deletion_flank_fraction"], rows)
+
+    # every error, for inspection
+    write_tsv(os.path.join(outdir, "indel_events.tsv"), ["read", "chrom", "pos", "mate", "op", "bases", "class", "copies", "size", "cycle", "quals"],
+              [[d["read"], d["chrom"], d["pos"], d["mate"], d["op"], d["bases"], d["cls"], d["copies"], d["size"], d["cycle"] + 1,
+                ",".join(map(str, d["quals"]))] for d in disc])
+
+
 # ---------------------------------------------------------------- structure
 
 # Reads are grouped by their number of Q11 and Q25 bases (STRATA, [lo, hi)),
@@ -997,6 +1452,8 @@ def main(argv):
         pair_stats(outdir, argv[3:5], argv[5])
     elif cmd == "sam" and len(argv) == 3:
         sam_stats(outdir, sys.stdin)
+    elif cmd == "indels" and len(argv) == 3:
+        indel_stats(outdir, sys.stdin)
     elif cmd == "structure" and len(argv) == 5:
         structure_stats(outdir, argv[3:5])
     else:

@@ -20,6 +20,7 @@ import (
 	"sync/atomic"
 
 	"github.com/scttfrdmn/phantom-science/internal/genomics/authenticity"
+	"github.com/scttfrdmn/phantom-science/internal/genomics/illumina"
 	"github.com/scttfrdmn/phantom-science/internal/genomics/manifest"
 	"github.com/scttfrdmn/phantom-science/internal/genomics/reference"
 	"github.com/scttfrdmn/phantom-science/internal/security"
@@ -105,6 +106,9 @@ type Engine struct {
 	// parent is the run's engine when this one generates one flow cell of
 	// it.
 	parent *Engine
+	// indelParams, when set (tests), replaces the profile's indel-error
+	// model.
+	indelParams *illumina.IndelParams
 	// toolVersion is recorded in the manifest; uploader receives S3 output.
 	toolVersion string
 	uploader    s3sink.Uploader

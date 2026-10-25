@@ -1,0 +1,16 @@
+key	value
+runs	DRR394916:4000000 DRR276626:4000000 ERR15600747:1000000
+heldout	DRR260182:1000000 SRR30646135:1000000 ERR12737258:1000000
+pool	DRR394916 DRR276626 ERR15600747 (1000000 pairs each)
+profiles	novaseq6000-pooled=pooled novaseq6000-drr394916=DRR394916 novaseq6000-drr276626=DRR276626 novaseq6000-err15600747=ERR15600747
+generated	novaseq6000-pooled=3000000 novaseq6000-err15600747=2000000 (seed 30)
+floor	novaseq6000-err15600747=2000000 (seed 30, errors substitutions)
+recovery	novaseq6000-err15600747=2000000 (seed 31, the model before the recovery refit)
+reference	hg38.primary.fa
+reference_sequences	24
+aligner	minimap2 2.31-r1302 (-ax sr --MD)
+samtools	samtools 1.24
+go	go version go1.27.3 darwin/arm64
+commit	1394e92
+python	Python 3.15.1
+date	2026-10-25

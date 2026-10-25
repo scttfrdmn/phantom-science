@@ -37,18 +37,24 @@ import (
 // bases (#35), and the paired Illumina cases again when the mates came to
 // draw their quality classes together (#35), and all of these when the
 // default profile became novaseq6000-drr394916 (#35), and again when it
-// became novaseq6000-pooled (#36).
+// became novaseq6000-pooled (#36), and again when the binned model gained
+// indel errors (#30), which draw from each mate's stream before its
+// qualities and shift the bases after them. "illumina binned paired
+// substitutions" (errors substitutions, indels off) keeps the hash
+// "illumina binned paired" had before #30: that output is unchanged.
 var goldenWant = map[string]string{
-	"illumina binned paired":               "ee568ba3eb7afca795bc02184ed5af80577d27a61be6cd2ea73cabeb1b2cb865",
-	"illumina reference paired":            "4cfee62c41b4b8a79123c8bd7e96715ec3380bef094af38302f390dc021b3adb",
-	"illumina lognormal inserts and reads": "46b0a97d4d7103c35d2beff3862aa028c1a155bac13a89ae766a64577958cdff",
+	"illumina binned paired":               "e335ab2025524be447f6e675b0d2dbf569c52b41cd9fec2a2511cacc24bf45fe",
+	"illumina binned paired substitutions": "ee568ba3eb7afca795bc02184ed5af80577d27a61be6cd2ea73cabeb1b2cb865",
+	"illumina reference single-end":        "d94a7f57c4369915f4844b8b835d0ad1a45ea015df7d88d97d17c3827f320d94",
+	"illumina reference paired":            "a6427c69ff57ec7941b6659e01619fbd3613e39202eab9105322b2e7be03f3cf",
+	"illumina lognormal inserts and reads": "f0525bb15516ab4011b6478adf4ca4fdf20e4d0df0f789c44b21cf7e1f29302e",
 	"ont hac lognormal":                    "be4106e6e7c7124f5bf7b9cb241f322e366c2c7b05f9c822828aa9713186e962",
 	"ont fast gamma":                       "d953196a6882cd0a44f4dcf8e6400204d178fe4857a0cedb85b1a228fda3aa31",
 	"signal dna":                           "682455f7f9c12b82beea715ea5c77482d68a82e319985039ba05410d0b7c26c0",
 	"signal rna":                           "975c142bf9974b7d2931885273c1b1e4a9000a3ab6d8521d38ae2826847c7002",
 	"transcriptome":                        "88585ae93756fa5a87a407761187024afc757fff36d0688f010d6e3af6bbe840",
-	"scenario trio":                        "794f7c17df70cd8559ac9d0a3c6996d9bf8481495f4b3af3c3c373b252f65ee3",
-	"hmm train and generate":               "d0af88074f77cd9189080fc687225661e176c5f21514a6580e51d23999b8dbc4",
+	"scenario trio":                        "09dc5ff3ed3f734563ca118150a2807f6a25d079ae2f694259086bf1e75d8d26",
+	"hmm train and generate":               "375aebdfaff9d2927aa54cfe2af01596d670cbc18c961fe3e84d083c9b624a19",
 }
 
 func goldenBinary(t *testing.T) string {
@@ -203,6 +209,14 @@ func TestCrossArchGolden(t *testing.T) {
 	}{
 		{"illumina binned paired", func(t *testing.T) string {
 			return sum(run(t, "generate", "--config", f.pairedConfig, "--stdout", "--seed", "7", "--total-reads", "1000"))
+		}},
+		{"illumina binned paired substitutions", func(t *testing.T) string {
+			return sum(run(t, "generate", "--config", f.pairedConfig, "--stdout", "--seed", "7", "--total-reads", "1000",
+				"--illumina-errors", "substitutions"))
+		}},
+		{"illumina reference single-end", func(t *testing.T) string {
+			return sum(run(t, "generate", "--config", f.seqConfig, "--stdout", "--seed", "7", "--total-reads", "1000",
+				"--reference", f.reference, "--region", "chr1:1001-19000"))
 		}},
 		{"illumina reference paired", func(t *testing.T) string {
 			return sum(run(t, "generate", "--config", f.pairedConfig, "--stdout", "--seed", "7", "--total-reads", "1000",

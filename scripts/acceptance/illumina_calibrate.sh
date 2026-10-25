@@ -26,7 +26,10 @@
 #      lengths, per-read composition and N calls of both mates;
 #   2. minimap2 -ax sr alignment; substitution rate per quality and cycle,
 #      substitution spectrum, mate-overlap error and variant rates, indel
-#      rates and insert sizes of proper pairs;
+#      rates and insert sizes of proper pairs; the indel errors where the
+#      mates overlap (RESULTS/indel_*.tsv, #30; the model's indel
+#      parameters are fitted by illumina_indels.sh, on more pairs and with
+#      the shape of the pooled runs, into profile_indels.go);
 #   3. the read quality classes (RESULTS/fit.tsv);
 #   4. qualities by called-base context (two bases before, the base, one
 #      after) per 10-cycle block, and within each read class against the
@@ -216,6 +219,8 @@ minimap2 -ax sr --MD -t "$threads" "$target" "$r1" "$r2" 2>"$work/minimap2.log" 
 	samtools view -b -o "$work/aln.bam" -
 echo "Measuring errors and insert sizes ..."
 samtools view "$work/aln.bam" | python3 -I "$stats" sam "$results"
+echo "Measuring indel errors where mates overlap ..."
+samtools view "$work/aln.bam" | python3 -I "$stats" indels "$results"
 
 echo "Fitting the read classes ..."
 rm -f "$results/context_classes.tsv" "$results/pair_classes.tsv"

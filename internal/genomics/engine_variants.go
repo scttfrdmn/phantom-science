@@ -322,6 +322,23 @@ func (l *plantLog) trim(n int) {
 	l.alleles = kept
 }
 
+// remap moves each recorded allele to the offset f gives it (f(off, len)),
+// dropping those f rejects: the alleles of a single-end read with indel
+// errors move to their offsets in the read as written (#30).
+func (l *plantLog) remap(f func(off, size int) (int, bool)) {
+	if l == nil {
+		return
+	}
+	kept := l.alleles[:0]
+	for _, a := range l.alleles {
+		if x, ok := f(a.off, a.len); ok {
+			a.off = x
+			kept = append(kept, a)
+		}
+	}
+	l.alleles = kept
+}
+
 // reset clears the log for the next read (pair).
 func (l *plantLog) reset() {
 	if l != nil {
