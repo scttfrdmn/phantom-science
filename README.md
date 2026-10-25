@@ -62,9 +62,14 @@ on `main` but not in a tagged release yet.
   runs against those runs (`scripts/acceptance/illumina_heldout.sh`). The
   pooled default is the closest to the held-out runs: pair classifier
   median 0.615, against 0.648 for drr394916, and below the real-run median
-  0.675. Each profile comes from one
-  tile of one run. Indels are not modelled (measured 5–7e-5 per base on all
-  runs). It is not validated beyond 151 cycles
+  0.675. Each single-run profile comes from one tile of one run. Indel
+  errors (since 0.15.0) are modelled at each profile's measured rates
+  (pooled runs: insertions 4.6e-6 and deletions 7.5e-6 per base, 95 %
+  3.8–5.5e-6 and 6.5–8.7e-6), mostly as slips in long homopolymers and tandem
+  repeats (`scripts/acceptance/illumina_indels.sh`); reads keep their length.
+  `illumina.errors: substitutions` (`--illumina-errors substitutions`)
+  leaves them out (byte-identical to the output before indel errors). It is
+  not validated beyond 151 cycles
   or for other instruments (MiSeq writes unbinned qualities; NovaSeq X uses other
   values). `illumina.quality_model: linear`
   restores the old ramp (`base_quality` minus `quality_decay` per base, no

@@ -133,6 +133,54 @@ count correlation 0.56 in the pooled reads, against 0.37–0.58 in the fitted
 runs and 0.59–0.62 in the held-out runs); its inserts (lognormal 465 ± 140) are the
 pooled libraries', larger than the held-out runs'.
 
+**Indel errors (#30).** Measured where the two mates of a proper pair
+overlap: an indel in one mate only, after left-normalisation, is a sequencing
+error (`scripts/acceptance/illumina_indels.sh`). Alignment artefacts (mates
+ending inside the repeat, nearby indels or mismatches in the other mate,
+insertion–deletion pairs, repeats collapsed across pairs) are left out; reads
+generated without indel errors and measured the same way show a floor of
+3.2e-7 per base. Exact Poisson 95 % intervals, per mate-base:
+
+| Set | Pairs | Insertions | Deletions |
+|---|---|---|---|
+| pool of the three fitted runs | 3,000,000 | 4.6e-6 (3.8–5.5), 118 | 7.5e-6 (6.5–8.7), 194 |
+| DRR394916 | 4,000,000 | 6.5e-6 (4.3–9.5), 28 | 9.1e-6 (6.5–12.5), 39 |
+| DRR276626 | 4,000,000 | 6.8e-6 (5.0–9.1), 47 | 8.7e-6 (6.7–11.3), 60 |
+| ERR15600747 | 1,000,000 | 4.5e-6 (3.6–5.4), 102 | 7.8e-6 (6.7–9.0), 178 |
+| DRR260182 (held out) | 1,000,000 | 4.8e-6 (4.1–5.7), 145 | 4.4e-6 (3.7–5.2), 132 |
+| SRR30646135 (held out) | 1,000,000 | 5.4e-6 (3.0–8.8), 15 | 7.5e-6 (4.6–11.5), 21 |
+| ERR12737258 (held out) | 1,000,000 | 4.6e-6 (3.6–5.7), 79 | 5.2e-6 (4.2–6.4), 90 |
+
+The pool has 1.21e-5 indel errors per base (95 % 1.08–1.35e-5), 0.4 % of the
+sequencing errors in the overlap (substitutions 3.4e-3). 47 % are of one
+base, 21 % of two, 32 % of three or more. They concentrate in repeats: a
+homopolymer run of 20 bases or more loses a base in 3.9 % of reads, a single
+base in 0.0005 %. The rates do not depend measurably on cycle (χ² over five
+blocks, p = 0.32 and 0.33) or mate (p = 0.78 and 0.83). 25 % of inserted
+bases and 47 % of bases next to a deletion are Q11, against 3 % of all bases.
+
+The model is a log-linear slip per homopolymer run (×1.48 per base of run
+length) and per short tandem repeat (unit 2–6, ×1.7 per copy), plus a
+background, with the measured sizes and qualities; the shape is fitted to the
+pool by Poisson maximum likelihood and the rates scaled to each profile's run,
+then raised by the measurement's recovery on generated reads (×1.18
+insertions, ×1.06 deletions, from novaseq6000-err15600747). Reads generated
+with the model and measured the same way: novaseq6000-pooled insertions
+4.6e-6 (3.4–6.1) and deletions 7.4e-6 (5.9–9.2), against 4.6e-6 and 7.5e-6
+real; novaseq6000-err15600747 5.2e-6 and 7.8e-6, against 4.5e-6 and 7.8e-6.
+Against the held-out runs the pooled model's insertions are within the
+intervals (×1.09–1.27 of the model's); deletions are ×0.66 (DRR260182) and
+×0.81 (ERR12737258), outside, and ×1.13 (SRR30646135), inside.
+
+Limitations: only the overlap is measured (late cycles of short-insert
+pairs); runs and tiles differ (0.9–1.6e-5 per base); the shape and quality
+distributions are the pool's, mostly ERR15600747's (89 % of overlap
+positions), and only the rates are per profile; the recovery correction is
+one factor per kind, about ±10 %; errors at the same place in both mates are
+not modelled. The earlier estimate of 7e-5 per base (25 events, one run)
+counted mates ending inside long homopolymers and alignment artefacts.
+Results: `scripts/acceptance/calibrate/illumina/results/indels/`.
+
 Results: `scripts/acceptance/calibrate/illumina/results/heldout/`
 (`classifier_spread.tsv`, `profile_spread.tsv`, `classifier_matrix.tsv`,
 `calibration_stats.tsv`).
