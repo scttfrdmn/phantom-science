@@ -25,6 +25,7 @@ import (
 
 	"github.com/scttfrdmn/phantom-science/internal/fingerprinting"
 	"github.com/scttfrdmn/phantom-science/internal/genomics/manifest"
+	"github.com/scttfrdmn/phantom-science/pkg/types"
 )
 
 // keyedSeed describes the run's keyed-seed fingerprint.
@@ -58,29 +59,88 @@ func (e *Engine) resolveSeed() {
 	}
 	salt, drawn := e.seed, e.seedDrawn
 	e.seedDrawn = false // the derived seed is never logged
-	key, err := fingerprinting.ResolveKey(c.Fingerprinting.KeyFile)
-	switch {
-	case err != nil:
-		e.fpErr = fmt.Errorf("fingerprinting: %w", err)
-		return
-	case key == nil:
-		e.fpErr = fmt.Errorf("fingerprinting needs a key: set fingerprinting.key_file or %s (a keyed seed without a key proves nothing); "+
-			"to write only the read-ID labels, set steganography_layers: [%q]", fingerprinting.KeyEnvVar, fingerprinting.LayerReadIDs)
-		return
-	case c.Enterprise.CustomerID == "":
-		e.fpErr = fmt.Errorf("fingerprinting needs a customer ID: set enterprise.customer_id")
-		return
-	case c.DatasetID == "":
-		e.fpErr = fmt.Errorf("fingerprinting needs a dataset ID: set dataset_id (or generate --dataset-id)")
-		return
-	}
-	seed, err := fingerprinting.DeriveSeed(key, c.Enterprise.CustomerID, c.DatasetID, salt)
+	seed, err := deriveKeyedSeed(c, salt)
 	if err != nil {
-		e.fpErr = fmt.Errorf("fingerprinting: %w", err)
+		e.fpErr = err
 		return
 	}
 	e.seed = seed
 	e.fp = keyedSeed{enabled: true, customer: c.Enterprise.CustomerID, dataset: c.DatasetID, salt: salt, saltDrawn: drawn}
+}
+
+// deriveKeyedSeed returns the keyed-seed run seed of configuration c for
+// salt: the key from c.Fingerprinting.KeyFile or the environment, the
+// customer from c.Enterprise.CustomerID and the dataset from c.DatasetID,
+// all required.
+func deriveKeyedSeed(c types.SequencerConfig, salt uint64) (uint64, error) {
+	key, err := fingerprinting.ResolveKey(c.Fingerprinting.KeyFile)
+	switch {
+	case err != nil:
+		return 0, fmt.Errorf("fingerprinting: %w", err)
+	case key == nil:
+		return 0, fmt.Errorf("fingerprinting needs a key: set fingerprinting.key_file or %s (a keyed seed without a key proves nothing); "+
+			"to write only the read-ID labels, set steganography_layers: [%q]", fingerprinting.KeyEnvVar, fingerprinting.LayerReadIDs)
+	case c.Enterprise.CustomerID == "":
+		return 0, fmt.Errorf("fingerprinting needs a customer ID: set enterprise.customer_id")
+	case c.DatasetID == "":
+		return 0, fmt.Errorf("fingerprinting needs a dataset ID: set dataset_id (or generate --dataset-id)")
+	}
+	seed, err := fingerprinting.DeriveSeed(key, c.Enterprise.CustomerID, c.DatasetID, salt)
+	if err != nil {
+		return 0, fmt.Errorf("fingerprinting: %w", err)
+	}
+	return seed, nil
+}
+
+// RunSeed is the seed of a run of a command other than generate (scenario,
+// signal, transcriptome), resolved by ResolveRunSeed.
+type RunSeed struct {
+	// Seed is the run seed: the configured or drawn seed, or, with a
+	// keyed-seed fingerprint, the seed derived from the key. A derived seed
+	// must not be logged or recorded.
+	Seed uint64
+	// Drawn reports that the seed (or, when fingerprinted, the salt) was
+	// drawn rather than configured; it should be logged so the run can be
+	// reproduced: Seed when Fingerprint is nil, else Fingerprint.Salt.
+	Drawn bool
+	// Fingerprint is the manifest's fingerprint record; nil without a
+	// keyed-seed fingerprint.
+	Fingerprint *manifest.Fingerprint
+}
+
+// ResolveRunSeed resolves the run seed of command (for messages) from c:
+// c.Seed (zero draws one) and, when c.Fingerprinting is enabled, the
+// keyed-seed fingerprint, with c.Seed (or the drawn value) as the salt.
+// Every random value of such a run must come from the returned seed, so a
+// fingerprinted run equals an unfingerprinted run with Seed = the derived
+// seed. The commands write no read headers with labels, so the read_ids
+// layer and the customer and dataset label settings are errors.
+func ResolveRunSeed(c types.SequencerConfig, command string) (RunSeed, error) {
+	seed, drawn, err := ResolveSeed(c.Seed)
+	if err != nil {
+		return RunSeed{}, err
+	}
+	if !c.Fingerprinting.Enable {
+		return RunSeed{Seed: seed, Drawn: drawn}, nil
+	}
+	keyed, err := fingerprinting.Layers(c.Fingerprinting.SteganographyLayers)
+	if err != nil {
+		return RunSeed{}, err
+	}
+	if !keyed || c.Fingerprinting.CustomerFingerprint || c.Fingerprinting.DatasetFingerprint {
+		return RunSeed{}, fmt.Errorf("%s supports only the %q fingerprint layer, without read-ID labels (customer_fingerprint, dataset_fingerprint, the %q layer)",
+			command, fingerprinting.LayerKeyedSeed, fingerprinting.LayerReadIDs)
+	}
+	derived, err := deriveKeyedSeed(c, seed)
+	if err != nil {
+		return RunSeed{}, err
+	}
+	return RunSeed{Seed: derived, Drawn: drawn, Fingerprint: &manifest.Fingerprint{
+		Scheme:   fingerprinting.KeyedSeedScheme,
+		Customer: c.Enterprise.CustomerID,
+		Dataset:  c.DatasetID,
+		Salt:     seed,
+	}}, nil
 }
 
 // Fingerprinted reports whether the run's seed is a keyed-seed fingerprint,

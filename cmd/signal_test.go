@@ -17,6 +17,7 @@ import (
 	"github.com/scttfrdmn/phantom-science/internal/genomics"
 	"github.com/scttfrdmn/phantom-science/internal/genomics/manifest"
 	"github.com/scttfrdmn/phantom-science/internal/genomics/signal"
+	"github.com/scttfrdmn/phantom-science/internal/genomics/signalrun"
 	"github.com/scttfrdmn/phantom-science/internal/genomics/slow5"
 	"github.com/scttfrdmn/phantom-science/pkg/types"
 	"github.com/spf13/pflag"
@@ -119,18 +120,18 @@ func readFASTQs(t *testing.T, paths ...string) []fqRead {
 	t.Helper()
 	var out []fqRead
 	for _, p := range paths {
-		s, err := openSeqFile(p)
+		s, err := signalrun.OpenSeqFile(p)
 		if err != nil {
 			t.Fatal(err)
 		}
 		for {
-			name, comment, seq, err := s.next()
+			name, comment, seq, err := s.Next()
 			if err != nil {
 				break
 			}
 			out = append(out, fqRead{name, parseONTComment(comment), string(seq)})
 		}
-		if _, err := s.finish(); err != nil {
+		if _, err := s.Finish(); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -260,7 +261,7 @@ func TestSignalCommand_GenerateRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("exp_start_time %q: %v", rg["exp_start_time"], err)
 	}
-	if !isUUID(rg["protocol_run_id"]) {
+	if !signalrun.IsUUID(rg["protocol_run_id"]) {
 		t.Errorf("protocol_run_id %q is not a UUID", rg["protocol_run_id"])
 	}
 
@@ -461,7 +462,7 @@ func TestSignalCommand_PlainFASTQWithTruth(t *testing.T) {
 	}
 	// Non-UUID IDs get RFC 4122 version-5 UUIDs; a UUID is kept,
 	// lowercased.
-	if v := recs[0].ReadID; !isUUID(v) || v[14] != '5' || !strings.ContainsRune("89ab", rune(v[19])) {
+	if v := recs[0].ReadID; !signalrun.IsUUID(v) || v[14] != '5' || !strings.ContainsRune("89ab", rune(v[19])) {
 		t.Errorf("mapped ID %s is not a version-5 UUID", v)
 	}
 	if recs[2].ReadID != strings.ToLower(upper) {
@@ -649,14 +650,14 @@ func TestSignalCommand_ProfileSet(t *testing.T) {
 // uuid.uuid5(uuid.NAMESPACE_DNS, "python.org").
 func TestUUIDv5KnownVector(t *testing.T) {
 	dns := [16]byte{0x6b, 0xa7, 0xb8, 0x10, 0x9d, 0xad, 0x11, 0xd1, 0x80, 0xb4, 0x00, 0xc0, 0x4f, 0xd4, 0x30, 0xc8}
-	if got := formatUUID(uuidV5(dns, "python.org")); got != "886313e1-3b8a-5372-9b90-0c9aee199e5d" {
+	if got := signalrun.FormatUUID(signalrun.UUIDv5(dns, "python.org")); got != "886313e1-3b8a-5372-9b90-0c9aee199e5d" {
 		t.Errorf("uuid5(DNS, python.org) = %s", got)
 	}
-	if id, mapped := signalReadID("A00123:8:H7:1:1101:1000:2000"); !mapped || !isUUID(id) {
+	if id, mapped := signalrun.ReadID("A00123:8:H7:1:1101:1000:2000"); !mapped || !signalrun.IsUUID(id) {
 		t.Errorf("signalReadID mapped=%v id=%s", mapped, id)
 	}
-	if a, _ := signalReadID("r1"); a != formatUUID(uuidV5(signalUUIDNamespace, "r1")) {
-		t.Errorf("signalReadID(r1) = %s", a)
+	if a, _ := signalrun.ReadID("r1"); a != signalrun.FormatUUID(signalrun.UUIDv5(signalrun.Namespace, "r1")) {
+		t.Errorf("signalrun.ReadID(r1) = %s", a)
 	}
 }
 

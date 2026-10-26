@@ -64,6 +64,11 @@ const (
 type ScenarioGenerator struct {
 	config        *types.SequencerConfig
 	referencePath string
+	// observe, when set, receives the bases of every read instead of the
+	// reads being written (Regenerate).
+	observe func(member string, seq []byte) error
+	// rec describes the last run, for its run manifest.
+	rec *runRecord
 }
 
 // NewScenarioGenerator creates a ScenarioGenerator. A reference_path in
@@ -91,15 +96,9 @@ type output struct{ r1, r2 string }
 func (g *ScenarioGenerator) Run(ctx context.Context, scenario *ClinicalScenario) (*GroundTruthManifest, error) {
 	start := time.Now()
 
-	// Keyed-seed fingerprints derive the whole run from one seed and are
-	// verified by regenerating it; a scenario draws from several seeds
-	// (haplotype simulation and per-member engines), so it cannot be
-	// regenerated that way yet.
-	if g.config != nil && (g.config.Fingerprinting.Enable || g.config.Enterprise.Fingerprinting.Enable) {
-		return nil, fmt.Errorf("scenario does not support fingerprinting yet: disable fingerprinting in the sequencer config")
-	}
+	g.rec = nil
 	var refInput *runmanifest.Input
-	if g.referencePath != "" {
+	if g.referencePath != "" && g.observe == nil { // regeneration has checked the file
 		var err error
 		if refInput, err = runmanifest.HashInput(g.referencePath); err != nil {
 			return nil, fmt.Errorf("reference: %w", err)
@@ -179,14 +178,31 @@ func (g *ScenarioGenerator) Run(ctx context.Context, scenario *ClinicalScenario)
 
 	// Resolve the seed once so the haplotype simulation and every trio
 	// member's engine derive from it; the scenario is reproducible with it.
-	runSeed, drawn, err := genomics.ResolveSeed(cfg.Seed)
+	// With a keyed-seed fingerprint it is the seed derived from the key,
+	// with the configured (or a drawn) seed as the salt: everything below
+	// follows from it, so the scenario is the unfingerprinted scenario with
+	// that seed (see fingerprint.go).
+	rs, err := resolveScenarioSeed(cfg)
 	if err != nil {
 		return nil, err
 	}
-	if drawn {
-		fmt.Fprintf(os.Stderr, "   [info] seed %d (set seed: %d in the sequencer config to reproduce this scenario)\n", runSeed, runSeed)
+	switch {
+	case g.observe != nil:
+	case rs.Drawn && rs.Fingerprint != nil:
+		fmt.Fprintf(os.Stderr, "   [info] fingerprint salt %d (keyed seed; set seed: %d in the sequencer config, with the same key, customer and dataset, to reproduce this scenario)\n",
+			rs.Fingerprint.Salt, rs.Fingerprint.Salt)
+	case rs.Drawn:
+		fmt.Fprintf(os.Stderr, "   [info] seed %d (set seed: %d in the sequencer config to reproduce this scenario)\n", rs.Seed, rs.Seed)
 	}
-	cfg.Seed = runSeed
+	cfg.Seed = rs.Seed
+	if rs.Fingerprint != nil {
+		// The member engines use the derived seed as it is.
+		cfg.Fingerprinting, cfg.Enterprise.Fingerprinting = types.FingerprintConfig{}, types.FingerprintConfig{}
+	}
+	if g.observe != nil {
+		cfg.Output.Compression = "" // reads are parsed, not written
+	}
+	rec := &runRecord{seed: rs, reference: refInput}
 
 	outs := map[string]output{
 		"proband": {scenario.Output.ProbandFASTQ, scenario.Output.ProbandFASTQR2},
@@ -208,7 +224,7 @@ func (g *ScenarioGenerator) Run(ctx context.Context, scenario *ClinicalScenario)
 			if outs[member].r1 == "" {
 				continue
 			}
-			n, err := writeMemberReads(cfg, tp, member, outs[member])
+			n, err := g.writeMemberReads(cfg, tp, member, outs[member], rec)
 			if err != nil {
 				return nil, fmt.Errorf("writing %s FASTQ: %w", member, err)
 			}
@@ -224,11 +240,18 @@ func (g *ScenarioGenerator) Run(ctx context.Context, scenario *ClinicalScenario)
 		} else {
 			opts.RefRegion = region
 		}
-		n, err := writeReads(cfg, opts, outs["proband"])
+		n, err := g.writeReads(cfg, opts, "proband", outs["proband"], rec)
 		if err != nil {
 			return nil, fmt.Errorf("generating proband reads: %w", err)
 		}
 		readsGenerated = n
+	}
+
+	if g.observe == nil {
+		if err := rec.finish(g, scenario, cfg); err != nil {
+			return nil, err
+		}
+		g.rec = rec
 	}
 
 	// 6. Build manifest.
@@ -314,18 +337,27 @@ func (g *ScenarioGenerator) scenarioRegion(spec *PlantedVariantSpec) (*genomics.
 	return region, name, nil
 }
 
-// writeReads runs the engine with cfg and opts and writes its reads to out:
-// paired reads go to out.r1 and out.r2, or interleaved to out.r1 when r2 is
-// empty. It returns the number of FASTQ records written.
-func writeReads(cfg types.SequencerConfig, opts genomics.GenerateOpts, out output) (int, error) {
+// writeReads runs the engine with cfg and opts and writes member's reads to
+// out: paired reads go to out.r1 and out.r2, or interleaved to out.r1 when
+// r2 is empty. It returns the number of FASTQ records written and records
+// the files in rec. When regenerating (g.observe set) nothing is written:
+// the bases of every read go to g.observe.
+func (g *ScenarioGenerator) writeReads(cfg types.SequencerConfig, opts genomics.GenerateOpts, member string, out output, rec *runRecord) (int, error) {
 	if out.r2 != "" && !cfg.PairedEnd {
 		return 0, fmt.Errorf("an R2 file (%s) needs paired-end reads", out.r2)
 	}
 	if out.r2 != "" && strings.EqualFold(cfg.Output.Compression, "gzip") {
 		return 0, fmt.Errorf("separate R1/R2 scenario files need uncompressed output (output compression %q)", cfg.Output.Compression)
 	}
-	engine := genomics.NewEngine(cfg)
+	engine := g.newEngine(cfg)
 	defer engine.Close()
+	if g.observe != nil {
+		obs := &seqObserver{member: member, observe: g.observe}
+		if err := engine.GenerateToWriter(obs, opts); err != nil {
+			return 0, err
+		}
+		return obs.lines / 4, nil
+	}
 
 	paths := []string{out.r1}
 	if out.r2 != "" {
@@ -363,7 +395,12 @@ func writeReads(cfg types.SequencerConfig, opts genomics.GenerateOpts, out outpu
 	}
 	files = nil
 	if strings.EqualFold(cfg.Output.Compression, "gzip") {
-		return cfg.ReadsPerBatch * len(engineMates(cfg)), nil
+		n := cfg.ReadsPerBatch * len(engineMates(cfg))
+		rec.addFile(member, out.r1, int64(n), 0)
+		return n, nil
+	}
+	for i, p := range paths {
+		rec.addFile(member, p, split.records[i], split.bases[i])
 	}
 	return split.lines / 4, nil
 }
@@ -382,6 +419,8 @@ func engineMates(cfg types.SequencerConfig) []int {
 type recordSplitter struct {
 	out   []io.Writer
 	lines int
+	// records and bases count each writer's records and bases.
+	records, bases [2]int64
 }
 
 func (s *recordSplitter) Write(p []byte) (int, error) {
@@ -397,7 +436,17 @@ func (s *recordSplitter) Write(p []byte) (int, error) {
 		}
 		n += len(chunk)
 		p = p[len(chunk):]
+		k := (s.lines / 4) % len(s.out)
+		if s.lines%4 == 1 {
+			s.bases[k] += int64(len(chunk))
+		}
 		if i >= 0 {
+			switch s.lines % 4 {
+			case 0:
+				s.records[k]++
+			case 1:
+				s.bases[k]-- // the newline
+			}
 			s.lines++
 		}
 	}
@@ -459,7 +508,7 @@ func (g *ScenarioGenerator) planTrio(cfg types.SequencerConfig, region *genomics
 		return tp, nil
 	}
 
-	e := genomics.NewEngine(cfg)
+	e := g.newEngine(cfg)
 	defer e.Close()
 	seq, _, err := e.GenerateRawSequenceWith(e.Rand(backgroundStream), int(regionLen))
 	if err != nil {
@@ -601,7 +650,7 @@ func (tp *trioPlan) memberHaplotypes(member string) ([2][]byte, error) {
 // writeMemberReads samples member's reads from its two haplotypes with the
 // engine (reads per haplotype in proportion to its length, so about half
 // each) and writes them to out. It returns the number of FASTQ records.
-func writeMemberReads(cfg types.SequencerConfig, tp *trioPlan, member string, out output) (int, error) {
+func (g *ScenarioGenerator) writeMemberReads(cfg types.SequencerConfig, tp *trioPlan, member string, out output, rec *runRecord) (int, error) {
 	haps, err := tp.memberHaplotypes(member)
 	if err != nil {
 		return 0, err
@@ -621,7 +670,7 @@ func writeMemberReads(cfg types.SequencerConfig, tp *trioPlan, member string, ou
 	// synthetic window.
 	mc.HMMModelPath, mc.ModelDir = "", ""
 	mc.Seed = memberSeed(tp.runSeed, member)
-	return writeReads(mc, genomics.GenerateOpts{}, out)
+	return g.writeReads(mc, genomics.GenerateOpts{}, member, out, rec)
 }
 
 // writeFASTA writes the sequences as a FASTA file with 60-base lines.

@@ -54,6 +54,12 @@ func (e *Engine) recordInputs(m *manifest.Manifest) error {
 	return nil
 }
 
+// RecordInputs records the input files the engine reads (variants VCF,
+// reference FASTA, HMM model, read-length histogram) in m, by base name,
+// size and SHA-256, for commands that write their own run manifest
+// (scenario).
+func (e *Engine) RecordInputs(m *manifest.Manifest) error { return e.recordInputs(m) }
+
 // checkRegenInputs reports an input file the run recorded in opts that the
 // engine is not configured with: without it the run's reads cannot be
 // reproduced. Inputs opts leaves nil are not checked.

@@ -14,28 +14,28 @@ import (
 
 // ClinicalScenario is the top-level YAML type for a clinical demonstration scenario.
 type ClinicalScenario struct {
-	Phenotype PhenotypeSpec `yaml:"phenotype"`
-	Trio      *TrioSpec     `yaml:"trio,omitempty"`
-	Sequencer SequencerSpec `yaml:"sequencer"`
-	Output    OutputSpec    `yaml:"output"`
+	Phenotype PhenotypeSpec `yaml:"phenotype" json:"phenotype"`
+	Trio      *TrioSpec     `yaml:"trio,omitempty" json:"trio,omitempty"`
+	Sequencer SequencerSpec `yaml:"sequencer" json:"sequencer"`
+	Output    OutputSpec    `yaml:"output" json:"-"`
 }
 
 // PhenotypeSpec describes the phenotype and optional pre-specified variant.
 type PhenotypeSpec struct {
-	HPOTerms       []string            `yaml:"hpo_terms"`
-	ResolvedGene   string              `yaml:"resolved_gene,omitempty"`
-	PlantedVariant *PlantedVariantSpec `yaml:"planted_variant,omitempty"`
+	HPOTerms       []string            `yaml:"hpo_terms" json:"hpo_terms,omitempty"`
+	ResolvedGene   string              `yaml:"resolved_gene,omitempty" json:"resolved_gene,omitempty"`
+	PlantedVariant *PlantedVariantSpec `yaml:"planted_variant,omitempty" json:"planted_variant,omitempty"`
 }
 
 // PlantedVariantSpec is an explicit variant to plant (overrides HPO resolution).
 type PlantedVariantSpec struct {
-	Chrom       string `yaml:"chrom"`
-	Pos         int64  `yaml:"pos"`
-	Ref         string `yaml:"ref"`
-	Alt         string `yaml:"alt"`
-	Zygosity    string `yaml:"zygosity"` // "heterozygous" | "homozygous"
-	Consequence string `yaml:"consequence,omitempty"`
-	ACMGClass   string `yaml:"acmg_class,omitempty"`
+	Chrom       string `yaml:"chrom" json:"chrom"`
+	Pos         int64  `yaml:"pos" json:"pos"`
+	Ref         string `yaml:"ref" json:"ref"`
+	Alt         string `yaml:"alt" json:"alt"`
+	Zygosity    string `yaml:"zygosity" json:"zygosity"` // "heterozygous" | "homozygous"
+	Consequence string `yaml:"consequence,omitempty" json:"consequence,omitempty"`
+	ACMGClass   string `yaml:"acmg_class,omitempty" json:"acmg_class,omitempty"`
 }
 
 // ExpectedVAF returns 0.5 for heterozygous and 1.0 for homozygous.
@@ -48,21 +48,21 @@ func (p *PlantedVariantSpec) ExpectedVAF() float64 {
 
 // TrioSpec controls optional trio generation.
 type TrioSpec struct {
-	Generate bool `yaml:"generate"`
-	DeNovo   bool `yaml:"de_novo"`
+	Generate bool `yaml:"generate" json:"generate"`
+	DeNovo   bool `yaml:"de_novo" json:"de_novo"`
 }
 
 // SequencerSpec describes the sequencing parameters. Platform is a label
 // recorded in the manifest; the read model is the sequencer config's
 // (Illumina by default: binned qualities, quality-matched errors).
 type SequencerSpec struct {
-	Platform   string `yaml:"platform"`
-	Coverage   int    `yaml:"coverage"`
-	ReadLength int    `yaml:"read_length"`
+	Platform   string `yaml:"platform" json:"platform"`
+	Coverage   int    `yaml:"coverage" json:"coverage"`
+	ReadLength int    `yaml:"read_length" json:"read_length"`
 	// PairedEnd writes read pairs, the two ends of one fragment: to the
 	// *_fastq and *_fastq_r2 files, or interleaved in *_fastq when no R2
 	// file is given.
-	PairedEnd bool `yaml:"paired_end,omitempty"`
+	PairedEnd bool `yaml:"paired_end,omitempty" json:"paired_end,omitempty"`
 }
 
 // OutputSpec specifies output file paths. The *R2 paths are the read-2

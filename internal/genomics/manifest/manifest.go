@@ -17,6 +17,13 @@
 // are omitted, and Config.Seed holds the salt, so the configuration plus the
 // key reproduces the run, and nothing in the manifest reproduces it without
 // the key.
+//
+// The scenario, signal and transcriptome commands write manifests in the
+// same format (#31), with their parameters in Scenario, Signal or
+// Transcriptome: a scenario writes one, in the directory of its ground-truth
+// file, with each member's FASTQ outputs (Output.Member); signal and
+// transcriptome write one in their output directory. A fingerprinted run of
+// any of them records its Fingerprint and no seed, as above.
 package manifest
 
 import (
@@ -73,6 +80,13 @@ type Manifest struct {
 	// Signal holds the parameters of a raw-signal run (the signal
 	// command); nil for read generation.
 	Signal *Signal `json:"signal,omitempty"`
+	// Scenario holds the scenario of a clinical scenario run (the scenario
+	// command), whose Config is the sequencer configuration it ran with;
+	// nil otherwise.
+	Scenario *Scenario `json:"scenario,omitempty"`
+	// Transcriptome holds the parameters of a cDNA run (the transcriptome
+	// command), which has no Config; nil otherwise.
+	Transcriptome *Transcriptome `json:"transcriptome,omitempty"`
 	// Fingerprint describes the run's keyed-seed fingerprint; nil for an
 	// unfingerprinted run.
 	Fingerprint *Fingerprint `json:"fingerprint,omitempty"`
@@ -132,6 +146,41 @@ type Signal struct {
 	Skipped int64 `json:"skipped,omitempty"`
 }
 
+// Scenario describes a clinical scenario run: with the manifest Config,
+// Seed (or Fingerprint), Reference and the other recorded inputs, it
+// reproduces every read of the scenario.
+type Scenario struct {
+	// Spec is the scenario specification without its output paths
+	// (phenotype, trio and sequencer sections), as JSON.
+	Spec json.RawMessage `json:"spec"`
+	// Members are the samples whose reads were written, in order
+	// (proband, mother, father).
+	Members []string `json:"members"`
+}
+
+// Transcriptome describes a cDNA run (the transcriptome command): with the
+// manifest Seed (or Fingerprint) and the inputs it names, it reproduces
+// every output byte. Inputs are recorded by base name, size and SHA-256,
+// never by path.
+type Transcriptome struct {
+	Reads              int     `json:"reads"`
+	Tier               string  `json:"tier"`
+	Kit                string  `json:"kit"`
+	NovelRate          float64 `json:"novel_rate"`
+	FullLengthFraction float64 `json:"full_length_fraction"`
+	ZipfAlpha          float64 `json:"zipf_alpha"`
+	ExpressionSigma    float64 `json:"expression_sigma"`
+	SampleID           string  `json:"sample_id,omitempty"`
+	Compression        string  `json:"compression"`
+	// Transcripts is the transcript FASTA, or Genome the genome FASTA the
+	// transcripts were spliced from with GTF; ExpressionProfile the
+	// expression table, nil for the default Zipf model.
+	Transcripts       *Input `json:"transcripts,omitempty"`
+	Genome            *Input `json:"genome,omitempty"`
+	GTF               *Input `json:"gtf,omitempty"`
+	ExpressionProfile *Input `json:"expression_profile,omitempty"`
+}
+
 // Input is an input file of a run.
 type Input struct {
 	Name   string `json:"name"` // base name
@@ -176,6 +225,9 @@ type Output struct {
 	// reads and source bases of a signal output.
 	Reads int64 `json:"reads,omitempty"`
 	Bases int64 `json:"bases,omitempty"`
+	// Member is the scenario sample (proband, mother, father) of a
+	// scenario output.
+	Member string `json:"member,omitempty"`
 }
 
 // Totals sums the read outputs: FASTQ files, or BLOW5 files of a signal run

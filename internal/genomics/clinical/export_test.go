@@ -25,7 +25,7 @@ func ExportMemberHaplotypes(base []byte, start int64, trio *TrioHaplotypes, memb
 func ExportWriteMemberReads(cfg types.SequencerConfig, base []byte, start int64, trio *TrioHaplotypes, member, r1, r2 string) (int, error) {
 	cfg.TotalBatches = 1
 	tp := exportPlan(base, start, trio, cfg.Seed)
-	return writeMemberReads(cfg, tp, member, output{r1, r2})
+	return (&ScenarioGenerator{}).writeMemberReads(cfg, tp, member, output{r1, r2}, &runRecord{})
 }
 
 func exportPlan(base []byte, start int64, trio *TrioHaplotypes, seed uint64) *trioPlan {
