@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-10-25
+
 ### Added
 - Illumina profile `novaseq6000-pooled` (#36), fitted to 600,000 read pairs pooled from DRR394916, DRR276626 and ERR15600747 (200,000 each). Against three never-fitted NovaSeq 6000 runs it is the closest profile: held-out median pair classifier 0.615, read-1 quality 0.568, read-2 quality 0.590, against 0.648 / 0.606 / 0.627 for `novaseq6000-drr394916`.
 - `illumina_calibrate.sh` fits a pooled profile when `ACCESSION` lists several runs (equal pairs of each; per-run ENA metadata in `profile_runs.tsv`). `illumina_heldout.sh` accepts `PROFILE=RUN+RUN+...` and writes `profile_spread.tsv` (per-profile own / other-fitted / held-out spread).
@@ -647,7 +649,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Basic FASTQ file generation with a flag-based command-line interface and sequencer configuration files.
 
-[Unreleased]: https://github.com/scttfrdmn/phantom-science/compare/v0.14.0...HEAD
+[Unreleased]: https://github.com/scttfrdmn/phantom-science/compare/v0.15.0...HEAD
+[0.15.0]: https://github.com/scttfrdmn/phantom-science/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/scttfrdmn/phantom-science/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/scttfrdmn/phantom-science/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/scttfrdmn/phantom-science/compare/v0.11.0...v0.12.0
