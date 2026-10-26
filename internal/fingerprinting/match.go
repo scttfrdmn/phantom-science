@@ -54,6 +54,10 @@ type FileMatch struct {
 	// Contained counts reads that are not exact but share at least half
 	// of their sampled k-mers with the regenerated run.
 	Contained int
+	// Whole counts the contained reads all of whose sampled k-mers occur
+	// in the regenerated run (a trimmed read, for example). A read with
+	// sequencing errors is whole only in the run that made its errors.
+	Whole int
 	// ExpectedChance bounds the matches expected by chance if the
 	// regenerated and suspect reads were independent uniform-random
 	// sequences. It does not hold for low-complexity sequence or reads
@@ -195,6 +199,9 @@ func (m *Matcher) Results() []FileMatch {
 			f.Exact++
 		case r.slots > 0 && 2*popcount(r.found) >= int(r.slots):
 			f.Contained++
+			if popcount(r.found) == int(r.slots) {
+				f.Whole++
+			}
 		}
 		f.ExpectedChance += chanceMatch(int(r.length), int(r.slots), p, m.regenReads)
 	}

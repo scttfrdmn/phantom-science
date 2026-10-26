@@ -9,8 +9,8 @@ import (
 
 var verifyCmd = &cobra.Command{
 	Use:   "verify FILE...",
-	Short: "Check whether FASTQ files come from a fingerprinted run",
-	Long: `Check whether FASTQ files come from a fingerprinted run.
+	Short: "Check whether FASTQ or BLOW5 files come from a fingerprinted run",
+	Long: `Check whether FASTQ or BLOW5 files come from a fingerprinted run.
 
 Keyed-seed fingerprints (the default) do not change the data: a fingerprinted
 run's seed is derived from the key, customer, dataset and salt. verify
@@ -31,7 +31,20 @@ name, size and sha256, never by path: pass the VCF of a --variants run with
 --variants, the FASTA of a --reference run with --reference, the model of an
 hmm_model_path run with --hmm-model and the histogram of an empirical
 read-length run with --read-length-histogram. A file is used only when its
-sha256 matches the record; without it, verify refuses. (Manifests of
+sha256 matches the record; without it, verify refuses.
+
+Runs of the scenario, signal and transcriptome commands are verified the
+same way from the phantom-manifest.json they write (#31). A scenario
+manifest (in the directory of its ground_truth file) is regenerated with
+--reference for a --reference scenario. A signal manifest needs the run's
+input reads (--signal-input), pore model (--pore-model) and, if it used one,
+--truth file (--signal-truth); a transcriptome manifest its --transcripts,
+--genome, --gtf and --expression-profile files, as recorded. Suspect SLOW5 or
+BLOW5 files are matched by raw signal, not read IDs: a read matches when its
+whole signal, or half of up to 32 windows of 16 consecutive samples sampled
+along it, occur in the regenerated signal, so renamed, re-packed or trimmed
+reads still match; a signal verdict always includes a decoy run, because
+the chance of a window matching depends on the profile's noise. (Manifests of
 phantom-science 0.14.0 and earlier record these paths instead: the file
 given with the same name, or the recorded path, is used unchecked, with a
 warning.) The key
@@ -73,6 +86,13 @@ fingerprint, or cannot be read.`,
 			opts.HMMModels = append(opts.HMMModels, p)
 		}
 		opts.ReadLengths, _ = f.GetStringArray("read-length-histogram")
+		opts.SignalInputs, _ = f.GetStringArray("signal-input")
+		opts.PoreModels, _ = f.GetStringArray("pore-model")
+		opts.SignalTruths, _ = f.GetStringArray("signal-truth")
+		opts.Transcripts, _ = f.GetStringArray("transcripts")
+		opts.Genomes, _ = f.GetStringArray("genome")
+		opts.GTFs, _ = f.GetStringArray("gtf")
+		opts.ExpressionProfiles, _ = f.GetStringArray("expression-profile")
 		cmd.SilenceUsage = true
 		return cli.VerifyFiles(os.Stdout, args, opts)
 	},
@@ -92,7 +112,14 @@ func init() {
 	f.Int64("max-regen-reads", 0, "Regenerate at most this many reads per candidate (0: all)")
 	f.Bool("decoy", false, "Also match against the first candidate regenerated with a random seed (measured background)")
 	f.StringArray("variants", nil, "VCF a candidate run planted variants from (generate --variants); matched to a manifest by sha256 (repeatable)")
-	f.StringArray("reference", nil, "Reference FASTA a candidate run sampled reads from (generate --reference); matched to a manifest by sha256 (repeatable)")
+	f.StringArray("reference", nil, "Reference FASTA a candidate run sampled reads from (generate or scenario --reference); matched to a manifest by sha256 (repeatable)")
 	f.StringArray("hmm-model", nil, "HMM model a candidate run sampled bases from (hmm_model_path); matched to a manifest by sha256 (repeatable)")
 	f.StringArray("read-length-histogram", nil, "Read-length histogram a candidate run sampled lengths from (read_length_distribution.empirical_path); matched to a manifest by sha256 (repeatable)")
+	f.StringArray("signal-input", nil, "Input reads of a candidate signal run (signal --input); matched to a manifest by sha256 (repeatable)")
+	f.StringArray("pore-model", nil, "Pore model of a candidate signal run (signal --pore-model); matched to a manifest by sha256 (repeatable)")
+	f.StringArray("signal-truth", nil, "Truth file of a candidate signal run (signal --truth); matched to a manifest by sha256 (repeatable)")
+	f.StringArray("transcripts", nil, "Transcript FASTA of a candidate transcriptome run (transcriptome --transcripts); matched to a manifest by sha256 (repeatable)")
+	f.StringArray("genome", nil, "Genome FASTA of a candidate transcriptome run (transcriptome --genome); matched to a manifest by sha256 (repeatable)")
+	f.StringArray("gtf", nil, "GTF of a candidate transcriptome run (transcriptome --gtf); matched to a manifest by sha256 (repeatable)")
+	f.StringArray("expression-profile", nil, "Expression table of a candidate transcriptome run (transcriptome --expression-profile); matched to a manifest by sha256 (repeatable)")
 }

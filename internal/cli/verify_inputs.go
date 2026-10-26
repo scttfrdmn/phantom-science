@@ -114,7 +114,7 @@ func resolveCandidateInputs(w io.Writer, cands []*candidate, opts VerifyOptions)
 			}
 		}
 	}
-	return nil
+	return resolveRunFiles(cands, opts)
 }
 
 // resolve configures c with its input of kind k from have.
