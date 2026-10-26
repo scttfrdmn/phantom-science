@@ -345,7 +345,8 @@ stegano library or CGO.
    }
    ```
 
-   `generate --dataset-id` sets the dataset too. `--seed` is the salt; without
+   `--dataset-id` (generate, scenario, signal, transcriptome) sets the dataset
+   too. `--seed` is the salt; without
    it a salt is drawn and logged. The manifest records the scheme, customer,
    dataset and salt, never the key or the derived seed.
 
@@ -369,26 +370,57 @@ stegano library or CGO.
    same name (or the only one given), else the recorded path, and warns that
    it cannot be checked.
 
+   Runs of `scenario`, `signal` and `transcriptome` (since 0.16.0) are
+   fingerprinted and verified the same way: every random value of the run
+   comes from the keyed seed, and a fingerprinted run is byte-identical to the
+   unfingerprinted run with that seed. A scenario writes
+   `phantom-manifest.json` next to its ground truth; signal and transcriptome
+   write one in `--out`. verify regenerates them with their input files:
+   `--reference` for a scenario with a reference; `--signal-input`,
+   `--pore-model` and `--signal-truth` for signal; `--transcripts`,
+   `--genome`, `--gtf` and `--expression-profile` for transcriptome. Each file
+   is chosen by sha256.
+
 How verification decides:
 
 - **Matching:** suspect reads are matched to the regenerated run by sequence:
-  whole reads on either strand, or containment of sampled 31-mers. Reads that
-  were trimmed, shuffled, renamed, reverse-complemented or had every quality
-  rewritten still match. A file is attributed to a candidate when at least
-  three reads match and matches exceed ten times both a uniform-random chance
-  bound and a `--decoy` run (the first candidate regenerated with a random
-  seed).
+  whole reads on either strand, or containment of sampled 31-mers; a read is
+  *whole* when every sampled k-mer is found. Reads that were trimmed,
+  shuffled, renamed, reverse-complemented or had every quality rewritten
+  still match. SLOW5/BLOW5 reads are matched by raw signal, not read IDs: the
+  whole signal, or half of up to 32 sampled windows of 16 samples. A file is
+  attributed to a candidate when at least three reads match and matches
+  exceed ten times both a uniform-random chance bound and the decoy run (the
+  first candidate regenerated with a random seed). With a decoy run, it is
+  also attributed when its exact or whole matches exceed ten times the
+  decoy's (and number at least 11). Scenario, transcriptome and signal checks
+  always run a decoy; generate checks do so with `--decoy`.
 - **Measured:** 10,000 of 10,000 reads of each file of a 200,000-pair
   NovaSeq run matched the right customer (exact), and 0 of 10,000 matched the
   wrong one. After rewriting every quality to `F`, trimming 10 bases from each
   end, renaming and shuffling, 10,000 of 10,000 still matched by 31-mer
   containment. Regenerating one candidate's 400,000 reads took about 2.5 s on
-  an M4 Pro.
+  an M4 Pro. A 30x trio scenario: N of N reads of every member to the right
+  customer, as written and after renaming, rewriting qualities to `F`,
+  trimming 10 bases from each end and shuffling; 0 to the wrong one. 100,000
+  cDNA reads: 10,000 of 10,000 checked (exact, or whole after trimming); 0
+  exact and 0 whole for the wrong customer. 2,000 signal reads (78.9 M
+  samples): 2,000 of 2,000, also after renaming, trimming and re-packing as
+  SLOW5; 0 for the wrong one. Regenerating took about 0.3 s for the
+  scenario, 17–34 s for the 100,000 cDNA reads and 0.4 s for the signal.
 - **Limits:** `--max-reads` (default 10,000 suspect reads per file),
-  `--max-files` and `--max-regen-reads` bound the work. The chance bound
-  assumes uniform-random sequence, so for `--reference` or HMM runs use
-  `--decoy`. Runs made by `signal` and `scenario` cannot be verified this way
-  (`scenario` rejects fingerprinting).
+  `--max-files` (generate only) and `--max-regen-reads` bound the work. The
+  chance bound assumes uniform-random sequence, so for `--reference` or HMM
+  runs use `--decoy`. Reads sampled from a shared reference are reproduced
+  exactly by other runs too: in a 30x scenario over a 100 kb reference, a
+  decoy run reproduced 9 % of reads exactly, so attribution needs nearly
+  every read exact, and trimmed reads from such runs are not attributed. A
+  transcriptome or reference run is attributed by exact or whole reads only,
+  which needs at least 11 of them. Signal matches only while its raw samples
+  are unchanged: re-digitised, filtered or resampled signal does not match.
+  Each candidate and decoy is a full regeneration (about a minute for
+  100,000 cDNA reads). Scenario runs are verified with a build that has the
+  `scenario` command (not `-tags release`).
 
 The rules:
 

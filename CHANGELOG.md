@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Keyed-seed fingerprints for `scenario`, `signal` and `transcriptome` (#31). With fingerprinting enabled in `--config` or `-p` as for `generate` (key, `enterprise.customer_id`, `dataset_id` or the new `--dataset-id`), every random value of the run comes from one seed derived from the key, customer, dataset and salt (`--seed`, or a drawn value that is logged). A fingerprinted run is byte-identical to the unfingerprinted run with the derived seed. These commands reject the read-ID label settings.
+- `scenario` writes a run manifest, `phantom-manifest.json`, in the directory of its ground-truth file (#31): the sequencer config without paths or key, the seed or fingerprint, the scenario without output paths, its members, the input files {name, bytes, sha256} and each member FASTQ by size and sha256.
+- `transcriptome` writes `phantom-manifest.json` (#31): its parameters, the input files {name, bytes, sha256}, every output by size and sha256, and the seed or fingerprint.
+- `verify` attributes `scenario`, `transcriptome` and `signal` runs by regenerating them from their manifests (#31), with `--signal-input`, `--pore-model`, `--signal-truth`, `--transcripts`, `--genome`, `--gtf` and `--expression-profile` (repeatable, matched by sha256); a scenario's reference is passed with `--reference`. Scenario runs are verified with a build that has the `scenario` command.
+- `verify` matches SLOW5/BLOW5 files by raw signal, not read IDs (#31): a read matches when its whole signal, or half of up to 32 sampled windows of 16 samples, occur in the regenerated signal, so renamed, re-packed and trimmed reads still match.
+- Measured (#31): a 30x trio scenario, 100,000 cDNA reads and 2,000 signal reads (78.9 M samples) were attributed N of N to the right customer as written and after renaming, rewriting qualities, trimming and shuffling (signal: renamed, trimmed and re-packed as SLOW5), and 0 to the wrong one.
+
+### Changed
+- `verify` counts whole matches (every sampled k-mer or window found), and with a decoy run also attributes a file whose exact or whole matches exceed ten times the decoy's (at least 11) (#31). Scenario, transcriptome and signal verdicts always include a decoy of their own kind, because their reads come from shared sequence (transcripts, a reference) or have no chance bound; `generate` candidates still use `--decoy`. Each candidate is compared with the decoy of its own kind.
+- A fingerprinted `signal` run's manifest records its fingerprint and no seed (#31); `verify` no longer rejects signal manifests. Unfingerprinted output of every command is unchanged.
+
 ### Fixed
 - The `scenario` ground-truth manifest recorded the `--reference` path as given, a wall-clock `generated_at` and `compute_metrics.wall_clock_ns`, so a local path shipped with the data and the same spec and seed wrote different files (#38). It now records the reference as `reference` {name, bytes, sha256}, like the run manifest, and drops both wall-clock values (the duration is still printed).
 
