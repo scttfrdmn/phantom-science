@@ -63,6 +63,18 @@ type VerifyOptions struct {
 	References  []string
 	HMMModels   []string
 	ReadLengths []string
+	// SignalInputs, PoreModels and SignalTruths are the input reads, pore
+	// models and --truth files a candidate signal run may have read, and
+	// Transcripts, Genomes, GTFs and ExpressionProfiles the inputs of a
+	// transcriptome run (#31), matched to a manifest's records by size and
+	// SHA-256 like Variants.
+	SignalInputs       []string
+	PoreModels         []string
+	SignalTruths       []string
+	Transcripts        []string
+	Genomes            []string
+	GTFs               []string
+	ExpressionProfiles []string
 }
 
 // VerifyFiles checks each FASTQ file in paths and reports one line per file

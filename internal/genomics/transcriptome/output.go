@@ -61,6 +61,7 @@ type RunResult struct {
 	Dir        string
 	FASTQ      string
 	Reads      int
+	Bases      int64
 	NovelReads int
 	Counts     map[*Species]int
 }
@@ -139,6 +140,7 @@ func WriteRun(dir string, s *Simulator, opts OutputOptions) (res *RunResult, err
 			strconv.Itoa(t.Start), strconv.Itoa(t.End), strconv.Itoa(len(sp.Seq)), strconv.Itoa(len(rd.Record.Seq)))
 		res.Counts[sp]++
 		res.Reads++
+		res.Bases += int64(len(rd.Record.Seq))
 		if sp.Novel != NovelNone {
 			res.NovelReads++
 		}

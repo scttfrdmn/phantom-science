@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/scttfrdmn/phantom-science/internal/genomics"
+	"github.com/scttfrdmn/phantom-science/internal/genomics/manifest"
 	"github.com/scttfrdmn/phantom-science/internal/genomics/nanopore/errmodel"
 	"github.com/scttfrdmn/phantom-science/internal/genomics/transcriptome"
 	"github.com/spf13/cobra"
@@ -49,8 +49,19 @@ truth.tsv (one row per read), counts.tsv (per transcript and novel isoform:
 true TPM, expected and realised reads), novel_isoforms.tsv, and
 novel_isoforms.gtf when exon coordinates are known.
 
+phantom-manifest.json records the parameters, the seed, the input files by
+name, size and sha256, and every output by size and sha256.
+
 --seed makes a run reproducible (byte-identical output); without it a seed is
-drawn and logged to stderr.
+drawn and logged to stderr. With fingerprinting enabled in --config (a
+sequencer config: fingerprinting.enable, a key from fingerprinting.key_file
+or PHANTOM_FINGERPRINT_KEY, enterprise.customer_id, dataset_id) or a phantom
+config (-p), as for generate, the seed is derived from the key, customer,
+dataset (--dataset-id overrides it) and salt (--seed, or a drawn value
+logged): the reads are those of an ordinary run with the derived seed, and
+the manifest records the scheme, customer, dataset and salt, never the seed
+or key. "phantom-science verify --manifest" with the run's input files
+attributes suspect reads.
 
 Example (GRCh38.fa and gencode.gtf are your own downloads, e.g. from GENCODE):
   phantom-science transcriptome --genome GRCh38.fa --gtf gencode.gtf \
@@ -80,6 +91,7 @@ func init() {
 	f.Float64("zipf-alpha", transcriptome.DefaultZipfAlpha, "Default expression model: rank-abundance exponent")
 	f.Float64("expression-sigma", transcriptome.DefaultExpressionSigma, "Default expression model: log-normal scatter (natural log)")
 	f.String("sample-id", "", "ONT sample_id written to read headers")
+	f.String("dataset-id", "", "Dataset ID (dataset_id); with fingerprinting it names the dataset the keyed seed is derived for")
 }
 
 func runTranscriptome(cmd *cobra.Command, out, logw io.Writer) error {
@@ -134,42 +146,20 @@ func runTranscriptome(cmd *cobra.Command, out, logw io.Writer) error {
 		return err
 	}
 
-	seed, drawn, err := genomics.ResolveSeed(seed)
+	rs, err := commandRunSeed(cmd, seed, func(format string, args ...any) { fmt.Fprintf(logw, format, args...) })
 	if err != nil {
 		return err
 	}
-	if drawn {
-		fmt.Fprintf(logw, "   [info] seed %d (pass --seed %d to reproduce this run)\n", seed, seed)
+	spec := transcriptome.RunSpec{
+		Reads: reads, Tier: tier, Kit: kit.Name, NovelRate: novel, FullLengthFraction: fullLen,
+		Zipf: zipf, SampleID: sampleID, Gzip: gz,
+		TranscriptsPath: txPath, GenomePath: genomePath, GTFPath: gtfPath, ProfilePath: profile,
 	}
-
-	cfg := transcriptome.DefaultConfig(reads, seed)
-	cfg.Tier, cfg.Kit, cfg.NovelRate, cfg.FullLengthFraction = tier, kit, novel, fullLen
-	cfg.Run.SampleID = sampleID
-	if err := cfg.Validate(); err != nil {
-		return err
-	}
-	if err := cfg.Run.WithDefaults(seed).Validate(); err != nil {
-		return err
-	}
-
-	table, err := loadTranscriptTable(txPath, genomePath, gtfPath, logw)
+	sim, table, err := spec.Simulator(rs.Seed, logw)
 	if err != nil {
 		return err
 	}
-	var tpm []float64
-	if profile != "" {
-		var st transcriptome.ProfileStats
-		tpm, st, err = transcriptome.LoadProfile(profile, table)
-		if err != nil {
-			return err
-		}
-		fmt.Fprintf(logw, "   [info] expression profile %s: %d rows, %d matched, %d not in the transcript table (values: %s)\n",
-			profile, st.Rows, st.Matched, st.Unmatched, st.Column)
-	} else {
-		tpm = transcriptome.DefaultTPM(table, zipf, seed)
-	}
-
-	sim, err := transcriptome.NewSimulator(table, tpm, cfg)
+	rec, err := spec.Record()
 	if err != nil {
 		return err
 	}
@@ -183,47 +173,12 @@ func runTranscriptome(cmd *cobra.Command, out, logw io.Writer) error {
 	if err != nil {
 		return err
 	}
+	if err := transcriptome.WriteManifest(Version, rs.Seed, rs.Fingerprint, rec, sim, res); err != nil {
+		return err
+	}
 	fmt.Fprintf(out, "Wrote %d cDNA reads (%d from %d novel isoforms) from %d transcripts to %s\n",
 		res.Reads, res.NovelReads, novelSpecies, len(table.Transcripts), filepath.Clean(outDir))
-	fmt.Fprintf(out, "  %s, %s, %s, %s, %s\n", filepath.Base(res.FASTQ), transcriptome.SummaryName,
-		transcriptome.TruthName, transcriptome.CountsName, transcriptome.NovelTSVName)
+	fmt.Fprintf(out, "  %s, %s, %s, %s, %s, %s\n", filepath.Base(res.FASTQ), transcriptome.SummaryName,
+		transcriptome.TruthName, transcriptome.CountsName, transcriptome.NovelTSVName, manifest.FileName)
 	return nil
-}
-
-// loadTranscriptTable loads the transcript table from the CLI inputs,
-// reporting skipped records to logw.
-func loadTranscriptTable(txPath, genomePath, gtfPath string, logw io.Writer) (*transcriptome.Table, error) {
-	var ann *transcriptome.Annotation
-	if gtfPath != "" {
-		var err error
-		if ann, err = transcriptome.ParseGTF(gtfPath); err != nil {
-			return nil, err
-		}
-		if ann.Skipped > 0 {
-			fmt.Fprintf(logw, "   [warn] %s: skipped %d unstranded transcripts\n", gtfPath, ann.Skipped)
-		}
-	}
-	if genomePath != "" {
-		table, st, err := transcriptome.BuildFromGenome(genomePath, ann)
-		if err != nil {
-			return nil, err
-		}
-		if st.MissingChrom > 0 {
-			fmt.Fprintf(logw, "   [warn] %d annotated transcripts are on chromosomes missing from %s and were skipped\n", st.MissingChrom, genomePath)
-		}
-		return table, nil
-	}
-	table, err := transcriptome.LoadTranscriptFASTA(txPath)
-	if err != nil {
-		return nil, err
-	}
-	if ann != nil {
-		att, mis := table.AttachAnnotation(ann)
-		fmt.Fprintf(logw, "   [info] exon structure from %s for %d of %d transcripts", gtfPath, att, len(table.Transcripts))
-		if mis > 0 {
-			fmt.Fprintf(logw, " (%d matched by ID but differ in length)", mis)
-		}
-		fmt.Fprintln(logw)
-	}
-	return table, nil
 }

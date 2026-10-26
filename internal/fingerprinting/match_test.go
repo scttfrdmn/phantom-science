@@ -49,8 +49,8 @@ func TestMatcher(t *testing.T) {
 		m.Observe(s)
 	}
 	res := m.Results()
-	if g := res[f]; g.Checked != 5 || g.Exact != 3 || g.Contained != 2 {
-		t.Errorf("suspect: %+v, want 5 checked, 3 exact, 2 contained", g)
+	if g := res[f]; g.Checked != 5 || g.Exact != 3 || g.Contained != 2 || g.Whole != 1 {
+		t.Errorf("suspect: %+v, want 5 checked, 3 exact, 2 contained (the trimmed read whole, the edited one not)", g)
 	}
 	if g := res[other]; g.Checked != 5 || g.Matched() != 0 {
 		t.Errorf("other: %+v, want no match", g)

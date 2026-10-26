@@ -1,15 +1,10 @@
 package cmd
 
 import (
-	"bufio"
-	"bytes"
-	"compress/gzip"
-	"crypto/sha1" // #nosec G505 -- UUIDv5 name hashing (RFC 4122), not security
-	"crypto/sha256"
+	"bufio" // #nosec G505 -- UUIDv5 name hashing (RFC 4122), not security
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"hash"
 	"hash/fnv"
 	"io"
 	"math"
@@ -22,10 +17,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/scttfrdmn/phantom-science/internal/genomics"
 	"github.com/scttfrdmn/phantom-science/internal/genomics/manifest"
 	"github.com/scttfrdmn/phantom-science/internal/genomics/nanopore"
 	"github.com/scttfrdmn/phantom-science/internal/genomics/signal"
+	"github.com/scttfrdmn/phantom-science/internal/genomics/signalrun"
 	"github.com/scttfrdmn/phantom-science/internal/genomics/slow5"
 	"github.com/scttfrdmn/phantom-science/pkg/types"
 	"github.com/spf13/cobra"
@@ -77,6 +72,16 @@ Outputs in --out: the BLOW5 files, truth.fa and phantom-manifest.json
 Output is a pure function of the inputs, flags and --seed: byte-identical
 for any --workers.
 
+Fingerprints. With fingerprinting enabled in --config (a sequencer config:
+fingerprinting.enable, a key from fingerprinting.key_file or
+PHANTOM_FINGERPRINT_KEY, enterprise.customer_id, dataset_id) or a phantom
+config (-p), as for generate, the run seed is derived from the key,
+customer, dataset (--dataset-id overrides it) and salt (--seed, or a drawn
+value logged to stderr). The signal is that of an ordinary run with the
+derived seed; the manifest records the scheme, customer, dataset and salt,
+never the seed or key. "phantom-science verify --manifest" with the run's
+--signal-input reads and --pore-model attributes BLOW5 files by raw signal.
+
 Example (from the repository root; the last step needs Dorado, blue-crab,
 minimap2 and samtools, see scripts/acceptance/README.md):
   phantom-science generate --platform ont --config configs/sequencers/ont_promethion24.yaml \
@@ -106,6 +111,7 @@ func init() {
 	f.String("signal-compression", "svb-zd", "BLOW5 signal compression: svb-zd or none")
 	f.Int("workers", 0, "Synthesis goroutines (0: number of CPUs); output does not depend on it")
 	f.Bool("overwrite", false, "Replace existing outputs in --out")
+	f.String("dataset-id", "", "Dataset ID (dataset_id); with fingerprinting it names the dataset the keyed seed is derived for")
 }
 
 // signalOptions are the parsed flags of the signal command.
@@ -123,6 +129,9 @@ type signalOptions struct {
 	sc          slow5.SignalCompression
 	workers     int
 	overwrite   bool
+	// fingerprint is the keyed-seed fingerprint record; seed is then the
+	// derived seed, which is not recorded.
+	fingerprint *manifest.Fingerprint
 }
 
 func runSignal(cmd *cobra.Command, out, logw io.Writer) error {
@@ -191,14 +200,11 @@ func runSignal(cmd *cobra.Command, out, logw io.Writer) error {
 	if o.workers == 0 {
 		o.workers = runtime.NumCPU()
 	}
-	seed, drawn, err := genomics.ResolveSeed(o.seed)
+	rs, err := commandRunSeed(cmd, o.seed, func(format string, args ...any) { fmt.Fprintf(logw, format, args...) })
 	if err != nil {
 		return err
 	}
-	if drawn {
-		fmt.Fprintf(logw, "   [info] seed %d (pass --seed %d to reproduce this run)\n", seed, seed)
-	}
-	o.seed = seed
+	o.seed, o.fingerprint = rs.Seed, rs.Fingerprint
 
 	res, err := signalRun(o, logw)
 	if err != nil {
@@ -292,263 +298,6 @@ func parseONTComment(c string) ontFields {
 	return f
 }
 
-// signalUUIDNamespace is the UUIDv5 namespace of mapped read IDs: the
-// RFC 4122 URL namespace applied to the project URL.
-var signalUUIDNamespace = uuidV5(uuidNamespaceURL, "https://github.com/scttfrdmn/phantom-science/signal")
-
-// uuidNamespaceURL is the RFC 4122 URL namespace, 6ba7b811-9dad-11d1-80b4-00c04fd430c8.
-var uuidNamespaceURL = [16]byte{0x6b, 0xa7, 0xb8, 0x11, 0x9d, 0xad, 0x11, 0xd1, 0x80, 0xb4, 0x00, 0xc0, 0x4f, 0xd4, 0x30, 0xc8}
-
-// uuidV5 is the RFC 4122 name-based (SHA-1) UUID of name in namespace ns.
-func uuidV5(ns [16]byte, name string) [16]byte {
-	h := sha1.New() // #nosec G401 -- RFC 4122 version 5 is defined over SHA-1
-	h.Write(ns[:])
-	h.Write([]byte(name))
-	var u [16]byte
-	copy(u[:], h.Sum(nil))
-	u[6] = u[6]&0x0f | 0x50 // version 5
-	u[8] = u[8]&0x3f | 0x80 // RFC 4122 variant
-	return u
-}
-
-func formatUUID(u [16]byte) string {
-	var b [36]byte
-	hex.Encode(b[0:8], u[0:4])
-	b[8] = '-'
-	hex.Encode(b[9:13], u[4:6])
-	b[13] = '-'
-	hex.Encode(b[14:18], u[6:8])
-	b[18] = '-'
-	hex.Encode(b[19:23], u[8:10])
-	b[23] = '-'
-	hex.Encode(b[24:36], u[10:16])
-	return string(b[:])
-}
-
-// isUUID reports whether s has the 8-4-4-4-12 hex form of a UUID.
-func isUUID(s string) bool {
-	if len(s) != 36 {
-		return false
-	}
-	for i := 0; i < 36; i++ {
-		c := s[i]
-		if i == 8 || i == 13 || i == 18 || i == 23 {
-			if c != '-' {
-				return false
-			}
-			continue
-		}
-		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F') {
-			return false
-		}
-	}
-	return true
-}
-
-// signalReadID returns the BLOW5 read ID for an input read ID: the ID itself
-// (lowercased) if it is a UUID, otherwise its UUIDv5. mapped reports whether
-// the result differs from name.
-func signalReadID(name string) (id string, mapped bool) {
-	if isUUID(name) {
-		id = strings.ToLower(name)
-		return id, id != name
-	}
-	return formatUUID(uuidV5(signalUUIDNamespace, name)), true
-}
-
-// seqFile reads FASTQ (4-line records) or FASTA (multi-line) records from a
-// plain or gzip file, hashing the file's bytes as they are read.
-type seqFile struct {
-	path  string
-	f     *os.File
-	raw   io.Reader // file bytes (through the hash)
-	br    *bufio.Reader
-	gz    *gzip.Reader
-	h     hash.Hash
-	n     int64
-	fasta bool
-	began bool
-	line  int
-}
-
-type countWriter struct{ n *int64 }
-
-func (c countWriter) Write(p []byte) (int, error) { *c.n += int64(len(p)); return len(p), nil }
-
-func openSeqFile(path string) (*seqFile, error) {
-	f, err := os.Open(path) // #nosec G304 -- user-supplied input path
-	if err != nil {
-		return nil, err
-	}
-	s := &seqFile{path: path, f: f, h: sha256.New()}
-	rawBuf := bufio.NewReaderSize(io.TeeReader(f, io.MultiWriter(s.h, countWriter{&s.n})), 1<<20)
-	s.raw = rawBuf
-	if magic, _ := rawBuf.Peek(2); len(magic) == 2 && magic[0] == 0x1f && magic[1] == 0x8b {
-		gz, err := gzip.NewReader(rawBuf)
-		if err != nil {
-			_ = f.Close()
-			return nil, fmt.Errorf("%s: %w", path, err)
-		}
-		s.gz = gz
-		s.br = bufio.NewReaderSize(gz, 1<<20)
-	} else {
-		s.br = rawBuf
-	}
-	return s, nil
-}
-
-// finish reads the rest of the file (so the hash covers all of it) and
-// closes it, returning the size and hex SHA-256.
-func (s *seqFile) finish() (manifest.Input, error) {
-	_, err := io.Copy(io.Discard, s.raw)
-	if s.gz != nil {
-		err = errors.Join(err, s.gz.Close())
-	}
-	err = errors.Join(err, s.f.Close())
-	return manifest.Input{Name: filepath.Base(s.path), Bytes: s.n, SHA256: hex.EncodeToString(s.h.Sum(nil))}, err
-}
-
-func (s *seqFile) close() { _ = s.f.Close() }
-
-func (s *seqFile) readLine() ([]byte, error) {
-	b, err := s.br.ReadBytes('\n')
-	if err == io.EOF && len(b) > 0 {
-		err = nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	s.line++
-	return bytes.TrimRight(b, "\r\n"), nil
-}
-
-func (s *seqFile) errorf(format string, args ...any) error {
-	return fmt.Errorf("%s:%d: %s", s.path, s.line, fmt.Sprintf(format, args...))
-}
-
-// next returns the next record's ID, header comment and sequence, or io.EOF.
-func (s *seqFile) next() (name, comment string, seq []byte, err error) {
-	var head []byte
-	for {
-		if head, err = s.readLine(); err != nil {
-			return "", "", nil, err
-		}
-		if len(head) > 0 {
-			break
-		}
-	}
-	if !s.began {
-		s.began = true
-		switch head[0] {
-		case '@':
-		case '>':
-			s.fasta = true
-		default:
-			return "", "", nil, s.errorf("not FASTQ or FASTA (line starts with %q)", head[0])
-		}
-	}
-	marker := byte('@')
-	if s.fasta {
-		marker = '>'
-	}
-	if head[0] != marker {
-		return "", "", nil, s.errorf("expected a %q header line", marker)
-	}
-	name, comment, _ = strings.Cut(string(head[1:]), " ")
-	if i := strings.IndexByte(name, '\t'); i >= 0 {
-		name, comment = name[:i], name[i+1:]+" "+comment
-	}
-	if name == "" {
-		return "", "", nil, s.errorf("empty read ID")
-	}
-	if s.fasta {
-		for {
-			p, perr := s.br.Peek(1)
-			if perr != nil || p[0] == '>' {
-				break
-			}
-			l, lerr := s.readLine()
-			if lerr != nil {
-				return "", "", nil, lerr
-			}
-			seq = append(seq, l...)
-		}
-		return name, comment, seq, nil
-	}
-	if seq, err = s.readLine(); err != nil {
-		return "", "", nil, s.errorf("truncated FASTQ record %s", name)
-	}
-	plus, err := s.readLine()
-	if err != nil || len(plus) == 0 || plus[0] != '+' {
-		return "", "", nil, s.errorf("FASTQ record %s: missing '+' line", name)
-	}
-	qual, err := s.readLine()
-	if err != nil || len(qual) != len(seq) {
-		return "", "", nil, s.errorf("FASTQ record %s: quality length differs from sequence length", name)
-	}
-	return name, comment, append([]byte(nil), seq...), nil
-}
-
-// loadTruth reads a FASTA/FASTQ of true sequences keyed by record ID.
-func loadTruth(path string) (map[string][]byte, manifest.Input, error) {
-	s, err := openSeqFile(path)
-	if err != nil {
-		return nil, manifest.Input{}, err
-	}
-	defer s.close()
-	truth := map[string][]byte{}
-	for {
-		name, _, seq, err := s.next()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return nil, manifest.Input{}, err
-		}
-		if _, dup := truth[name]; dup {
-			return nil, manifest.Input{}, fmt.Errorf("%s: duplicate record %s", path, name)
-		}
-		truth[name] = seq
-	}
-	in, err := s.finish()
-	return truth, in, err
-}
-
-// detectModelUnits returns "pa" for a squigulator/nanopolish table (header
-// row or level_stdv column) and "standardised" for a two-column ONT
-// kmer_models table.
-func detectModelUnits(path string) (string, error) {
-	f, err := os.Open(path) // #nosec G304 -- user-supplied model path
-	if err != nil {
-		return "", fmt.Errorf("pore model: %w", err)
-	}
-	defer f.Close()
-	var r io.Reader = f
-	if strings.HasSuffix(path, ".gz") {
-		gz, err := gzip.NewReader(f)
-		if err != nil {
-			return "", fmt.Errorf("pore model %s: %w", path, err)
-		}
-		defer gz.Close()
-		r = gz
-	}
-	sc := bufio.NewScanner(r)
-	for sc.Scan() {
-		fields := strings.Fields(sc.Text())
-		if len(fields) == 0 || strings.HasPrefix(fields[0], "#") {
-			continue
-		}
-		if strings.EqualFold(fields[0], "kmer") || len(fields) >= 3 {
-			return "pa", nil
-		}
-		return "standardised", nil
-	}
-	if err := sc.Err(); err != nil {
-		return "", fmt.Errorf("pore model %s: %w", path, err)
-	}
-	return "", fmt.Errorf("pore model %s: no k-mer rows", path)
-}
-
 // Run metadata defaults derived per profile: MinKNOW read-group attributes of
 // a PromethION R10.4.1 (Kit 14) or RNA004 run.
 func profileAttrs(p signal.Profile) (experiment, kit, product string) {
@@ -602,7 +351,7 @@ func (r *sigRun) header(p signal.Profile) slow5.Header {
 			"sample_id":              r.info.SampleID,
 			"sequencing_kit":         kit,
 			"protocol_group_id":      r.info.ProtocolGroupID,
-			"protocol_run_id":        formatUUID(uuidV5(signalUUIDNamespace, "protocol_run/"+r.info.RunID)),
+			"protocol_run_id":        signalrun.FormatUUID(signalrun.UUIDv5(signalrun.Namespace, "protocol_run/"+r.info.RunID)),
 			"exp_script_purpose":     "sequencing_run",
 			"signal_profile":         p.Name,
 		}},
@@ -634,43 +383,30 @@ type sigPlan struct {
 	skipped int64
 }
 
-// sigSource resolves an input record to its output read ID, the sequence to
-// synthesise and whether that came from --truth.
-func sigSource(name string, seq []byte, truth map[string][]byte) (id string, mapped bool, src []byte, fromTruth bool) {
-	id, mapped = signalReadID(name)
-	if t, ok := truth[name]; ok {
-		return id, mapped, t, true
-	}
-	if t, ok := truth[id]; ok {
-		return id, mapped, t, true
-	}
-	return id, mapped, seq, false
-}
-
 // scanInputs is the first pass: it checks read IDs are unique, groups reads
 // by run, finds each run's earliest start time and hashes the inputs.
 func scanInputs(o signalOptions, truth map[string][]byte, k int) (*sigPlan, error) {
 	pl := &sigPlan{byKey: map[string]*sigRun{}}
 	seen := map[[16]byte]struct{}{} // 16 bytes per read, not the ID strings
 	for _, path := range o.inputs {
-		s, err := openSeqFile(path)
+		s, err := signalrun.OpenSeqFile(path)
 		if err != nil {
 			return nil, err
 		}
 		for {
-			name, comment, seq, err := s.next()
+			name, comment, seq, err := s.Next()
 			if err == io.EOF {
 				break
 			}
 			if err != nil {
-				s.close()
+				s.Close()
 				return nil, err
 			}
-			id, _, src, _ := sigSource(name, seq, truth)
+			id, _, src, _ := signalrun.Source(name, seq, truth)
 			var key [16]byte
 			_, _ = hex.Decode(key[:], []byte(strings.ReplaceAll(id, "-", "")))
 			if _, dup := seen[key]; dup {
-				s.close()
+				s.Close()
 				return nil, fmt.Errorf("%s: read %s maps to read ID %s, which an earlier read has; read IDs must be unique", path, name, id)
 			}
 			seen[key] = struct{}{}
@@ -705,7 +441,7 @@ func scanInputs(o signalOptions, truth map[string][]byte, k int) (*sigPlan, erro
 			}
 			pl.reads++
 		}
-		in, err := s.finish()
+		in, err := s.Finish()
 		if err != nil {
 			return nil, err
 		}
@@ -765,34 +501,9 @@ func setupRuns(o signalOptions, pl *sigPlan, p signal.Profile) error {
 
 // signalRun synthesises every read of the inputs and writes the outputs.
 func signalRun(o signalOptions, logw io.Writer) (*signalResult, error) {
-	p, err := signal.Preset(o.profileName)
+	p, model, units, err := signalrun.LoadModel(o.profileName, o.profileSet, o.modelPath, o.modelUnits, logw)
 	if err != nil {
 		return nil, err
-	}
-	for name, v := range o.profileSet {
-		if err := p.Set(name, v); err != nil {
-			return nil, err
-		}
-	}
-	if err := p.Validate(); err != nil {
-		return nil, err
-	}
-	units := o.modelUnits
-	if units == "auto" {
-		if units, err = detectModelUnits(o.modelPath); err != nil {
-			return nil, err
-		}
-	}
-	var lopts []signal.LoadOption
-	if units == "standardised" {
-		lopts = append(lopts, signal.WithScaling(p.ModelScale, p.ModelShift), signal.WithDefaultStdv(p.ModelStdv))
-	}
-	model, err := signal.LoadPoreModel(o.modelPath, lopts...)
-	if err != nil {
-		return nil, err
-	}
-	if p.ModelK > 0 && model.K != p.ModelK {
-		fmt.Fprintf(logw, "   [warn] pore model k=%d, profile %s expects k=%d\n", model.K, p.Name, p.ModelK)
 	}
 	_, modelSum, err := manifest.HashFile(o.modelPath)
 	if err != nil {
@@ -803,7 +514,7 @@ func signalRun(o signalOptions, logw io.Writer) (*signalResult, error) {
 	var truth map[string][]byte
 	var truthIn *manifest.Input
 	if o.truthPath != "" {
-		t, in, err := loadTruth(o.truthPath)
+		t, in, err := signalrun.LoadTruth(o.truthPath)
 		if err != nil {
 			return nil, err
 		}
@@ -871,7 +582,12 @@ func signalRun(o signalOptions, logw io.Writer) (*signalResult, error) {
 	}
 	res.seconds = float64(res.samples) / p.SamplingRate
 
-	m := manifest.New(Version, o.seed, pl.runs[0].expStart, types.SequencerConfig{})
+	recorded := o.seed
+	if o.fingerprint != nil {
+		recorded = 0 // a keyed-seed run records its fingerprint, never its seed
+	}
+	m := manifest.New(Version, recorded, pl.runs[0].expStart, types.SequencerConfig{})
+	m.Fingerprint = o.fingerprint
 	m.Signal = &manifest.Signal{
 		Profile:           p.Name,
 		ProfileOverrides:  o.profileSet,
@@ -893,7 +609,7 @@ func signalRun(o signalOptions, logw io.Writer) (*signalResult, error) {
 			}
 		}
 		m.FlowCells = append(m.FlowCells, manifest.FlowCell{
-			Index: r.index, Seed: o.seed, RunID: r.info.RunID, FlowCellID: r.info.FlowCellID,
+			Index: r.index, Seed: recorded, RunID: r.info.RunID, FlowCellID: r.info.FlowCellID,
 			Files: len(files), Reads: r.reads, Bases: r.bases,
 		})
 		for i, path := range files {
@@ -1015,20 +731,20 @@ func synthesizeAll(o signalOptions, pl *sigPlan, truth map[string][]byte, model 
 func produceJobs(o signalOptions, pl *sigPlan, truth map[string][]byte, k int, p signal.Profile,
 	quit <-chan struct{}, order, work chan<- *sigJob, fromTruth *int64) error {
 	for _, path := range o.inputs {
-		s, err := openSeqFile(path)
+		s, err := signalrun.OpenSeqFile(path)
 		if err != nil {
 			return err
 		}
 		for {
-			name, comment, seq, err := s.next()
+			name, comment, seq, err := s.Next()
 			if err == io.EOF {
 				break
 			}
 			if err != nil {
-				s.close()
+				s.Close()
 				return err
 			}
-			id, mapped, src, ft := sigSource(name, seq, truth)
+			id, mapped, src, ft := signalrun.Source(name, seq, truth)
 			if len(src) < k {
 				continue
 			}
@@ -1057,7 +773,7 @@ func produceJobs(o signalOptions, pl *sigPlan, truth map[string][]byte, k int, p
 			select {
 			case order <- j:
 			case <-quit:
-				s.close()
+				s.Close()
 				return nil
 			}
 			select {
@@ -1065,11 +781,11 @@ func produceJobs(o signalOptions, pl *sigPlan, truth map[string][]byte, k int, p
 			case <-quit:
 				// The committer has stopped; it drains order without
 				// waiting on this job.
-				s.close()
+				s.Close()
 				return nil
 			}
 		}
-		s.close()
+		s.Close()
 	}
 	return nil
 }

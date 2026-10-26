@@ -5,9 +5,11 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/scttfrdmn/phantom-science/internal/cli"
 	"github.com/scttfrdmn/phantom-science/internal/genomics/clinical"
+	runmanifest "github.com/scttfrdmn/phantom-science/internal/genomics/manifest"
 	"github.com/scttfrdmn/phantom-science/pkg/types"
 	"github.com/spf13/cobra"
 )
@@ -84,7 +86,23 @@ The YAML spec format:
   output:
     proband_fastq: proband_R1.fastq
     proband_fastq_r2: proband_R2.fastq   # with paired_end
-    ground_truth: manifest.json`,
+    ground_truth: manifest.json
+
+Run manifest and fingerprints. Every scenario also writes phantom-manifest.json
+in the directory of output.ground_truth: the sequencer configuration (without
+paths or key), the seed, the scenario without its output paths, the input
+files by name, size and sha256, and each member FASTQ by size and sha256.
+With fingerprinting enabled in --config (fingerprinting.enable, a key from
+fingerprinting.key_file or PHANTOM_FINGERPRINT_KEY, enterprise.customer_id
+and dataset_id or --dataset-id) or in a phantom config (-p), as for generate,
+the scenario's one run seed -- from which the haplotype simulation, the
+synthetic window and every member's reads are all derived -- is derived from
+the key, customer, dataset and salt (the configured seed, or a drawn value
+logged to stderr). The reads are those of an ordinary scenario with that seed;
+the manifest records the scheme, customer, dataset and salt, never the seed
+or the key. "phantom-science verify --manifest phantom-manifest.json" (with
+--reference for a --reference scenario) regenerates the scenario to attribute
+suspect reads.`,
 	// Run errors (e.g. a REF mismatch) are not usage errors.
 	SilenceUsage: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -115,6 +133,9 @@ The YAML spec format:
 			}
 		}
 
+		if err := applyFingerprintFlags(cmd, sequencerCfg); err != nil {
+			return err
+		}
 		if population != "" {
 			sequencerCfg.Population = population
 		} else if sequencerCfg.Population == "" {
@@ -139,6 +160,10 @@ The YAML spec format:
 		if err := clinical.WriteManifest(scenario.Output.GroundTruth, manifest); err != nil {
 			return fmt.Errorf("writing manifest: %w", err)
 		}
+		runManifest := filepath.Join(filepath.Dir(scenario.Output.GroundTruth), runmanifest.FileName)
+		if err := gen.WriteRunManifest(runManifest, scenario.Output.GroundTruth, Version); err != nil {
+			return err
+		}
 
 		// Summary to stderr.
 		if len(manifest.PlantedVariants) > 0 {
@@ -155,6 +180,7 @@ The YAML spec format:
 			manifest.ComputeMetrics.ReadsGenerated,
 			float64(manifest.ComputeMetrics.WallClockNS)/1e9)
 		fmt.Fprintf(os.Stderr, "   [scenario] ground truth: %s\n", scenario.Output.GroundTruth)
+		fmt.Fprintf(os.Stderr, "   [scenario] run manifest: %s\n", runManifest)
 
 		return nil
 	},
@@ -164,5 +190,6 @@ func init() {
 	rootCmd.AddCommand(scenarioCmd)
 	scenarioCmd.Flags().String("spec", "", "Path to YAML scenario specification (required)")
 	scenarioCmd.Flags().String("population", "", "Trio population: YRI, CEU, CHB, MXL or a 1000 Genomes alias of them (default CEU)")
+	scenarioCmd.Flags().String("dataset-id", "", "Dataset ID (dataset_id); with fingerprinting it names the dataset the keyed seed is derived for")
 	scenarioCmd.Flags().String("reference", "", "Reference FASTA (GRCh38 for catalogue variants, uncompressed): reads are sampled from it, and the planted REF allele must match it or the run fails")
 }
