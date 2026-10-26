@@ -23,6 +23,7 @@ import (
 
 	"github.com/scttfrdmn/phantom-science/internal/genomics"
 	"github.com/scttfrdmn/phantom-science/internal/genomics/illumina"
+	"github.com/scttfrdmn/phantom-science/internal/genomics/manifest"
 	"github.com/scttfrdmn/phantom-science/pkg/types"
 )
 
@@ -269,7 +270,9 @@ func TestScenarioReference_ProbandReadsFromReference(t *testing.T) {
 			rs := refScenario{spec: c.spec, errors: types.IlluminaErrorsNone, seed: 11, cov: 100, readLen: 100}
 			m, out := rs.run(t, ref)
 			assert.Equal(t, basesReference, m.Sequencer.Bases)
-			assert.Equal(t, ref, m.Reference)
+			want, err := manifest.HashInput(ref)
+			require.NoError(t, err)
+			assert.Equal(t, want, m.Reference)
 			assert.True(t, strings.HasSuffix(m.Sequencer.RegionFocused, "1:0-12000"), "window clipped to the contig: %s", m.Sequencer.RegionFocused)
 			recs := readRecords(t, out["proband"])
 			require.Equal(t, 100*12000/100, len(recs))
@@ -509,16 +512,35 @@ func simulatedAlleles(t *testing.T, tp *trioPlan, pos int) []string {
 	return nil
 }
 
-// The manifest records the read model.
+// The manifest records the read model and the reference by name, size and
+// SHA-256 (#38). It holds no local path and no wall-clock value: two runs
+// of the same scenario and seed, writing to different directories, write
+// the same bytes.
 func TestScenarioReference_ManifestJSON(t *testing.T) {
 	ref, seq := writeRandomFASTA(t, 12000, 5)
 	spec := PlantedVariantSpec{Chrom: "chr1", Pos: 6001, Ref: string(seq[6000]), Alt: string(comp(seq[6000])), Zygosity: "heterozygous"}
-	_, out := refScenario{spec: spec, paired: true, seed: 3, cov: 2, readLen: 100}.run(t, ref)
-	data, err := os.ReadFile(filepath.Join(filepath.Dir(out["proband"]), "truth.json"))
-	require.NoError(t, err)
+	rs := refScenario{spec: spec, paired: true, seed: 3, cov: 2, readLen: 100}
+	var runs [2][]byte
+	var dirs [2]string
+	for i := range runs {
+		_, out := rs.run(t, ref)
+		dirs[i] = filepath.Dir(out["proband"])
+		data, err := os.ReadFile(filepath.Join(dirs[i], "truth.json"))
+		require.NoError(t, err)
+		runs[i] = data
+	}
+	assert.Equal(t, string(runs[0]), string(runs[1]), "the same scenario and seed wrote different manifests")
+	for _, p := range []string{ref, filepath.Dir(ref), dirs[0], os.TempDir()} {
+		assert.NotContains(t, string(runs[0]), p, "the manifest holds a local path")
+	}
 	var m map[string]any
-	require.NoError(t, json.Unmarshal(data, &m))
+	require.NoError(t, json.Unmarshal(runs[0], &m))
 	sq := m["sequencer"].(map[string]any)
 	assert.Equal(t, true, sq["paired_end"])
 	assert.Equal(t, "reference", sq["bases"])
+	assert.NotContains(t, m, "generated_at")
+	assert.NotContains(t, m["compute_metrics"], "wall_clock_ns")
+	n, sum, err := manifest.HashFile(ref)
+	require.NoError(t, err)
+	assert.Equal(t, map[string]any{"name": "ref.fa", "bytes": float64(n), "sha256": sum}, m["reference"])
 }

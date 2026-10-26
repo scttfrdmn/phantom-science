@@ -108,7 +108,11 @@ output: {proband_fastq: %s, proband_fastq_r2: %s, ground_truth: %s}
 		t.Fatal(err)
 	}
 	var m struct {
-		Reference string `json:"reference"`
+		Reference struct {
+			Name   string `json:"name"`
+			Bytes  int64  `json:"bytes"`
+			SHA256 string `json:"sha256"`
+		} `json:"reference"`
 		Sequencer struct {
 			PairedEnd bool   `json:"paired_end"`
 			Bases     string `json:"bases"`
@@ -120,7 +124,7 @@ output: {proband_fastq: %s, proband_fastq_r2: %s, ground_truth: %s}
 	if err := json.Unmarshal(data, &m); err != nil {
 		t.Fatal(err)
 	}
-	if m.Reference != ref || !m.Sequencer.PairedEnd || m.Sequencer.Bases != "reference" || m.ComputeMetrics.ReadsGenerated != 2*len(s1) {
+	if m.Reference.Name != filepath.Base(ref) || m.Reference.Bytes == 0 || len(m.Reference.SHA256) != 64 || strings.Contains(string(data), ref) || !m.Sequencer.PairedEnd || m.Sequencer.Bases != "reference" || m.ComputeMetrics.ReadsGenerated != 2*len(s1) {
 		t.Fatalf("manifest %+v", m)
 	}
 }

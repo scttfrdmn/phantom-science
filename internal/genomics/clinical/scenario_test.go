@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -97,8 +96,7 @@ output:
 
 func TestManifest_RoundTrip(t *testing.T) {
 	m := &GroundTruthManifest{
-		GeneratedAt: time.Date(2026, 3, 11, 12, 0, 0, 0, time.UTC),
-		ProbandID:   "proband-001",
+		ProbandID: "proband-001",
 		PlantedVariants: []PlantedVariant{{
 			Gene:        "SLC2A1",
 			Chrom:       "chr1",

@@ -6,19 +6,21 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"time"
+
+	"github.com/scttfrdmn/phantom-science/internal/genomics/manifest"
 )
 
-// GroundTruthManifest is a machine-readable record of what was planted.
+// GroundTruthManifest is a machine-readable record of what was planted. It
+// holds no local paths and no wall-clock values, so the same scenario and
+// seed write the same manifest (#38).
 type GroundTruthManifest struct {
-	GeneratedAt     time.Time        `json:"generated_at"`
 	ProbandID       string           `json:"proband_id"`
 	PlantedVariants []PlantedVariant `json:"planted_variants"`
 	Trio            *TrioManifest    `json:"trio,omitempty"`
 	// Reference is the FASTA (scenario --reference) the reads were sampled
-	// from and the planted REF alleles checked against; empty for
-	// synthetic bases.
-	Reference      string            `json:"reference,omitempty"`
+	// from and the planted REF alleles checked against, by base name, size
+	// and SHA-256 as in the run manifest; nil for synthetic bases.
+	Reference      *manifest.Input   `json:"reference,omitempty"`
 	Sequencer      SequencerManifest `json:"sequencer"`
 	ComputeMetrics ComputeMetrics    `json:"compute_metrics"`
 }
@@ -67,10 +69,12 @@ type SequencerManifest struct {
 	RegionFocused string `json:"region_focused,omitempty"` // e.g. "chr1:42904241-42954241"
 }
 
-// ComputeMetrics records generation performance metrics.
+// ComputeMetrics records generation metrics.
 type ComputeMetrics struct {
-	ReadsGenerated int   `json:"reads_generated"`
-	WallClockNS    int64 `json:"wall_clock_ns"`
+	ReadsGenerated int `json:"reads_generated"`
+	// WallClockNS is the run's duration, for the command's summary; it is
+	// not written, because it differs between runs of the same scenario.
+	WallClockNS int64 `json:"-"`
 }
 
 // WriteManifest serialises the manifest as indented JSON and writes it to path.

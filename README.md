@@ -454,6 +454,11 @@ output:
 phantom-science scenario --spec glut1.yaml --population CEU --reference GRCh38.fa
 ```
 
+The ground-truth manifest (`ground_truth`) records the planted variants, the
+trio, the sequencing parameters and the reference by name, size and sha256.
+It holds no local paths and no timestamps, so the same spec and seed write
+the same file.
+
 HPO resolution uses a built-in catalogue of three entries. Each was checked on
 2026-10-19 against HPO (release 2026-09-01) and ClinVar, with GRCh38
 coordinates in VCF form:

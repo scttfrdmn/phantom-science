@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- The `scenario` ground-truth manifest recorded the `--reference` path as given, a wall-clock `generated_at` and `compute_metrics.wall_clock_ns`, so a local path shipped with the data and the same spec and seed wrote different files (#38). It now records the reference as `reference` {name, bytes, sha256}, like the run manifest, and drops both wall-clock values (the duration is still printed).
+
 ## [0.15.0] - 2026-10-25
 
 ### Added

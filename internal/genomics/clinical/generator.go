@@ -37,6 +37,7 @@ import (
 	"time"
 
 	"github.com/scttfrdmn/phantom-science/internal/genomics"
+	runmanifest "github.com/scttfrdmn/phantom-science/internal/genomics/manifest"
 	"github.com/scttfrdmn/phantom-science/internal/genomics/reference"
 	"github.com/scttfrdmn/phantom-science/internal/genomics/seqread"
 	"github.com/scttfrdmn/phantom-science/internal/population"
@@ -96,6 +97,13 @@ func (g *ScenarioGenerator) Run(ctx context.Context, scenario *ClinicalScenario)
 	// regenerated that way yet.
 	if g.config != nil && (g.config.Fingerprinting.Enable || g.config.Enterprise.Fingerprinting.Enable) {
 		return nil, fmt.Errorf("scenario does not support fingerprinting yet: disable fingerprinting in the sequencer config")
+	}
+	var refInput *runmanifest.Input
+	if g.referencePath != "" {
+		var err error
+		if refInput, err = runmanifest.HashInput(g.referencePath); err != nil {
+			return nil, fmt.Errorf("reference: %w", err)
+		}
 	}
 
 	// 1. Resolve variant.
@@ -246,10 +254,9 @@ func (g *ScenarioGenerator) Run(ctx context.Context, scenario *ClinicalScenario)
 		bases = basesReference
 	}
 	manifest := &GroundTruthManifest{
-		GeneratedAt:     time.Now().UTC(),
 		ProbandID:       g.config.SampleName,
 		PlantedVariants: []PlantedVariant{planted},
-		Reference:       g.referencePath,
+		Reference:       refInput,
 		Sequencer: SequencerManifest{
 			Platform:      scenario.Sequencer.Platform,
 			Coverage:      coverage,

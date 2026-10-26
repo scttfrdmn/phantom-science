@@ -13,6 +13,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/scttfrdmn/phantom-science/internal/genomics/manifest"
+
 	"github.com/scttfrdmn/phantom-science/internal/genomics/reference"
 	"github.com/scttfrdmn/phantom-science/pkg/types"
 )
@@ -118,7 +120,9 @@ func TestRun_ReferenceCheck(t *testing.T) {
 
 	m, fq, err := run("C")
 	require.NoError(t, err)
-	assert.Equal(t, ref, m.Reference)
+	want, herr := manifest.HashInput(ref)
+	require.NoError(t, herr)
+	assert.Equal(t, want, m.Reference)
 	assert.FileExists(t, fq)
 
 	_, fq, err = run("A")
